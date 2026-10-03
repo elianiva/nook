@@ -2,6 +2,14 @@
   "name": "nook",
   "version": "0.0.0",
   "private": true,
+  "description": "A self-hosted spaced repetition system. Imports Anki decks, schedules Cards with FSRS, and reviews offline-first.",
+  "keywords": [
+    "anki",
+    "cloudflare-workers",
+    "effect",
+    "fsrs",
+    "spaced-repetition"
+  ],
   "license": "MIT",
   "type": "module",
   "scripts": {

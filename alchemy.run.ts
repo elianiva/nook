@@ -3,27 +3,48 @@ import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Effect from 'effect/Effect'
 
 /**
- * The counter's durable state. One namespace, one key (`count`), read and
- * written by the Worker through the `COUNTER` binding.
+ * The one email Cloudflare Access admits.
+ *
+ * nook has no accounts and no sign-up, so this value is the whole identity
+ * system. There is no default: an unset value would leave a personal
+ * collection reachable by anyone who finds the domain.
  */
-const CounterKv = Cloudflare.KV.Namespace('nook-counter', {
-  title: 'nook-counter',
-})
+const allowedEmail = process.env['NOOK_ALLOWED_EMAIL']
+
+if (allowedEmail === undefined || allowedEmail === '') {
+  throw new Error(
+    'NOOK_ALLOWED_EMAIL must name the one email Cloudflare Access admits. ' +
+      'nook has no sign-up, so there is nothing else between a stranger and the collection.',
+  )
+}
+
+/**
+ * The hostname nook answers on. Override it to self-host under your own
+ * domain.
+ */
+const domain = process.env['NOOK_DOMAIN'] ?? 'nook.elianiva.com'
 
 /**
  * The whole site: a Foldkit client build served as static assets, with a
- * custom Worker entry (`apps/web/src/worker.ts`) that answers the counter RPC
- * on `/api/rpc` and falls through to `env.ASSETS` for everything else.
+ * custom Worker entry (`apps/frontend/src/worker.ts`) that answers the API on
+ * `/api/*` and falls through to `env.ASSETS` for everything else.
  *
  * `Website.Foldkit` drives the app's own `vite build` and uploads the client
  * output; `main` is the Worker entry it bundles alongside the assets.
+ *
+ * D1 and R2 join this stack with the first feature that stores a Card.
  */
 class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
-  rootDir: 'apps/web',
+  rootDir: 'apps/frontend',
   main: 'src/worker.ts',
-  domain: 'nook.elianiva.com',
-  env: {
-    COUNTER: CounterKv,
+  domain,
+  access: {
+    name: 'nook',
+    // One allow rule, one email. Alchemy creates this Access application with
+    // the Worker and deletes it with the Worker, so the policy cannot drift
+    // away from the thing it protects.
+    policies: [{ decision: 'allow', include: [{ email: allowedEmail }] }],
+    autoRedirectToIdentity: true,
   },
   assets: {
     // `/api/*` is the Worker's; every other path is served by the asset layer,
@@ -33,6 +54,9 @@ class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
   dev: {
     port: 5273,
     strictPort: true,
+    // `alchemy dev` has no Access service in front of it, so it stands in an
+    // identity and the Worker reads a real one.
+    access: { aud: 'dev', identity: { email: allowedEmail } },
   },
 }) {}
 

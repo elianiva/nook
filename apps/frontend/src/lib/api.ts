@@ -4,8 +4,5 @@
  *  asset layer hands to the Worker first. */
 export const API_PREFIX = '/api'
 
-/** The counter RPC endpoint. */
-export const RPC_PATH = `${API_PREFIX}/rpc`
-
-/** Liveness, answered without touching KV. */
+/** Liveness. */
 export const HEALTH_PATH = `${API_PREFIX}/health`

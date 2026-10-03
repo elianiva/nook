@@ -1,8 +1,8 @@
 import './styles.css'
 import { Runtime } from 'foldkit'
-import { Model } from './counter/model'
-import { init, update } from './counter/update'
-import { view } from './counter/view'
+import { Model } from './app/model'
+import { init, update } from './app/update'
+import { view } from './app/view'
 
 const program = Runtime.makeApplication({
   Model,

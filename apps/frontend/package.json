@@ -1,5 +1,5 @@
 {
-  "name": "@nook/web",
+  "name": "@nook/frontend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,6 @@
   "dependencies": {
     "@effect/platform-browser": "4.0.0",
     "@foldkit/ui": "0.164.0",
-    "@nook/api": "workspace:*",
-    "@nook/shared": "workspace:*",
     "cn": "^0.2.4",
     "effect": "4.0.0",
     "foldkit": "0.164.0",
