@@ -115,12 +115,12 @@ describe('decodeTemplateConfig', () => {
 
 describe('decodeDeckKind', () => {
   it('reads a normal Deck and its description', () => {
-    const kind = decodeDeckKind(bytesField(6, stringField(4, 'from the textbook')))
+    const kind = decodeDeckKind(bytesField(1, stringField(4, 'from the textbook')))
     expect(kind).toEqual({ filtered: false, description: 'from the textbook' })
   })
 
   it('marks a filtered Deck so the reader can skip it', () => {
-    expect(decodeDeckKind(bytesField(7, bytesField(1, uint32Field(1, 1)))).filtered).toBe(true)
+    expect(decodeDeckKind(bytesField(2, bytesField(1, uint32Field(1, 1)))).filtered).toBe(true)
   })
 
   it('defaults a Deck with no kind of its own', () => {
@@ -128,7 +128,7 @@ describe('decodeDeckKind', () => {
   })
 
   it('reads a Deck whose description is empty', () => {
-    expect(decodeDeckKind(bytesField(6, stringField(4, ''))).description).toBe('')
+    expect(decodeDeckKind(bytesField(1, stringField(4, ''))).description).toBe('')
   })
 
   it('skips the deck options Anki stores beside the description', () => {
@@ -137,6 +137,6 @@ describe('decodeDeckKind', () => {
       stringField(4, 'kept'),
       uint32Field(7, 20),
     )
-    expect(decodeDeckKind(bytesField(6, normal)).description).toBe('kept')
+    expect(decodeDeckKind(bytesField(1, normal)).description).toBe('kept')
   })
 })

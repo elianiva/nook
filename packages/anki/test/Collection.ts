@@ -129,8 +129,8 @@ CREATE TABLE decks (
 /** `Deck.KindContainer`: a normal Deck carries its description at `Deck.Normal.description`. */
 const deckKind = (deck: DeckSpec): Uint8Array =>
   deck.filtered === true
-    ? bytesField(7, uint32Field(1, 1))
-    : bytesField(6, stringField(4, deck.description ?? ''))
+    ? bytesField(2, uint32Field(1, 1))
+    : bytesField(1, stringField(4, deck.description ?? ''))
 
 const notetypeConfig = (noteType: NoteTypeSpec): Uint8Array =>
   concat(
