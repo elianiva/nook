@@ -1,4 +1,5 @@
 import { Schema } from 'effect'
+import type { SqlError } from 'effect/sql/SqlError'
 
 /**
  * Everything `@nook/anki` can refuse to do, and why.
@@ -60,3 +61,20 @@ export class AnkiArchiveTooLarge extends Schema.TaggedError<AnkiArchiveTooLarge>
     limit: Schema.Number,
   },
 ) {}
+
+/**
+ * What a streaming read can fail with, once the archive is open.
+ *
+ * A driver can fail on any statement, and a row can fail to decode if the archive
+ * is damaged in a way that survives opening. There is nothing else, because
+ * everything an Import can get wrong about a Note or a Card is a diagnostic
+ * rather than an error.
+ */
+export type AnkiReadError = SqlError | Schema.SchemaError
+
+/** What opening an archive can fail with. */
+export type AnkiOpenError =
+  | AnkiUnsupportedArchive
+  | AnkiCorruptArchive
+  | AnkiArchiveTooLarge
+  | AnkiReadError
