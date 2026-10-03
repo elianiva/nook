@@ -1,0 +1,27 @@
+{
+  "name": "@nook/anki",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-wasm": "4.0.0",
+    "@effect/wa-sqlite": "0.1.2",
+    "@zip.js/zip.js": "^2.23.0",
+    "effect": "4.0.0",
+    "fzstd": "^0.1.1"
+  },
+  "devDependencies": {
+    "@effect/sql-sqlite-node": "4.0.0",
+    "@effect/vitest": "4.0.0",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2",
+    "vitest": "5.0.1"
+  }
+}
