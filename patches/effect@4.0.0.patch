@@ -1,0 +1,59 @@
+diff --git a/dist/internal/schema/make.js b/dist/internal/schema/make.js
+index cd6e91b215cbb894d64c63b3f839c895c4f45e61..4b0759f61068b56550d4fdf52c67340a3c76face 100644
+--- a/dist/internal/schema/make.js
++++ b/dist/internal/schema/make.js
+@@ -10,7 +10,8 @@ const SchemaProto = {
+     const value = SchemaParser.make(this);
+     Object.defineProperty(this, "make", {
+       value,
+-      enumerable: true
++      enumerable: true,
++      configurable: true
+     });
+     return value;
+   },
+@@ -18,7 +19,8 @@ const SchemaProto = {
+     const value = SchemaParser.makeEffect(this);
+     Object.defineProperty(this, "makeEffect", {
+       value,
+-      enumerable: true
++      enumerable: true,
++      configurable: true
+     });
+     return value;
+   },
+@@ -26,7 +28,8 @@ const SchemaProto = {
+     const value = SchemaParser.makeOption(this);
+     Object.defineProperty(this, "makeOption", {
+       value,
+-      enumerable: true
++      enumerable: true,
++      configurable: true
+     });
+     return value;
+   },
+diff --git a/src/internal/schema/make.ts b/src/internal/schema/make.ts
+index 54dda23c306a0013acd396bc0ae5bf8e72e567de..38161292850784b7046976854bafc05f1bf18e58 100644
+--- a/src/internal/schema/make.ts
++++ b/src/internal/schema/make.ts
+@@ -12,17 +12,17 @@ const SchemaProto = {
+   [TypeId]: TypeId,
+   get make() {
+     const value = SchemaParser.make(this as any)
+-    Object.defineProperty(this, "make", { value, enumerable: true })
++    Object.defineProperty(this, "make", { value, enumerable: true, configurable: true })
+     return value
+   },
+   get makeEffect() {
+     const value = SchemaParser.makeEffect(this as any)
+-    Object.defineProperty(this, "makeEffect", { value, enumerable: true })
++    Object.defineProperty(this, "makeEffect", { value, enumerable: true, configurable: true })
+     return value
+   },
+   get makeOption() {
+     const value = SchemaParser.makeOption(this as any)
+-    Object.defineProperty(this, "makeOption", { value, enumerable: true })
++    Object.defineProperty(this, "makeOption", { value, enumerable: true, configurable: true })
+     return value
+   },
+   pipe() {

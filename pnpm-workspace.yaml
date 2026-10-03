@@ -1,0 +1,34 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Keep one Effect in the tree. Foldkit and its Vite plugin declare the exact
+# release-candidate peer `4.0.0-rc.117`, while Alchemy and the backend run the
+# stable `4.0.0`. Pin every `@effect/*` package to the stable line so the
+# frontend, the RPC contract, and the Worker all share one `Context`.
+overrides:
+  effect: 4.0.0
+  '@effect/platform-browser': 4.0.0
+  '@effect/platform-node': 4.0.0
+  '@effect/platform-node-shared': 4.0.0
+
+peerDependencyRules:
+  allowedVersions:
+    effect: 4.0.0
+    '@effect/platform-browser': 4.0.0
+    '@effect/platform-node': 4.0.0
+
+# Foldkit redefines `Schema.make`/`makeEffect`/`makeOption` as instance
+# properties. Effect 4.0.0 defines them non-configurable, so the redefinition
+# throws. The patch only marks those three properties configurable.
+patchedDependencies:
+  effect@4.0.0: patches/effect@4.0.0.patch
+
+allowBuilds:
+  esbuild: true
+  lefthook: true
+  sharp: true
+  workerd: true
+  msgpackr-extract: false
+
+minimumReleaseAge: 0
