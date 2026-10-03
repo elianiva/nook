@@ -130,10 +130,10 @@ export const decodeTemplateConfig = (bytes: Uint8Array) => {
 }
 
 /** The `kind` column of a Deck row that holds a normal Deck. */
-const DECK_KIND_NORMAL = 6
+const DECK_KIND_NORMAL = 1
 
 /** The `kind` column of a Deck row that holds a filtered Deck. */
-const DECK_KIND_FILTERED = 7
+const DECK_KIND_FILTERED = 2
 
 /** `Deck.Normal.description`, inside the `kind` column of a normal Deck. */
 const DECK_NORMAL_DESCRIPTION = 4
@@ -143,9 +143,13 @@ const DECK_NORMAL_DESCRIPTION = 4
  *
  * ```proto
  * Deck.KindContainer {
- *   oneof kind { Deck.Normal normal = 6; Deck.Filtered filtered = 7; }
+ *   oneof kind { Deck.Normal normal = 1; Deck.Filtered filtered = 2; }
  * }
  * ```
+ *
+ * Field 6 and 7 hold the same messages on `Deck` itself, which only exists on
+ * the RPC wire: the comment on the proto says the specifics are inlined there
+ * so clients skip one level. The database keeps them in the container.
  *
  * A filtered Deck is a saved search rather than a place Cards live, so nook skips
  * it and sends its Cards back to the Decks they came from.
