@@ -189,6 +189,40 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@26.6.4)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(vite@8.3.1(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1))
 
+  packages/anki:
+    dependencies:
+      '@effect/sql-sqlite-wasm':
+        specifier: 4.0.0
+        version: 4.0.0(@effect/wa-sqlite@0.1.2)(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))
+      '@effect/wa-sqlite':
+        specifier: 0.1.2
+        version: 0.1.2
+      '@zip.js/zip.js':
+        specifier: ^2.23.0
+        version: 2.23.0
+      effect:
+        specifier: 4.0.0
+        version: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
+      fzstd:
+        specifier: ^0.1.1
+        version: 0.1.1
+    devDependencies:
+      '@effect/sql-sqlite-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))
+      '@effect/vitest':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(vitest@5.0.1)
+      '@types/node':
+        specifier: ^26.6.4
+        version: 26.6.4
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.1
+        version: 5.0.1(@types/node@26.6.4)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(vite@8.3.1(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1))
+
   packages/api:
     dependencies:
       effect:
@@ -432,6 +466,26 @@ packages:
     resolution: {integrity: sha512-XkRZmQOPblzwjmAJ0RWSOiLlTsKkf1EigZsxUNuIuk4uZ/pnufSqvDpXubCwv8iyRTbOLFMmM+EyOEH5V5XqAw==}
     peerDependencies:
       effect: 4.0.0
+
+  '@effect/sql-sqlite-node@4.0.0':
+    resolution: {integrity: sha512-xyUSLY7v55iMgGxrjFrTo5ngixgQ3jLmOQ+AX8CCazO/caxuMM0oq8zb974FAcvQHRrpMEWU7Vnoo+rxct7PAQ==}
+    peerDependencies:
+      effect: 4.0.0
+
+  '@effect/sql-sqlite-wasm@4.0.0':
+    resolution: {integrity: sha512-kYnf0wSDrm1BHnQJl9GGkJPtX1UGmZuvHPQPxvyvumTT7uwp3zV47CVdBR/YOPMVRdgsnIHFaPDtk3O32/QbAw==}
+    peerDependencies:
+      '@effect/wa-sqlite': '>=0.1.2 <0.2.0'
+      effect: 4.0.0
+
+  '@effect/vitest@4.0.0':
+    resolution: {integrity: sha512-kGElCPFGtP+CgMCwV/HjJWqtE3zYo6I1+8MSA54l+EI24lPU9p2Efa+TBp1jfkg9j711KKzEqgSAy3VzTsb76Q==}
+    peerDependencies:
+      effect: 4.0.0
+      vitest: '>=5.0.0 <6.0.0'
+
+  '@effect/wa-sqlite@0.1.2':
+    resolution: {integrity: sha512-2JvJ9BDkBOwfeY/gXsC0XwEKC0AwisP2W5ABJ6mx14QyXTK12MGDIybDlHieuZt1TEFSMiKfpg7yyqyRWRooJQ==}
 
   '@electric-sql/pglite-socket@0.0.20':
     resolution: {integrity: sha512-J5nLGsicnD9wJHnno9r+DGxfcZWh+YJMCe0q/aCgtG6XOm9Z7fKeite8IZSNXgZeGltSigM9U/vAWZQWdgcSFg==}
@@ -1919,6 +1973,10 @@ packages:
   '@yuku-toolchain/types@0.9.5':
     resolution: {integrity: sha512-KiuLNNgX9uNealaWAR+G3/cMXnRk9x4TY2EkYe/KIag+UPdwiA0RRf1hr1WAxzTP8KGzCTkqUdLPvqh32sEO3w==}
 
+  '@zip.js/zip.js@2.23.0':
+    resolution: {integrity: sha512-K5obAqfrO7zhycnCupM9aaoZ9kx0SA0kv7+Z2oOUsdpWquv4s/Z4zyD7AdTqxrK3pgPM+ozaUi8kdRQbCWaIrQ==}
+    engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
+
   alchemy@2.0.0-beta.80:
     resolution: {integrity: sha512-2y7mswypPiApxuEdp8NGMfzCGB5+9W6OmQAuePyZ2xBkgoCpEqtKAnASuvKGUZPSYNESENbamXDuI5428ewu9w==}
     hasBin: true
@@ -2124,6 +2182,9 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
 
   get-caller-file@2.0.5:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
@@ -3013,6 +3074,22 @@ snapshots:
   '@effect/sql-sqlite-do@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))':
     dependencies:
       effect: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
+
+  '@effect/sql-sqlite-node@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))':
+    dependencies:
+      effect: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
+
+  '@effect/sql-sqlite-wasm@4.0.0(@effect/wa-sqlite@0.1.2)(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))':
+    dependencies:
+      '@effect/wa-sqlite': 0.1.2
+      effect: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
+
+  '@effect/vitest@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(vitest@5.0.1)':
+    dependencies:
+      effect: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
+      vitest: 5.0.1(@types/node@26.6.4)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@26.6.4)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))
+
+  '@effect/wa-sqlite@0.1.2': {}
 
   '@electric-sql/pglite-socket@0.0.20(@electric-sql/pglite@0.3.15)':
     dependencies:
@@ -4052,6 +4129,8 @@ snapshots:
 
   '@yuku-toolchain/types@0.9.5': {}
 
+  '@zip.js/zip.js@2.23.0': {}
+
   alchemy@2.0.0-beta.80(@effect/platform-node@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(redis@6.3.0))(@types/node@26.6.4)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@26.6.4)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(hono@4.11.4)(typescript@7.0.2)(ws@8.22.0):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.80(@distilled.cloud/cloudflare@1.0.0-rc.13(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(@effect/platform-node@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(redis@6.3.0))(@types/node@26.6.4)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@26.6.4)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(rolldown@1.2.5)(typescript@7.0.2)
@@ -4215,6 +4294,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  fzstd@0.1.1: {}
 
   get-caller-file@2.0.5: {}
 
