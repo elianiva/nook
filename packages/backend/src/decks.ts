@@ -1,8 +1,9 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api, CardId, DeckId, DeckNotFound } from '@nook/api'
+import { Api, CardId, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
 import type { Card, DeckDetail, DeckSummary } from '@nook/api'
+import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 
 /** One row of the `decks` table with its counts computed in SQL. */
 const DeckRow = Schema.Struct({
@@ -48,22 +49,19 @@ const toCard = (row: typeof CardRow.Type): Card => ({
   state: row.state,
 })
 
-const decodeRows = <S extends Schema.ConstraintCodec<unknown, unknown, never, never>>(
-  schema: S,
-  rows: ReadonlyArray<unknown>,
-): Effect.Effect<ReadonlyArray<S['Type']>> =>
-  Schema.decodeUnknownEffect(Schema.Array(schema))(rows).pipe(Effect.orDie)
-
 /**
  * Decks read through the `SqlClient` the layer closes over, so the service
  * interface carries no requirements and the handlers add no `Request`
  * markers — the database is provided once, as a plain layer dependency.
+ *
+ * SQL and row-decode failures surface as `StorageUnavailable` (a 503 the
+ * frontend can retry). Only an unknown deck id is a 404 `DeckNotFound`.
  */
 export class Decks extends Context.Service<
   Decks,
   {
-    readonly list: Effect.Effect<ReadonlyArray<DeckSummary>>
-    getById(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound>
+    readonly list: Effect.Effect<ReadonlyArray<DeckSummary>, StorageUnavailable>
+    getById(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
   }
 >()('nook/backend/Decks') {
   static readonly layer = Layer.effect(
@@ -77,29 +75,31 @@ export class Decks extends Context.Service<
           (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new' AND due_in_days <= 0) AS "dueCount",
           (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
           due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt", retention_7d AS "retention7d"
-          FROM decks ORDER BY name`.pipe(Effect.orDie)
+          FROM decks ORDER BY name`
         const decoded = yield* decodeRows(DeckRow, rows)
         return decoded.map(toSummary)
-      }).pipe(Effect.withSpan('Decks.list'))
+      }).pipe(Effect.withSpan('Decks.list'), (self) =>
+        withStorageErrorPassThrough(self, 'list decks'),
+      )
 
-      const getById = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound> =>
+      const getById = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           const summaryRows = yield* sql`SELECT id, name, description,
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new' AND due_in_days <= 0) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
             due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt", retention_7d AS "retention7d"
-            FROM decks WHERE id = ${id}`.pipe(Effect.orDie)
+            FROM decks WHERE id = ${id}`
           const summaries = yield* decodeRows(DeckRow, summaryRows)
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
           const cardRows = yield* sql`SELECT id, deck_id AS "deckId", due_in_days AS "dueInDays",
-            stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`.pipe(
-            Effect.orDie,
-          )
+            stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`
           const cards = yield* decodeRows(CardRow, cardRows)
           return { summary: toSummary(summary), cards: cards.map(toCard) } satisfies DeckDetail
-        }).pipe(Effect.withSpan('Decks.getById'))
+        }).pipe(Effect.withSpan('Decks.getById'), (self) =>
+          withStorageErrorPassThrough(self, 'read deck'),
+        )
 
       return Decks.of({ list, getById })
     }),

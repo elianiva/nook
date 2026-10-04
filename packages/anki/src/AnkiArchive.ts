@@ -1,6 +1,6 @@
-import { Context, Effect, Layer, Option, Result, Stream } from 'effect'
+import { Context, Effect, Layer, Stream } from 'effect'
 import type * as Scope from 'effect/Scope'
-import type { AnkiCard, AnkiNote } from './AnkiContent'
+import type { AnkiCard, AnkiMediaEntry, AnkiNote } from './AnkiContent'
 import type { AnkiDiagnostic } from './AnkiDiagnostic'
 import type { AnkiOpenError, AnkiReadError } from './AnkiErrors'
 import { AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'
@@ -117,26 +117,24 @@ const checkSchemaVersion = (version: number): Effect.Effect<number, AnkiUnsuppor
 }
 
 /** Fails with the refusal when the format check says no. */
-const requireFormat = (meta: Uint8Array | undefined): Effect.Effect<number, AnkiOpenError> => {
-  const verdict = checkArchiveFormat(meta)
-  if (Result.isFailure(verdict)) {
-    return Effect.fail(Option.getOrThrow(Result.getFailure(verdict)))
-  }
-  return Effect.succeed(Option.getOrThrow(Result.getSuccess(verdict)))
-}
+const requireFormat = (meta: Uint8Array | undefined): Effect.Effect<number, AnkiOpenError> =>
+  checkArchiveFormat(meta)
 
-/** Parses the Media index, refusing an index that is not one. */
-const requireMediaIndex = (bytes: Uint8Array) =>
-  Effect.try({
-    try: () => readMediaIndex(bytes),
-    catch: () => badMediaIndex,
-  })
+/** Parses the Media index, refusing an index that is not one. The protobuf walk and the row decode both fail in the error channel. */
+const requireMediaIndex = (
+  bytes: Uint8Array,
+): Effect.Effect<ReadonlyArray<AnkiMediaEntry>, AnkiOpenError> =>
+  readMediaIndex(bytes).pipe(
+    Effect.mapError((error): AnkiOpenError =>
+      error instanceof AnkiCorruptArchive ? error : badMediaIndex,
+    ),
+  )
 
 /** Builds the service over one SQLite source. Worker and node differ only here. */
 export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOpenError> =>
   Layer.effect(
     AnkiArchive,
-    Effect.gen(function* () {
+    Effect.sync(() => {
       const open = (archive: Blob): Effect.Effect<OpenedArchive, AnkiOpenError, Scope.Scope> =>
         Effect.gen(function* () {
           const zip = yield* openZip(archive)
@@ -176,17 +174,19 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
             }
           })
 
+          // A zip read after open is a damaged archive, not a crash: map the
+          // zip-reader failure into the read-error channel as missing bytes.
           const media: Stream.Stream<OpenedMedia, AnkiReadError> = Stream.fromIterable(
             mediaIndex,
           ).pipe(
             Stream.mapEffect((entry) =>
               readZipEntry(zip, entry.entry).pipe(
+                Effect.mapError((error): AnkiReadError => error),
                 Effect.map((bytes) => ({
                   name: entry.name,
                   bytes: bytes ?? new Uint8Array(0),
                   checksum: entry.checksum,
                 })),
-                Effect.catch((cause: unknown) => Effect.die(cause)),
               ),
             ),
           )

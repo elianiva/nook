@@ -1,26 +1,24 @@
 import { Context, Effect, Layer, Schema } from 'effect'
 import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api } from '@nook/api'
+import { Api, StorageUnavailable } from '@nook/api'
 import type { Overview } from '@nook/api'
+import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 
 const CountRow = Schema.Struct({ n: Schema.Number })
 const DayRow = Schema.Struct({ day: Schema.String, count: Schema.Number })
 
-const decodeRows = <S extends Schema.ConstraintCodec<unknown, unknown, never, never>>(
-  schema: S,
-  rows: ReadonlyArray<unknown>,
-): Effect.Effect<ReadonlyArray<S['Type']>> =>
-  Schema.decodeUnknownEffect(Schema.Array(schema))(rows).pipe(Effect.orDie)
-
 /**
  * The overview reads through the `SqlClient` the layer closes over, so the
  * service interface carries no requirements — see `Decks` for why.
+ *
+ * SQL and row-decode failures surface as `StorageUnavailable` (a 503 the
+ * frontend can retry), never as a defect.
  */
 export class Home extends Context.Service<
   Home,
   {
-    readonly overview: Effect.Effect<Overview>
+    readonly overview: Effect.Effect<Overview, StorageUnavailable>
   }
 >()('nook/backend/Home') {
   static readonly layer = Layer.effect(
@@ -30,21 +28,17 @@ export class Home extends Context.Service<
 
       const overview = Effect.gen(function* () {
         const dueValues =
-          yield* sql`SELECT COUNT(*) AS n FROM cards WHERE state != 'new' AND due_in_days <= 0`.pipe(
-            Effect.orDie,
-          )
+          yield* sql`SELECT COUNT(*) AS n FROM cards WHERE state != 'new' AND due_in_days <= 0`
         const dueRows = yield* decodeRows(CountRow, dueValues)
         const reviewedValues =
-          yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE reviewed_at >= date('now')`.pipe(
-            Effect.orDie,
-          )
+          yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE reviewed_at >= date('now')`
         const reviewedRows = yield* decodeRows(CountRow, reviewedValues)
         const dayValues = yield* sql`WITH RECURSIVE days(n) AS (
             SELECT 0 UNION ALL SELECT n + 1 FROM days WHERE n < 13
           )
           SELECT date('now', '-' || n || ' days') AS day,
             (SELECT COUNT(*) FROM reviews WHERE date(reviewed_at) = date('now', '-' || n || ' days')) AS count
-          FROM days ORDER BY day`.pipe(Effect.orDie)
+          FROM days ORDER BY day`
         const dayRows = yield* decodeRows(DayRow, dayValues)
         const dueNow = dueRows[0]?.n ?? 0
         const reviewedToday = reviewedRows[0]?.n ?? 0
@@ -59,7 +53,9 @@ export class Home extends Context.Service<
           else break
         }
         return { dueNow, reviewedToday, streakDays, todayProgress, activity14d } satisfies Overview
-      }).pipe(Effect.withSpan('Home.overview'))
+      }).pipe(Effect.withSpan('Home.overview'), (self) =>
+        withStorageErrorPassThrough(self, 'load the overview'),
+      )
 
       return Home.of({ overview })
     }),

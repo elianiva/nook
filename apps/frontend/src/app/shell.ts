@@ -8,10 +8,13 @@
  */
 
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { ArrowLeft, House, Layers, Settings } from 'lucide'
+import { ArrowLeft, CircleAlert, House, Layers, RotateCcw, Settings } from 'lucide'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import type { Message, Model } from './model'
+import { button } from '@/components/ui/button'
+import { Option } from 'effect'
+import { Message } from './model'
+import type { Model } from './model'
 import { NAV_TABS, routeTitle, routeToTab, routeToUrl, tabToRoute } from './routes'
 import type { NavTab } from './routes'
 
@@ -95,6 +98,35 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+/** The last failed fetch or save, with a retry that runs it again. Clears on the next answer. */
+const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
+  Option.match(model.notice, {
+    onNone: () => h.empty,
+    onSome: (notice) =>
+      h.div(
+        [
+          h.Class(
+            'flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2',
+          ),
+          h.Role('alert'),
+        ],
+        [
+          icon(h, CircleAlert, 'size-4 shrink-0 text-destructive'),
+          h.span([h.Class('min-w-0 flex-1 text-xs text-destructive')], [notice.message]),
+          button<Message>(
+            {
+              onClick: Message.ClickedRetry(),
+              variant: 'outline',
+              size: 'sm',
+              attributes: [h.AriaLabel('Retry')],
+            },
+            [icon(h, RotateCcw, 'size-3.5'), 'Retry'],
+            h,
+          ),
+        ],
+      ),
+  })
+
 /** The shell frame. `content` is the active screen. */
 export const shell = (model: Model, content: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -103,7 +135,7 @@ export const shell = (model: Model, content: ReadonlyArray<Child>, h: HtmlBuilde
       topBar(model, h),
       h.main(
         [h.Class('mx-auto flex w-full max-w-md flex-1 flex-col gap-4 px-3 py-4')],
-        [...content],
+        [noticeBanner(model, h), ...content],
       ),
       bottomNav(model, h),
     ],

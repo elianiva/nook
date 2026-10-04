@@ -1,8 +1,9 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api } from '@nook/api'
+import { Api, StorageUnavailable } from '@nook/api'
 import type { AppSettings } from '@nook/api'
+import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 
 /** One row of the singleton `settings` table. Booleans ride as 0/1, weights as one CSV string. */
 const SettingsRow = Schema.Struct({
@@ -35,23 +36,20 @@ export const toSettings = (row: typeof SettingsRow.Type): AppSettings => ({
   },
 })
 
-const decodeRow = (
-  rows: ReadonlyArray<unknown>,
-): Effect.Effect<Option.Option<typeof SettingsRow.Type>> =>
-  Schema.decodeUnknownEffect(Schema.Array(SettingsRow))(rows).pipe(
-    Effect.map((decoded) => Option.fromUndefinedOr(decoded[0])),
-    Effect.orDie,
-  )
-
 /**
  * Settings read through the `SqlClient` the layer closes over, so the
  * service interface carries no requirements — see `Decks` for why.
+ *
+ * SQL and row-decode failures surface as `StorageUnavailable` (a 503 the
+ * frontend can retry), never as a defect. A missing singleton row means a
+ * corrupt database, so it surfaces the same way: the frontend keeps its copy
+ * and offers a retry instead of the Worker crashing.
  */
 export class Settings extends Context.Service<
   Settings,
   {
-    readonly read: Effect.Effect<AppSettings>
-    save(settings: AppSettings): Effect.Effect<AppSettings>
+    readonly read: Effect.Effect<AppSettings, StorageUnavailable>
+    save(settings: AppSettings): Effect.Effect<AppSettings, StorageUnavailable>
   }
 >()('nook/backend/Settings') {
   static readonly layer = Layer.effect(
@@ -67,15 +65,20 @@ export class Settings extends Context.Service<
           behaviour_tap_to_reveal AS "behaviourTapToReveal",
           behaviour_day_rollover_hour AS "behaviourDayRolloverHour",
           behaviour_keep_awake AS "behaviourKeepAwake"
-          FROM settings WHERE id = 1`.pipe(Effect.orDie)
-        const found = yield* decodeRow(rows)
+          FROM settings WHERE id = 1`
+        const decoded = yield* decodeRows(SettingsRow, rows)
+        const found = Option.fromUndefinedOr(decoded[0])
         if (found._tag === 'None') {
-          return yield* Effect.die(new Error('settings row missing: migration 0001 seeds id = 1'))
+          return yield* new StorageUnavailable({
+            message: 'Could not read settings. The settings store is missing its row.',
+          })
         }
         return toSettings(found.value)
-      }).pipe(Effect.withSpan('Settings.read'))
+      }).pipe(Effect.withSpan('Settings.read'), (self) =>
+        withStorageErrorPassThrough(self, 'read settings'),
+      )
 
-      const save = (settings: AppSettings): Effect.Effect<AppSettings> =>
+      const save = (settings: AppSettings): Effect.Effect<AppSettings, StorageUnavailable> =>
         Effect.gen(function* () {
           yield* sql`UPDATE settings SET
             fsrs_desired_retention = ${settings.fsrs.desiredRetention},
@@ -88,9 +91,11 @@ export class Settings extends Context.Service<
             behaviour_tap_to_reveal = ${settings.behaviour.tapToReveal ? 1 : 0},
             behaviour_day_rollover_hour = ${settings.behaviour.dayRolloverHour},
             behaviour_keep_awake = ${settings.behaviour.keepAwake ? 1 : 0},
-            updated_at = datetime('now') WHERE id = 1`.pipe(Effect.orDie)
+            updated_at = datetime('now') WHERE id = 1`
           return settings
-        }).pipe(Effect.withSpan('Settings.save'))
+        }).pipe(Effect.withSpan('Settings.save'), (self) =>
+          withStorageErrorPassThrough(self, 'save settings'),
+        )
 
       return Settings.of({ read, save })
     }),

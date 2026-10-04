@@ -133,25 +133,53 @@ export class DeckNotFound extends S.TaggedError<DeckNotFound>()('DeckNotFound', 
   deckId: DeckId,
 }) {}
 
+/**
+ * The database did not answer. Returned as a 503 so the browser can retry.
+ *
+ * Every endpoint that reads D1 can fail with this. The message stays generic
+ * on purpose; the detail goes to the server log, not to the Learner.
+ */
+export class StorageUnavailable extends S.TaggedError<StorageUnavailable>()('StorageUnavailable', {
+  message: S.String,
+}) {}
+
 export class DecksGroup extends HttpApiGroup.make('decks')
   .add(
-    HttpApiEndpoint.get('list', '/', { success: S.Array(DeckSummary) }),
+    HttpApiEndpoint.get('list', '/', {
+      success: S.Array(DeckSummary),
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
     HttpApiEndpoint.get('getById', '/:deckId', {
       params: { deckId: DeckId },
       success: DeckDetail,
-      error: DeckNotFound.pipe(HttpApiSchema.status(404)),
+      error: [
+        DeckNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
     }),
   )
   .prefix('/decks') {}
 
 export class HomeGroup extends HttpApiGroup.make('home')
-  .add(HttpApiEndpoint.get('overview', '/', { success: Overview }))
+  .add(
+    HttpApiEndpoint.get('overview', '/', {
+      success: Overview,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
+  )
   .prefix('/home') {}
 
 export class SettingsGroup extends HttpApiGroup.make('settings')
   .add(
-    HttpApiEndpoint.get('get', '/', { success: AppSettings }),
-    HttpApiEndpoint.put('update', '/', { payload: AppSettings, success: AppSettings }),
+    HttpApiEndpoint.get('get', '/', {
+      success: AppSettings,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
+    HttpApiEndpoint.put('update', '/', {
+      payload: AppSettings,
+      success: AppSettings,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
   )
   .prefix('/settings') {}
 

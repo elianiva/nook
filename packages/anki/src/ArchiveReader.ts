@@ -31,6 +31,10 @@ import { AnkiDeck, AnkiField, AnkiNoteType, AnkiTemplate } from './AnkiManifest'
  *
  * Deck options and the review log are never read. nook starts every imported Card
  * as new and applies its own limits, so Anki's scheduling state has nowhere to go.
+ *
+ * A damaged blob fails in the error channel with a corrupt-archive error
+ * carrying a fix, never a thrown decode error. A page that ends without a last
+ * row ends the stream: an empty `Option` is the last page, not a crash.
  */
 
 /** Runs a statement and decodes every row it returns. */
@@ -78,14 +82,16 @@ export const readDecks = (
 ): Effect.Effect<ReadonlyArray<AnkiDeck>, AnkiReadError> =>
   sql`SELECT id, name, kind FROM decks ORDER BY id`.pipe(
     decodeRows(DeckRow),
-    Effect.map((rows) =>
-      Schema.decodeUnknownSync(Schema.Array(AnkiDeck))(
-        rows.flatMap((row) => {
-          const kind = decodeDeckKind(row.kind)
-          return kind.filtered
-            ? []
-            : [{ id: row.id, name: row.name, description: kind.description }]
-        }),
+    Effect.flatMap((rows) =>
+      Effect.all(
+        rows.map((row) => decodeDeckKind(row.kind).pipe(Effect.map((kind) => ({ row, kind })))),
+      ),
+    ),
+    Effect.flatMap((pairs) =>
+      Schema.decodeUnknownEffect(Schema.Array(AnkiDeck))(
+        pairs.flatMap(({ row, kind }) =>
+          kind.filtered ? [] : [{ id: row.id, name: row.name, description: kind.description }],
+        ),
       ),
     ),
   )
@@ -110,30 +116,34 @@ const TemplateRow = Schema.Struct({
   config: Schema.Uint8Array,
 })
 
-const toField = (row: typeof FieldRow.Type): AnkiField => {
-  const config = decodeFieldConfig(row.config)
-  return Schema.decodeUnknownSync(AnkiField)({
-    ord: row.ord,
-    name: row.name,
-    rightToLeft: config.rightToLeft,
-    fontName: config.fontName,
-    fontSize: config.fontSize,
-    plainText: config.plainText,
-    description: config.description,
-    sticky: config.sticky,
-  })
-}
+const toField = (row: typeof FieldRow.Type): Effect.Effect<AnkiField, AnkiReadError> =>
+  decodeFieldConfig(row.config).pipe(
+    Effect.flatMap((config) =>
+      Schema.decodeUnknownEffect(AnkiField)({
+        ord: row.ord,
+        name: row.name,
+        rightToLeft: config.rightToLeft,
+        fontName: config.fontName,
+        fontSize: config.fontSize,
+        plainText: config.plainText,
+        description: config.description,
+        sticky: config.sticky,
+      }),
+    ),
+  )
 
-const toTemplate = (row: typeof TemplateRow.Type): AnkiTemplate => {
-  const config = decodeTemplateConfig(row.config)
-  return Schema.decodeUnknownSync(AnkiTemplate)({
-    ord: row.ord,
-    name: row.name,
-    questionFormat: config.questionFormat,
-    answerFormat: config.answerFormat,
-    deckId: config.deckId,
-  })
-}
+const toTemplate = (row: typeof TemplateRow.Type): Effect.Effect<AnkiTemplate, AnkiReadError> =>
+  decodeTemplateConfig(row.config).pipe(
+    Effect.flatMap((config) =>
+      Schema.decodeUnknownEffect(AnkiTemplate)({
+        ord: row.ord,
+        name: row.name,
+        questionFormat: config.questionFormat,
+        answerFormat: config.answerFormat,
+        deckId: config.deckId,
+      }),
+    ),
+  )
 
 const groupByNoteType = <A extends { readonly ntid: number }>(
   rows: ReadonlyArray<A>,
@@ -171,25 +181,49 @@ export const readNoteTypes = (
     ],
     { concurrency: 'unbounded' },
   ).pipe(
-    Effect.map(([notetypes, fields, templates]) => {
+    Effect.flatMap(([notetypes, fields, templates]) => {
       const fieldsByType = groupByNoteType(fields)
       const templatesByType = groupByNoteType(templates)
-      return Schema.decodeUnknownSync(Schema.Array(AnkiNoteType))(
-        notetypes.map((row) => {
-          const config = decodeNotetypeConfig(row.config)
-          return {
-            id: row.id,
-            name: row.name,
-            kind: config.kind === NOTETYPE_KIND_CLOZE ? 'cloze' : 'normal',
-            sortFieldOrd: config.sortFieldIdx,
-            css: config.css,
-            fields: (fieldsByType.get(row.id) ?? []).map(toField),
-            templates: (templatesByType.get(row.id) ?? []).map(toTemplate),
-          }
-        }),
+      return Effect.all(
+        notetypes.map((row) =>
+          decodeNotetypeConfig(row.config).pipe(
+            Effect.flatMap((config) =>
+              Effect.all([
+                Effect.all((fieldsByType.get(row.id) ?? []).map(toField)),
+                Effect.all((templatesByType.get(row.id) ?? []).map(toTemplate)),
+              ]).pipe(
+                Effect.map(([decodedFields, decodedTemplates]) => ({
+                  id: row.id,
+                  name: row.name,
+                  kind:
+                    config.kind === NOTETYPE_KIND_CLOZE ? ('cloze' as const) : ('normal' as const),
+                  sortFieldOrd: config.sortFieldIdx,
+                  css: config.css,
+                  fields: [...decodedFields],
+                  templates: [...decodedTemplates],
+                })),
+              ),
+            ),
+          ),
+        ),
       )
     }),
+    Effect.flatMap((assembled) =>
+      Schema.decodeUnknownEffect(Schema.Array(AnkiNoteType))(assembled),
+    ),
   )
+
+/**
+ * The `id` to page after, or `None` when the page is the last one.
+ *
+ * A full page names its last row; a short page is the end. When a full page
+ * somehow carries no last row, the stream ends rather than crashing: stopping
+ * early keeps what was read, and the manifest counts say what is missing.
+ */
+const nextAfter = <A extends { readonly id: number }>(
+  items: ReadonlyArray<A>,
+): Option.Option<number> =>
+  items.length < 5000 ? Option.none<number>() : Option.fromUndefinedOr(items.at(-1)?.id)
 
 /**
  * Every Note, in Anki id order.
@@ -207,13 +241,7 @@ export const streamNotes = (sql: Sql.SqlClient): Stream.Stream<AnkiNote, AnkiRea
   Stream.paginate(0, (after) =>
     sql`SELECT id, guid, mid, mod, flds, tags FROM notes WHERE id > ${after} ORDER BY id LIMIT 5000`.pipe(
       decodeRows(AnkiNote),
-      Effect.map(
-        (notes) =>
-          [
-            notes,
-            notes.length < 5000 ? Option.none<number>() : Option.some(notes.at(-1)!.id),
-          ] as const,
-      ),
+      Effect.map((notes) => [notes, nextAfter(notes)] as const),
     ),
   )
 
@@ -222,12 +250,6 @@ export const streamCards = (sql: Sql.SqlClient): Stream.Stream<AnkiCard, AnkiRea
   Stream.paginate(0, (after) =>
     sql`SELECT id, nid, did, odid, ord, queue, flags FROM cards WHERE id > ${after} ORDER BY id LIMIT 5000`.pipe(
       decodeRows(AnkiCard),
-      Effect.map(
-        (cards) =>
-          [
-            cards,
-            cards.length < 5000 ? Option.none<number>() : Option.some(cards.at(-1)!.id),
-          ] as const,
-      ),
+      Effect.map((cards) => [cards, nextAfter(cards)] as const),
     ),
   )

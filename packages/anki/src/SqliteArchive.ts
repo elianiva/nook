@@ -44,12 +44,18 @@ export const sourceNode = (
     const fs = yield* Effect.promise(() => import('node:fs'))
     const os = yield* Effect.promise(() => import('node:os'))
     const path = yield* Effect.promise(() => import('node:path'))
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nook-anki-'))
+    const directory = yield* Effect.try({
+      try: () => fs.mkdtempSync(path.join(os.tmpdir(), 'nook-anki-')),
+      catch: () => notADatabase,
+    })
     const filename = path.join(directory, 'collection.anki21b.db')
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => fs.rmSync(directory, { force: true, recursive: true })),
     )
-    fs.writeFileSync(filename, bytes)
+    yield* Effect.try({
+      try: () => fs.writeFileSync(filename, bytes),
+      catch: () => notADatabase,
+    })
     const client = yield* NodeSqlite.make({ filename, readonly: true, disableWAL: true }).pipe(
       Effect.provide(Reactivity.layer),
     )

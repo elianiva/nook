@@ -103,6 +103,19 @@ export const validateDraft = (draft: SettingsDraft): string | undefined => {
   return undefined
 }
 
+/** Which fetch or save a notice retry runs. */
+export const LoadRetry = S.Literals(['overview', 'decks', 'deckDetail', 'settings', 'saveSettings'])
+export type LoadRetry = typeof LoadRetry.Type
+
+/** A failed fetch or save, as the banner shows it: what failed, and what retry runs. */
+export const LoadNotice = S.Struct({
+  /** One sentence for the Learner. Never a stack trace or a status code. */
+  message: S.String,
+  /** Which fetch or save to run again when the Learner presses retry. */
+  retry: LoadRetry,
+})
+export type LoadNotice = typeof LoadNotice.Type
+
 export const Model = S.Struct({
   route: AppRoute,
   overview: Overview,
@@ -113,6 +126,8 @@ export const Model = S.Struct({
   decksQuery: S.String,
   settings: AppSettings,
   settingsDraft: SettingsDraft,
+  /** The last fetch or save that failed, with a retry for its route. `None` when everything answers. */
+  notice: S.Option(LoadNotice),
 })
 export type Model = typeof Model.Type
 
@@ -124,6 +139,7 @@ export const seedModel = (url: Url.Url): Model => ({
   decksQuery: '',
   settings: DUMMY_SETTINGS,
   settingsDraft: draftFromSettings(DUMMY_SETTINGS),
+  notice: Option.none(),
 })
 
 /** Resolve the deck detail for a deck id from the dummy source. `None` for unknown ids. */
@@ -148,7 +164,12 @@ export const Message = defineMessageUnion({
   GotDeckDetail: { detail: DeckDetail },
   GotSettings: { settings: AppSettings },
   SavedSettings: { settings: AppSettings },
-  LoadFailed: { error: S.String },
+  /** The deck id names no deck. The deck page renders its not-found state. */
+  DeckMissing: {},
+  /** A fetch or save failed. The notice carries the retry; the seed stays on screen. */
+  LoadFailed: { error: S.String, retry: LoadRetry },
+  /** The Learner pressed retry on the notice banner. */
+  ClickedRetry: {},
   /** Decks page search text. */
   TypedDecksQuery: { value: S.String },
   StartedDeckReview: { deckId: S.String },

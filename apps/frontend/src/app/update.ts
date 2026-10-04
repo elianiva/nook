@@ -6,6 +6,10 @@
  * replace the seed. `ChangedUrl` re-parses on every navigation and resolves
  * the deck page when the route carries a deck id.
  *
+ * A `Got*` answer clears the notice; a `LoadFailed` answer sets it and keeps
+ * the seed on screen, so the Learner always sees data plus a retry. `DeckMissing`
+ * clears the deck page to its not-found state, which is an answer, not a failure.
+ *
  * Settings edits write into `settingsDraft` only; Save validates the draft
  * and, when clean, sends it through the save Command, whose answer copies
  * into `settings`.
@@ -23,6 +27,7 @@ import {
   FetchSettings,
   SaveSettings,
 } from './api-commands'
+import type { LoadRetry } from './model'
 import { Message, detailFor, draftFromSettings, seedModel, validateDraft } from './model'
 import type { Model } from './model'
 import { AppRoute, urlToAppRoute } from './routes'
@@ -54,6 +59,25 @@ const AppRouteMatchDetail = (model: Model): Model['deckDetail'] => {
   return Option.none()
 }
 
+/** The fetch or save the notice retry runs, rebuilt from the current route and draft. */
+const retryCommandsFor = (model: Model, retry: LoadRetry) => {
+  switch (retry) {
+    case 'overview':
+      return [FetchOverview()]
+    case 'decks':
+      return [FetchDecks()]
+    case 'deckDetail': {
+      const route = model.route
+      if (route._tag !== 'DeckDetail') return [FetchDecks()]
+      return [FetchDeckDetail({ deckId: route.deckId })]
+    }
+    case 'settings':
+      return [FetchSettings()]
+    case 'saveSettings':
+      return [SaveSettings({ settings: settingsFromDraft(model) })]
+  }
+}
+
 const toNumber = (value: string, fallback: number): number => {
   const parsed = Number(value)
   return value.trim() === '' || !Number.isFinite(parsed) ? fallback : parsed
@@ -63,6 +87,28 @@ const toInt = (value: string, fallback: number): number => {
   const parsed = Number(value)
   return value.trim() === '' || !Number.isInteger(parsed) ? fallback : parsed
 }
+
+const settingsFromDraft = (model: Model) => {
+  const weights = model.settingsDraft.weightsText.split(',').map((part) => Number(part.trim()))
+  return {
+    fsrs: {
+      desiredRetention: model.settingsDraft.desiredRetention,
+      weights,
+      maximumInterval: model.settingsDraft.maximumInterval,
+      newPerDay: model.settingsDraft.newPerDay,
+      reviewsPerDay: model.settingsDraft.reviewsPerDay,
+      lapseMinutes: model.settingsDraft.lapseMinutes,
+    },
+    behaviour: {
+      reviewSounds: model.settingsDraft.reviewSounds,
+      tapToReveal: model.settingsDraft.tapToReveal,
+      dayRolloverHour: model.settingsDraft.dayRolloverHour,
+      keepAwake: model.settingsDraft.keepAwake,
+    },
+  }
+}
+
+const clearNotice = (model: Model): Model => ({ ...model, notice: Option.none() })
 
 export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
   Message.match<Update.Return<Model, Message>>(message, {
@@ -74,7 +120,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     ChangedUrl: ({ url }) => {
       const route = urlToAppRoute(url)
-      const next: Model = { ...model, route }
+      // A new screen means a new fetch; the old notice belongs to the old screen.
+      const next: Model = { ...clearNotice(model), route }
       return {
         model: { ...next, deckDetail: AppRouteMatchDetail(next) },
         commands: commandsForRoute(route),
@@ -84,33 +131,45 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     CompletedNavigate: () => ({ model }),
 
     GotOverview: ({ overview }) => ({
-      model: modifyFields(model, { overview: () => overview }),
+      model: clearNotice(modifyFields(model, { overview: () => overview })),
     }),
 
     GotDecks: ({ decks }) => {
-      const next: Model = modifyFields(model, { decks: () => [...decks] })
+      const next: Model = clearNotice(modifyFields(model, { decks: () => [...decks] }))
       return { model: { ...next, deckDetail: AppRouteMatchDetail(next) } }
     },
 
     GotDeckDetail: ({ detail }) => ({
-      model: modifyFields(model, { deckDetail: () => Option.some(detail) }),
+      model: clearNotice(modifyFields(model, { deckDetail: () => Option.some(detail) })),
+    }),
+
+    DeckMissing: () => ({
+      model: clearNotice(modifyFields(model, { deckDetail: () => Option.none() })),
     }),
 
     GotSettings: ({ settings }) => ({
-      model: {
+      model: clearNotice({
         ...modifyFields(model, { settings: () => settings }),
         settingsDraft: draftFromSettings(settings),
-      },
+      }),
     }),
 
     SavedSettings: ({ settings }) => ({
-      model: {
+      model: clearNotice({
         ...modifyFields(model, { settings: () => settings }),
         settingsDraft: { ...draftFromSettings(settings), saved: true },
-      },
+      }),
     }),
 
-    LoadFailed: () => ({ model }),
+    LoadFailed: ({ error, retry }) => ({
+      model: modifyFields(model, { notice: () => Option.some({ message: error, retry }) }),
+    }),
+
+    ClickedRetry: () =>
+      Option.match(model.notice, {
+        onNone: () => ({ model }),
+        onSome: (notice) => ({ model, commands: retryCommandsFor(model, notice.retry) }),
+      }),
 
     TypedDecksQuery: ({ value }) => ({
       model: modifyFields(model, { decksQuery: () => value }),
@@ -226,29 +285,12 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           },
         }
       }
-      const weights = model.settingsDraft.weightsText.split(',').map((part) => Number(part.trim()))
-      const settings = {
-        fsrs: {
-          desiredRetention: model.settingsDraft.desiredRetention,
-          weights,
-          maximumInterval: model.settingsDraft.maximumInterval,
-          newPerDay: model.settingsDraft.newPerDay,
-          reviewsPerDay: model.settingsDraft.reviewsPerDay,
-          lapseMinutes: model.settingsDraft.lapseMinutes,
-        },
-        behaviour: {
-          reviewSounds: model.settingsDraft.reviewSounds,
-          tapToReveal: model.settingsDraft.tapToReveal,
-          dayRolloverHour: model.settingsDraft.dayRolloverHour,
-          keepAwake: model.settingsDraft.keepAwake,
-        },
-      }
       return {
         model: {
           ...model,
           settingsDraft: { ...model.settingsDraft, weightsError: Option.none(), saved: false },
         },
-        commands: [SaveSettings({ settings })],
+        commands: [SaveSettings({ settings: settingsFromDraft(model) })],
       }
     },
 

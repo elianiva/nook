@@ -1,6 +1,6 @@
-import { Result, Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 import { AnkiMediaEntry } from './AnkiContent'
-import { AnkiUnsupportedArchive } from './AnkiErrors'
+import { AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'
 import { toHex } from './Hash'
 import { ProtobufReader } from './Protobuf'
 
@@ -68,21 +68,35 @@ const tooNew = new AnkiUnsupportedArchive({
     'This file was written by a newer version of Anki than nook knows. Update nook, or export the deck again from the version of Anki you normally use.',
 })
 
+/** `meta` is present but not a `PackageMetadata` message: truncated bytes, not a version nook could know. */
+const badMeta = new AnkiCorruptArchive({
+  reason: 'integrity',
+  message:
+    'This Anki export is damaged: its package metadata does not parse. Export it again from Anki.',
+})
+
 /**
  * Whether nook can read an archive, given its `meta` entry.
  *
  * Only the latest format is readable. A legacy archive keeps its content in the
  * `col` table's JSON blobs, which nook deliberately does not parse, so the answer
  * is to ask Anki for a fresh export rather than to support two formats.
+ * A present but unparsable `meta` is damage, not a version: truncated bytes
+ * fail with `badMeta` so the caller reports corruption instead of crashing.
  */
 export const checkArchiveFormat = (
   meta: Uint8Array | undefined,
-): Result.Result<number, AnkiUnsupportedArchive> => {
+): Effect.Effect<number, AnkiUnsupportedArchive | AnkiCorruptArchive> => {
   if (meta === undefined) {
-    return Result.fail(legacy)
+    return Effect.fail(legacy)
   }
-  const version = readPackageVersion(meta)
-  return version === PACKAGE_VERSION_LATEST ? Result.succeed(version) : Result.fail(tooNew)
+  let version: number
+  try {
+    version = readPackageVersion(meta)
+  } catch {
+    return Effect.fail(badMeta)
+  }
+  return version === PACKAGE_VERSION_LATEST ? Effect.succeed(version) : Effect.fail(tooNew)
 }
 
 const readMediaEntry = (bytes: Uint8Array, index: number): AnkiMediaEntry => {
@@ -113,18 +127,31 @@ const readMediaEntry = (bytes: Uint8Array, index: number): AnkiMediaEntry => {
  * order Anki happened to read its media folder in, which nook must not depend on
  * beyond recovering each name.
  *
- * Throws when the index is not a `MediaEntries` message, which the caller turns
- * into a corrupt-archive error.
+ * A `media` entry that is not a `MediaEntries` message fails with a
+ * corrupt-archive error carrying a fix, never a thrown decode error.
  */
-export const readMediaIndex = (bytes: Uint8Array): ReadonlyArray<AnkiMediaEntry> => {
+export const readMediaIndex = (
+  bytes: Uint8Array,
+): Effect.Effect<ReadonlyArray<AnkiMediaEntry>, AnkiCorruptArchive | Schema.SchemaError> => {
   const entries: Array<AnkiMediaEntry> = []
-  const reader = new ProtobufReader(bytes)
-  for (let tag = reader.next(); tag !== null; tag = reader.next()) {
-    if (tag.number === 1 && tag.wireType === 'lengthDelimited') {
-      entries.push(readMediaEntry(reader.bytes(), entries.length))
-    } else {
-      reader.skip(tag)
+  try {
+    const reader = new ProtobufReader(bytes)
+    for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+      if (tag.number === 1 && tag.wireType === 'lengthDelimited') {
+        entries.push(readMediaEntry(reader.bytes(), entries.length))
+      } else {
+        reader.skip(tag)
+      }
     }
+  } catch {
+    return Effect.fail(badMediaIndex)
   }
-  return Schema.decodeUnknownSync(Schema.Array(AnkiMediaEntry))(entries)
+  return Schema.decodeUnknownEffect(Schema.Array(AnkiMediaEntry))(entries)
 }
+
+/** A `media` entry that is not a `MediaEntries` message: truncated bytes, not an index. */
+const badMediaIndex = new AnkiCorruptArchive({
+  reason: 'integrity',
+  message:
+    'This Anki export is damaged: its media index does not parse. Export it again from Anki.',
+})

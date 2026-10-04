@@ -65,12 +65,13 @@ export class AnkiArchiveTooLarge extends Schema.TaggedError<AnkiArchiveTooLarge>
 /**
  * What a streaming read can fail with, once the archive is open.
  *
- * A driver can fail on any statement, and a row can fail to decode if the archive
- * is damaged in a way that survives opening. There is nothing else, because
+ * A driver can fail on any statement, a row can fail to decode if the archive
+ * is damaged in a way that survives opening, and a Media entry can fail to
+ * read after the archive already opened. There is nothing else, because
  * everything an Import can get wrong about a Note or a Card is a diagnostic
  * rather than an error.
  */
-export type AnkiReadError = SqlError | Schema.SchemaError
+export type AnkiReadError = SqlError | Schema.SchemaError | AnkiCorruptArchive
 
 /** What opening an archive can fail with. */
 export type AnkiOpenError =

@@ -1,3 +1,5 @@
+import { Effect } from 'effect'
+import { AnkiCorruptArchive } from './AnkiErrors'
 import { ProtobufReader } from './Protobuf'
 
 /**
@@ -13,7 +15,18 @@ import { ProtobufReader } from './Protobuf'
  * LaTeX settings, and the cloze deletion requirements are all skipped, which
  * costs nothing: a decoder that steps over an unknown field stays correct when
  * Anki adds one.
+ *
+ * Every decoder fails with a corrupt-archive error carrying a fix, never a
+ * thrown decode error: a truncated blob means the collection is damaged, not
+ * that the code ran somewhere it cannot.
  */
+
+/** A config blob that is not the message it claims to be: truncated bytes, not a crash. */
+const corruptConfig = (what: string): AnkiCorruptArchive =>
+  new AnkiCorruptArchive({
+    reason: 'integrity',
+    message: `This Anki export is damaged: its ${what} does not parse. Export it again from Anki.`,
+  })
 
 /**
  * `Notetype.Config`, in `notetypes.config`.
@@ -30,24 +43,30 @@ import { ProtobufReader } from './Protobuf'
  * }
  * ```
  */
-export const decodeNotetypeConfig = (bytes: Uint8Array) => {
-  let kind = 0
-  let sortFieldIdx = 0
-  let css = ''
-  const reader = new ProtobufReader(bytes)
-  for (let tag = reader.next(); tag !== null; tag = reader.next()) {
-    if (tag.number === 1 && tag.wireType === 'varint') {
-      kind = reader.varint()
-    } else if (tag.number === 2 && tag.wireType === 'varint') {
-      sortFieldIdx = reader.varint()
-    } else if (tag.number === 3 && tag.wireType === 'lengthDelimited') {
-      css = reader.string()
-    } else {
-      reader.skip(tag)
-    }
-  }
-  return { kind, sortFieldIdx, css }
-}
+export const decodeNotetypeConfig = (
+  bytes: Uint8Array,
+): Effect.Effect<{ kind: number; sortFieldIdx: number; css: string }, AnkiCorruptArchive> =>
+  Effect.try({
+    try: () => {
+      let kind = 0
+      let sortFieldIdx = 0
+      let css = ''
+      const reader = new ProtobufReader(bytes)
+      for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+        if (tag.number === 1 && tag.wireType === 'varint') {
+          kind = reader.varint()
+        } else if (tag.number === 2 && tag.wireType === 'varint') {
+          sortFieldIdx = reader.varint()
+        } else if (tag.number === 3 && tag.wireType === 'lengthDelimited') {
+          css = reader.string()
+        } else {
+          reader.skip(tag)
+        }
+      }
+      return { kind, sortFieldIdx, css }
+    },
+    catch: () => corruptConfig('note type configuration'),
+  })
 
 /** `Notetype.Config.Kind`: the value that marks a cloze Note Type. */
 export const NOTETYPE_KIND_CLOZE = 1
@@ -69,33 +88,49 @@ export const NOTETYPE_KIND_CLOZE = 1
  * }
  * ```
  */
-export const decodeFieldConfig = (bytes: Uint8Array) => {
-  let sticky = false
-  let rightToLeft = false
-  let fontName: string | null = null
-  let fontSize: number | null = null
-  let description = ''
-  let plainText = false
-  const reader = new ProtobufReader(bytes)
-  for (let tag = reader.next(); tag !== null; tag = reader.next()) {
-    if (tag.number === 1 && tag.wireType === 'varint') {
-      sticky = reader.bool()
-    } else if (tag.number === 2 && tag.wireType === 'varint') {
-      rightToLeft = reader.bool()
-    } else if (tag.number === 3 && tag.wireType === 'lengthDelimited') {
-      fontName = reader.string()
-    } else if (tag.number === 4 && tag.wireType === 'varint') {
-      fontSize = reader.varint()
-    } else if (tag.number === 5 && tag.wireType === 'lengthDelimited') {
-      description = reader.string()
-    } else if (tag.number === 6 && tag.wireType === 'varint') {
-      plainText = reader.bool()
-    } else {
-      reader.skip(tag)
-    }
-  }
-  return { sticky, rightToLeft, fontName, fontSize, description, plainText }
-}
+export const decodeFieldConfig = (
+  bytes: Uint8Array,
+): Effect.Effect<
+  {
+    sticky: boolean
+    rightToLeft: boolean
+    fontName: string | null
+    fontSize: number | null
+    description: string
+    plainText: boolean
+  },
+  AnkiCorruptArchive
+> =>
+  Effect.try({
+    try: () => {
+      let sticky = false
+      let rightToLeft = false
+      let fontName: string | null = null
+      let fontSize: number | null = null
+      let description = ''
+      let plainText = false
+      const reader = new ProtobufReader(bytes)
+      for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+        if (tag.number === 1 && tag.wireType === 'varint') {
+          sticky = reader.bool()
+        } else if (tag.number === 2 && tag.wireType === 'varint') {
+          rightToLeft = reader.bool()
+        } else if (tag.number === 3 && tag.wireType === 'lengthDelimited') {
+          fontName = reader.string()
+        } else if (tag.number === 4 && tag.wireType === 'varint') {
+          fontSize = reader.varint()
+        } else if (tag.number === 5 && tag.wireType === 'lengthDelimited') {
+          description = reader.string()
+        } else if (tag.number === 6 && tag.wireType === 'varint') {
+          plainText = reader.bool()
+        } else {
+          reader.skip(tag)
+        }
+      }
+      return { sticky, rightToLeft, fontName, fontSize, description, plainText }
+    },
+    catch: () => corruptConfig('field configuration'),
+  })
 
 /**
  * `Notetype.Template.Config`, in `templates.config`.
@@ -110,24 +145,33 @@ export const decodeFieldConfig = (bytes: Uint8Array) => {
  * }
  * ```
  */
-export const decodeTemplateConfig = (bytes: Uint8Array) => {
-  let questionFormat = ''
-  let answerFormat = ''
-  let deckId = 0
-  const reader = new ProtobufReader(bytes)
-  for (let tag = reader.next(); tag !== null; tag = reader.next()) {
-    if (tag.number === 1 && tag.wireType === 'lengthDelimited') {
-      questionFormat = reader.string()
-    } else if (tag.number === 2 && tag.wireType === 'lengthDelimited') {
-      answerFormat = reader.string()
-    } else if (tag.number === 5 && tag.wireType === 'varint') {
-      deckId = reader.varint()
-    } else {
-      reader.skip(tag)
-    }
-  }
-  return { questionFormat, answerFormat, deckId }
-}
+export const decodeTemplateConfig = (
+  bytes: Uint8Array,
+): Effect.Effect<
+  { questionFormat: string; answerFormat: string; deckId: number },
+  AnkiCorruptArchive
+> =>
+  Effect.try({
+    try: () => {
+      let questionFormat = ''
+      let answerFormat = ''
+      let deckId = 0
+      const reader = new ProtobufReader(bytes)
+      for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+        if (tag.number === 1 && tag.wireType === 'lengthDelimited') {
+          questionFormat = reader.string()
+        } else if (tag.number === 2 && tag.wireType === 'lengthDelimited') {
+          answerFormat = reader.string()
+        } else if (tag.number === 5 && tag.wireType === 'varint') {
+          deckId = reader.varint()
+        } else {
+          reader.skip(tag)
+        }
+      }
+      return { questionFormat, answerFormat, deckId }
+    },
+    catch: () => corruptConfig('template configuration'),
+  })
 
 /** The `kind` column of a Deck row that holds a normal Deck. */
 const DECK_KIND_NORMAL = 1
@@ -154,24 +198,30 @@ const DECK_NORMAL_DESCRIPTION = 4
  * A filtered Deck is a saved search rather than a place Cards live, so nook skips
  * it and sends its Cards back to the Decks they came from.
  */
-export const decodeDeckKind = (bytes: Uint8Array) => {
-  let filtered = false
-  let description = ''
-  const reader = new ProtobufReader(bytes)
-  for (let tag = reader.next(); tag !== null; tag = reader.next()) {
-    if (tag.number === DECK_KIND_FILTERED && tag.wireType === 'lengthDelimited') {
-      filtered = true
-      reader.skip(tag)
-    } else if (tag.number === DECK_KIND_NORMAL && tag.wireType === 'lengthDelimited') {
-      readNormalKind(reader.bytes(), (value) => {
-        description = value
-      })
-    } else {
-      reader.skip(tag)
-    }
-  }
-  return { filtered, description }
-}
+export const decodeDeckKind = (
+  bytes: Uint8Array,
+): Effect.Effect<{ filtered: boolean; description: string }, AnkiCorruptArchive> =>
+  Effect.try({
+    try: () => {
+      let filtered = false
+      let description = ''
+      const reader = new ProtobufReader(bytes)
+      for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+        if (tag.number === DECK_KIND_FILTERED && tag.wireType === 'lengthDelimited') {
+          filtered = true
+          reader.skip(tag)
+        } else if (tag.number === DECK_KIND_NORMAL && tag.wireType === 'lengthDelimited') {
+          readNormalKind(reader.bytes(), (value) => {
+            description = value
+          })
+        } else {
+          reader.skip(tag)
+        }
+      }
+      return { filtered, description }
+    },
+    catch: () => corruptConfig('deck configuration'),
+  })
 
 const readNormalKind = (bytes: Uint8Array, onDescription: (description: string) => void) => {
   const reader = new ProtobufReader(bytes)
