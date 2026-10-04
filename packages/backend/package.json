@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./decks": "./src/decks.ts",
     "./home": "./src/home.ts",
+    "./imports": "./src/imports.ts",
     "./settings": "./src/settings.ts",
     "./sql": "./src/sql.ts"
   },

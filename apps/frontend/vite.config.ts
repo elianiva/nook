@@ -22,6 +22,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     entries: ['src/entry.ts'],
+    // The wasm SQLite driver resolves its `.wasm` from its own module URL, so
+    // pre-bundling it would move the glue away from the file it looks for.
+    exclude: ['@effect/sql-sqlite-wasm', '@effect/wa-sqlite'],
   },
   environments: {
     // `src/worker.ts` is the entry Alchemy treats as the Worker

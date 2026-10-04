@@ -154,6 +154,9 @@ importers:
       '@foldkit/ui':
         specifier: 0.164.0
         version: 0.164.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(foldkit@0.164.0(@effect/platform-browser@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))
+      '@nook/anki':
+        specifier: workspace:*
+        version: link:../../packages/anki
       '@nook/api':
         specifier: workspace:*
         version: link:../../packages/api

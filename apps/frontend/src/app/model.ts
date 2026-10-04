@@ -16,6 +16,7 @@
  */
 
 import { Option, Schema as S } from 'effect'
+import { File } from 'foldkit'
 import { defineMessageUnion } from 'foldkit/message'
 import { Navigation } from 'foldkit'
 import { Url } from 'foldkit'
@@ -26,6 +27,8 @@ import {
   DUMMY_DECKS,
   DUMMY_OVERVIEW,
   DUMMY_SETTINGS,
+  ImportId,
+  ImportStatus,
   Overview,
   dummyCardsFor,
 } from '@nook/api'
@@ -116,6 +119,32 @@ export const LoadNotice = S.Struct({
 })
 export type LoadNotice = typeof LoadNotice.Type
 
+/** What the Decks page knows about the Import it last started or watched. */
+export const ImportState = S.Struct({
+  /**
+   * The archive's content hash, which is also the Import's id in D1. `Some`
+   * while a run is in flight, which is what the progress subscription keys on;
+   * `None` once it finishes or fails.
+   */
+  id: S.Option(ImportId),
+  filename: S.String,
+  /** Where the run is: reading the file, writing batches, finished, or failed. */
+  phase: S.Literals(['idle', 'reading', 'writing', 'done', 'failed']),
+  /** The last status the Worker reported, for the progress bar. */
+  status: S.Option(ImportStatus),
+  /** Why the last run failed, as one sentence for the Learner. */
+  error: S.Option(S.String),
+})
+export type ImportState = typeof ImportState.Type
+
+export const idleImport: ImportState = {
+  id: Option.none(),
+  filename: '',
+  phase: 'idle',
+  status: Option.none(),
+  error: Option.none(),
+}
+
 export const Model = S.Struct({
   route: AppRoute,
   overview: Overview,
@@ -126,6 +155,8 @@ export const Model = S.Struct({
   decksQuery: S.String,
   settings: AppSettings,
   settingsDraft: SettingsDraft,
+  /** The Import the Decks page is showing: what is running, or what last ran. */
+  importState: ImportState,
   /** The last fetch or save that failed, with a retry for its route. `None` when everything answers. */
   notice: S.Option(LoadNotice),
 })
@@ -139,6 +170,7 @@ export const seedModel = (url: Url.Url): Model => ({
   decksQuery: '',
   settings: DUMMY_SETTINGS,
   settingsDraft: draftFromSettings(DUMMY_SETTINGS),
+  importState: idleImport,
   notice: Option.none(),
 })
 
@@ -173,6 +205,18 @@ export const Message = defineMessageUnion({
   /** Decks page search text. */
   TypedDecksQuery: { value: S.String },
   StartedDeckReview: { deckId: S.String },
+  /** The Learner pressed the Import button. */
+  ClickedImport: {},
+  /** The Learner picked an archive, and it hashes to this Import id. */
+  GotImportFile: { file: File.File, id: ImportId },
+  /** The Learner dismissed the file picker. */
+  CancelledImportSelect: {},
+  /** The Worker answered with how far the running Import has come. */
+  PolledImport: { status: ImportStatus },
+  /** The Import wrote every Note and Card it found. */
+  CompletedImport: { status: ImportStatus },
+  /** The Import stopped before it finished. The cursors are still in D1, so the next run resumes. */
+  FailedImport: { error: S.String },
   // Settings draft edits. Each carries the raw field value; validation runs on save.
   EditedRetention: { value: S.String },
   EditedWeights: { value: S.String },

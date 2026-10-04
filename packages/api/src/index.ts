@@ -128,9 +128,152 @@ export const AppSettings = S.Struct({
 })
 export type AppSettings = typeof AppSettings.Type
 
+/** An Import's identity: the SHA-256 of the archive it read, as lowercase hex. */
+export const ImportId = S.String.pipe(S.brand('ImportId'))
+export type ImportId = typeof ImportId.Type
+
+/**
+ * One Note as it crosses the wire during an Import.
+ *
+ * The browser reads the archive and the Worker stores what it read, so the
+ * Note's Fields and Tags arrive as the arrays nook uses rather than as Anki's
+ * separator-joined columns. `id` is Anki's own note id, which is what makes a
+ * re-import an overwrite: the same archive produces the same ids.
+ */
+export const ImportNote = S.Struct({
+  id: S.Number,
+  guid: S.String,
+  noteTypeId: S.Number,
+  /** Unix seconds, as Anki stores it. */
+  modified: S.Number,
+  fields: S.Array(S.String),
+  tags: S.Array(S.String),
+})
+export type ImportNote = typeof ImportNote.Type
+
+/** One Card as it crosses the wire during an Import. Scheduling is dropped: every imported Card starts new. */
+export const ImportCard = S.Struct({
+  id: S.Number,
+  noteId: S.Number,
+  deckId: S.Number,
+  templateOrd: S.Number,
+  suspended: S.Boolean,
+  flag: S.Number,
+})
+export type ImportCard = typeof ImportCard.Type
+
+/** One Deck as it crosses the wire during an Import. `name` is the display name, components joined with `::`. */
+export const ImportDeck = S.Struct({
+  id: S.Number,
+  name: S.String,
+  description: S.String,
+})
+export type ImportDeck = typeof ImportDeck.Type
+
+/** One Field of an imported Note Type. */
+export const ImportField = S.Struct({
+  ord: S.Number,
+  name: S.String,
+  rightToLeft: S.Boolean,
+  fontName: S.NullOr(S.String),
+  fontSize: S.NullOr(S.Number),
+  plainText: S.Boolean,
+  description: S.String,
+  sticky: S.Boolean,
+})
+export type ImportField = typeof ImportField.Type
+
+/** One Template of an imported Note Type. Each Template produces one Card from a Note. */
+export const ImportTemplate = S.Struct({
+  ord: S.Number,
+  name: S.String,
+  questionFormat: S.String,
+  answerFormat: S.String,
+  deckId: S.Number,
+})
+export type ImportTemplate = typeof ImportTemplate.Type
+
+/** A Note Type as it crosses the wire during an Import. */
+export const ImportNoteType = S.Struct({
+  id: S.Number,
+  name: S.String,
+  kind: S.Literals(['normal', 'cloze']),
+  sortFieldOrd: S.Number,
+  css: S.String,
+  fields: S.Array(ImportField),
+  templates: S.Array(ImportTemplate),
+})
+export type ImportNoteType = typeof ImportNoteType.Type
+
+/**
+ * What the archive said it holds, sent once when an Import starts.
+ *
+ * The counts give progress a denominator and the Decks and Note Types are
+ * written up front, so a Note or Card can reference them no matter which
+ * batch it lands in.
+ */
+export const ImportManifest = S.Struct({
+  schemaVersion: S.Number,
+  noteTypes: S.Array(ImportNoteType),
+  decks: S.Array(ImportDeck),
+  noteCount: S.Number,
+  cardCount: S.Number,
+  /** How many Media files the archive carries. nook counts them but does not store them yet. */
+  mediaCount: S.Number,
+})
+export type ImportManifest = typeof ImportManifest.Type
+
+/**
+ * How far an Import has come, and everything the screens need to show it.
+ *
+ * The cursors are the last Anki id written in each stream. A run that fails
+ * midway reads them back and continues, so the browser never restarts an
+ * Import it already began.
+ */
+export const ImportStatus = S.Struct({
+  id: ImportId,
+  filename: S.String,
+  status: S.Literals(['running', 'done', 'failed']),
+  notesCursor: S.Number,
+  cardsCursor: S.Number,
+  notesImported: S.Number,
+  cardsImported: S.Number,
+  noteCount: S.Number,
+  cardCount: S.Number,
+  /** Media the archive carries, which nook does not store yet. The screen says so. */
+  mediaCount: S.Number,
+  /** Why the last run failed, for the screen to show. `None` while it runs or after it finishes. */
+  error: S.Option(S.String),
+})
+export type ImportStatus = typeof ImportStatus.Type
+
+/** What the browser sends to begin an Import. */
+export const ImportStart = S.Struct({
+  id: ImportId,
+  filename: S.String,
+  manifest: ImportManifest,
+})
+export type ImportStart = typeof ImportStart.Type
+
+/** One step of each stream. Either array may be empty: Notes and Cards are separate streams. */
+export const ImportBatchPayload = S.Struct({
+  notes: S.Array(ImportNote),
+  cards: S.Array(ImportCard),
+})
+export type ImportBatchPayload = typeof ImportBatchPayload.Type
+
+/** Why a run stopped, as one sentence for the Learner. */
+export const ImportFailure = S.Struct({ error: S.String })
+export type ImportFailure = typeof ImportFailure.Type
+
 /** Deck id on the URL that names no Deck. Returned as a 404. */
 export class DeckNotFound extends S.TaggedError<DeckNotFound>()('DeckNotFound', {
   deckId: DeckId,
+}) {}
+
+/** The URL names no Import. Returned as a 404. */
+export class ImportNotFound extends S.TaggedError<ImportNotFound>()('ImportNotFound', {
+  importId: ImportId,
 }) {}
 
 /**
@@ -183,10 +326,64 @@ export class SettingsGroup extends HttpApiGroup.make('settings')
   )
   .prefix('/settings') {}
 
+/**
+ * The Import endpoints.
+ *
+ * The browser reads the archive and the Worker stores what it read, one batch
+ * at a time. `start` is keyed by the archive's content hash, so the same file
+ * imported twice lands on the same Import and the second run resumes from the
+ * cursors `start` returns. `writeBatch` carries the rows for one step of each
+ * stream; `complete` marks the Import finished.
+ */
+export class ImportsGroup extends HttpApiGroup.make('imports')
+  .add(
+    HttpApiEndpoint.post('start', '/', {
+      payload: ImportStart,
+      success: ImportStatus,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
+    HttpApiEndpoint.post('writeBatch', '/:importId/batch', {
+      params: { importId: ImportId },
+      payload: ImportBatchPayload,
+      success: ImportStatus,
+      error: [
+        ImportNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+    HttpApiEndpoint.post('complete', '/:importId/complete', {
+      params: { importId: ImportId },
+      success: ImportStatus,
+      error: [
+        ImportNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+    HttpApiEndpoint.post('fail', '/:importId/fail', {
+      params: { importId: ImportId },
+      payload: ImportFailure,
+      success: ImportStatus,
+      error: [
+        ImportNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+    HttpApiEndpoint.get('get', '/:importId', {
+      params: { importId: ImportId },
+      success: ImportStatus,
+      error: [
+        ImportNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+  )
+  .prefix('/imports') {}
+
 export class Api extends HttpApi.make('nook-api')
   .add(DecksGroup)
   .add(HomeGroup)
   .add(SettingsGroup)
+  .add(ImportsGroup)
   .prefix('/api') {}
 
 /**

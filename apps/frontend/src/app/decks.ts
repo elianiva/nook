@@ -6,13 +6,16 @@
  * description; the backend will accept the same query string later.
  */
 
+import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { Inbox, Search, Upload } from 'lucide'
+import { CircleAlert, Inbox, LoaderCircle, Search, Upload } from 'lucide'
+import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { input } from '@/components/ui/input'
 import { button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { icon } from '@/lib/icons'
-import type { DeckSummary } from '@nook/api'
+import type { DeckSummary, ImportStatus } from '@nook/api'
 import { deckRow } from './home'
 import { Message } from './model'
 import type { Model } from './model'
@@ -25,6 +28,102 @@ export const visibleDecks = (model: Model): ReadonlyArray<DeckSummary> => {
   return model.decks.filter(
     (deck) =>
       deck.name.toLowerCase().includes(query) || deck.description.toLowerCase().includes(query),
+  )
+}
+
+const formatCount = (count: number): string => count.toLocaleString()
+
+/** Share of the archive's rows written so far, 0–100. An archive with no rows is done. */
+const percentWritten = (status: ImportStatus): number => {
+  const total = status.noteCount + status.cardCount
+  if (total === 0) return 100
+  return Math.round(((status.notesImported + status.cardsImported) / total) * 100)
+}
+
+/**
+ * The Import the Decks page is watching, or the last one it watched.
+ *
+ * While a run is in flight the numbers come from the Worker, which holds the
+ * durable counts, so the bar reflects what is stored rather than what the
+ * browser has sent. A failed run keeps its row and its cursors, so pressing
+ * Import again and picking the same archive continues it.
+ */
+const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
+  const state = model.importState
+  if (state.phase === 'idle') return h.empty
+
+  const header = (() => {
+    switch (state.phase) {
+      case 'reading':
+        return { tone: 'text-muted-foreground', text: `Reading ${state.filename}…` }
+      case 'writing':
+        return { tone: 'text-muted-foreground', text: `Importing ${state.filename}…` }
+      case 'done':
+        return { tone: 'text-primary', text: `Imported ${state.filename}` }
+      case 'failed':
+        return { tone: 'text-destructive', text: 'The import stopped' }
+    }
+  })()
+
+  const failed = Option.match(state.error, {
+    onNone: () => null,
+    onSome: (error) => error,
+  })
+
+  const counts = Option.match(state.status, {
+    onNone: () => null,
+    onSome: (status) =>
+      `${formatCount(status.notesImported)} of ${formatCount(status.noteCount)} notes · ` +
+      `${formatCount(status.cardsImported)} of ${formatCount(status.cardCount)} cards`,
+  })
+
+  // Media has no home yet, so say so rather than let the Import look complete.
+  const media = Option.match(state.status, {
+    onNone: () => null,
+    onSome: (status) =>
+      status.mediaCount === 0
+        ? null
+        : `${formatCount(status.mediaCount)} media files are not imported yet`,
+  })
+
+  return Card<Message>(
+    { className: 'gap-2 p-3' },
+    [
+      h.div(
+        [h.Class('flex items-center gap-2')],
+        [
+          icon(
+            h,
+            state.phase === 'failed' ? CircleAlert : state.phase === 'done' ? Upload : LoaderCircle,
+            `size-4 shrink-0 ${header.tone}`,
+          ),
+          h.span(
+            [h.Class(`min-w-0 flex-1 truncate text-xs font-medium ${header.tone}`)],
+            [header.text],
+          ),
+        ],
+      ),
+      ...(state.phase === 'failed'
+        ? [h.p([h.Class('text-xs text-destructive')], [failed ?? ''])]
+        : [
+            Progress<Message>(
+              {
+                value: Option.match(state.status, {
+                  onNone: () => undefined,
+                  onSome: percentWritten,
+                }),
+              },
+              h,
+            ),
+            ...(counts === null
+              ? []
+              : [h.span([h.Class('text-[11px] text-muted-foreground')], [counts])]),
+            ...(media === null
+              ? []
+              : [h.span([h.Class('text-[11px] text-muted-foreground')], [media])]),
+          ]),
+    ],
+    h,
   )
 }
 
@@ -61,12 +160,20 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
           ],
         ),
         button<Message>(
-          { variant: 'outline', size: 'icon', attributes: [h.AriaLabel('Import deck')] },
+          {
+            onClick: Message.ClickedImport(),
+            isDisabled:
+              model.importState.phase === 'reading' || model.importState.phase === 'writing',
+            variant: 'outline',
+            size: 'icon',
+            attributes: [h.AriaLabel('Import deck')],
+          },
           [icon(h, Upload, 'size-4')],
           h,
         ),
       ],
     ),
+    importPanel(model, h),
     h.div(
       [h.Class('text-xs text-muted-foreground')],
       [

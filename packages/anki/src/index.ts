@@ -19,6 +19,19 @@
  * has, so no query may touch the `tags` table or order by a collated column.
  * And `notes.flds` joins Fields with a unit separator, which no SQL function
  * here is allowed to split.
+ *
+ * The barrel exports the browser-safe surface only. `sourceNode`, which needs
+ * `node:sqlite`, lives in `SqliteArchiveNode` so that a bundle reading an
+ * archive in a browser never pulls a node-only driver into its graph.
  */
 
-export {}
+export { AnkiArchive, layer } from './AnkiArchive'
+export type { OpenedArchive, OpenedMedia } from './AnkiArchive'
+export { AnkiSqliteMemory, sourceMemory } from './SqliteArchive'
+export type { AnkiSqliteSource } from './SqliteArchive'
+export { AnkiArchiveTooLarge, AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'
+export type { AnkiOpenError, AnkiReadError } from './AnkiErrors'
+export type { AnkiDiagnostic } from './AnkiDiagnostic'
+export type { AnkiCard, AnkiMediaEntry, AnkiNote } from './AnkiContent'
+export type { AnkiDeck, AnkiField, AnkiManifest, AnkiNoteType, AnkiTemplate } from './AnkiManifest'
+export { toHex } from './Hash'

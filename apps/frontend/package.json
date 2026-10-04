@@ -12,6 +12,7 @@
   "dependencies": {
     "@effect/platform-browser": "4.0.0",
     "@foldkit/ui": "0.164.0",
+    "@nook/anki": "workspace:*",
     "@nook/api": "workspace:*",
     "@nook/backend": "workspace:*",
     "cn": "^0.2.4",

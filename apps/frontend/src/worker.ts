@@ -16,6 +16,8 @@ import {
   DecksHandlers,
   Home,
   HomeHandlers,
+  Imports,
+  ImportsHandlers,
   Settings,
   SettingsHandlers,
   SqlLive,
@@ -37,9 +39,10 @@ const healthRoute = HttpRouter.add('GET', HEALTH_PATH, () => HttpServerResponse.
 const apiRoutes = HttpApiBuilder.layer(Api, {
   openapiPath: API_PATHS.openapi,
 }).pipe(
-  Layer.provide([DecksHandlers, HomeHandlers, SettingsHandlers]),
+  Layer.provide([DecksHandlers, HomeHandlers, ImportsHandlers, SettingsHandlers]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
+  Layer.provideMerge(Imports.layer),
   Layer.provideMerge(Settings.layer),
 )
 

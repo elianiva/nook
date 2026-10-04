@@ -17,8 +17,6 @@ deck format, FSRS scheduling, and a review that never waits for the network.
 
 **The product is not built.** This repository currently holds the
 infrastructure, the tooling, and the coding conventions the product will use.
-The only screen is an app shell that reports whether the Worker answered. There
-are no tests yet, because the demo that had the only one is gone.
 
 What runs today:
 
@@ -26,11 +24,17 @@ What runs today:
   `alchemy dev` and deployed by Alchemy to Cloudflare.
 - A Cloudflare Access application that Alchemy creates and deletes with the
   Worker.
-- The package layout the product will fill in.
+- Decks, the overview, and settings, read from D1.
+- An Import. The Decks page reads a `.apkg` archive in the browser — a Worker
+  cannot, because workerd's `node:sqlite` is a stub and the wasm engine only
+  loads in a browser — and streams the archive's Note Types, Decks, Notes, and
+  Cards into D1 in batches. The Import is keyed by the archive's content hash,
+  so importing the same file twice overwrites instead of duplicating, and a run
+  that fails midway resumes from the cursors it left behind. Media is counted
+  but not stored: R2 has no home for it yet.
 
-What is decided but not written: the `.apkg` importer, FSRS scheduling, the
-offline queue, and the sync protocol. See [Design](#design) and
-[docs/adr](./docs/adr).
+What is decided but not written: FSRS scheduling, the offline queue, and the
+sync protocol. See [Design](#design) and [docs/adr](./docs/adr).
 
 ## What v1 will do
 

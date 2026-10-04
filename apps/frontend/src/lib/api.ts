@@ -16,5 +16,6 @@ export const API_PATHS = {
   openapi: OPENAPI_PATH,
   decks: `${API_PREFIX}/decks`,
   home: `${API_PREFIX}/home`,
+  imports: `${API_PREFIX}/imports`,
   settings: `${API_PREFIX}/settings`,
 } as const

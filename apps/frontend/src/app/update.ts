@@ -27,6 +27,7 @@ import {
   FetchSettings,
   SaveSettings,
 } from './api-commands'
+import { PrepareImport, RunImport } from './import-commands'
 import type { LoadRetry } from './model'
 import { Message, detailFor, draftFromSettings, seedModel, validateDraft } from './model'
 import type { Model } from './model'
@@ -176,6 +177,63 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     StartedDeckReview: () => ({ model }),
+
+    ClickedImport: () => ({ model, commands: [PrepareImport()] }),
+
+    CancelledImportSelect: () => ({ model }),
+
+    GotImportFile: ({ file, id }) => ({
+      model: {
+        ...model,
+        importState: {
+          id: Option.some(id),
+          filename: file.name,
+          phase: 'reading',
+          status: Option.none(),
+          error: Option.none(),
+        },
+      },
+      commands: [RunImport({ file, id })],
+    }),
+
+    // A tick can already be in flight when the run finishes, so a finished or
+    // failed Import ignores it rather than flipping back to "importing".
+    PolledImport: ({ status }) =>
+      model.importState.phase === 'done' || model.importState.phase === 'failed'
+        ? { model }
+        : {
+            model: {
+              ...model,
+              importState: { ...model.importState, phase: 'writing', status: Option.some(status) },
+            },
+          },
+
+    CompletedImport: ({ status }) => ({
+      model: {
+        ...model,
+        importState: {
+          id: Option.none(),
+          filename: model.importState.filename,
+          phase: 'done',
+          status: Option.some(status),
+          error: Option.none(),
+        },
+      },
+      // The Decks page paints what the Import just wrote.
+      commands: [FetchDecks()],
+    }),
+
+    FailedImport: ({ error }) => ({
+      model: {
+        ...model,
+        importState: {
+          ...model.importState,
+          id: Option.none(),
+          phase: 'failed',
+          error: Option.some(error),
+        },
+      },
+    }),
 
     EditedRetention: ({ value }) => ({
       model: {
