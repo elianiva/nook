@@ -1,26 +1,169 @@
 /**
  * The app shell's Model and Message (the TEA core).
  *
- * This is the only screen that exists so far. The first real feature replaces
- * it, but it keeps the `model` / `commands` / `update` / `view` split that
- * every later screen follows.
+ * The Model holds the current Route plus one screen-state slice per screen.
+ * Each slice is plain data shaped exactly like the backend response it
+ * carries — seeded from `@nook/api` dummy data at boot so the first paint
+ * is instant, then replaced by answers from the fetch Commands. Views read
+ * the Model only; `update` is the only place that writes it.
  *
- * `online` is an `Option` because the health check is asynchronous: the page
- * boots before the Worker answers, so `None` means "not known yet" rather than
- * "offline".
+ * Data-volume contract (mirrors `@nook/api`):
+ * - home/decks hold `DeckSummary` rows only — counts plus the next Review,
+ *   never Card bodies
+ * - the deck page holds one `DeckDetail`: its summary plus scheduling-state
+ *   rows for its own Cards
+ * - settings holds `AppSettings`, edited locally until Save
  */
 
-import { Schema as S } from 'effect'
+import { Option, Schema as S } from 'effect'
 import { defineMessageUnion } from 'foldkit/message'
+import { Navigation } from 'foldkit'
+import { Url } from 'foldkit'
+import {
+  AppSettings,
+  DeckDetail,
+  DeckSummary,
+  DUMMY_DECKS,
+  DUMMY_OVERVIEW,
+  DUMMY_SETTINGS,
+  Overview,
+  dummyCardsFor,
+} from '@nook/api'
+import { AppRoute, urlToAppRoute } from './routes'
+
+/** Editable copy of the settings form. The text field for FSRS weights stays a string so half-typed input never corrupts the numeric model. */
+export const SettingsDraft = S.Struct({
+  desiredRetention: S.Number,
+  weightsText: S.String,
+  weightsError: S.Option(S.String),
+  maximumInterval: S.Number,
+  newPerDay: S.Number,
+  reviewsPerDay: S.Number,
+  lapseMinutes: S.Number,
+  reviewSounds: S.Boolean,
+  tapToReveal: S.Boolean,
+  dayRolloverHour: S.Number,
+  keepAwake: S.Boolean,
+  saved: S.Boolean,
+})
+export type SettingsDraft = typeof SettingsDraft.Type
+
+export const draftFromSettings = (settings: AppSettings): SettingsDraft => ({
+  desiredRetention: settings.fsrs.desiredRetention,
+  weightsText: settings.fsrs.weights.map((weight) => String(weight)).join(', '),
+  weightsError: Option.none(),
+  maximumInterval: settings.fsrs.maximumInterval,
+  newPerDay: settings.fsrs.newPerDay,
+  reviewsPerDay: settings.fsrs.reviewsPerDay,
+  lapseMinutes: settings.fsrs.lapseMinutes,
+  reviewSounds: settings.behaviour.reviewSounds,
+  tapToReveal: settings.behaviour.tapToReveal,
+  dayRolloverHour: settings.behaviour.dayRolloverHour,
+  keepAwake: settings.behaviour.keepAwake,
+  saved: false,
+})
+
+const parseWeights = (text: string): ReadonlyArray<number> | undefined => {
+  const parts = text
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+  if (parts.length === 0) return undefined
+  const values = parts.map((part) => Number(part))
+  return values.every((value) => Number.isFinite(value)) ? values : undefined
+}
+
+/** Validate the draft. Returns the error message, or `undefined` when the draft is clean. */
+export const validateDraft = (draft: SettingsDraft): string | undefined => {
+  if (!(draft.desiredRetention >= 0.7 && draft.desiredRetention <= 0.95)) {
+    return 'Desired retention must be between 0.70 and 0.95.'
+  }
+  const weights = parseWeights(draft.weightsText)
+  if (weights === undefined) return 'Weights must be a comma-separated list of numbers.'
+  if (weights.length !== 17) return `Weights need 17 values (FSRS-6), found ${weights.length}.`
+  if (!Number.isInteger(draft.maximumInterval) || draft.maximumInterval < 1) {
+    return 'Maximum interval must be a whole number of days, at least 1.'
+  }
+  if (!Number.isInteger(draft.newPerDay) || draft.newPerDay < 0) {
+    return 'New Cards per day must be 0 or more.'
+  }
+  if (!Number.isInteger(draft.reviewsPerDay) || draft.reviewsPerDay < 0) {
+    return 'Reviews per day must be 0 or more.'
+  }
+  if (!Number.isInteger(draft.lapseMinutes) || draft.lapseMinutes < 1) {
+    return 'Lapse minutes must be at least 1.'
+  }
+  if (
+    !Number.isInteger(draft.dayRolloverHour) ||
+    draft.dayRolloverHour < 0 ||
+    draft.dayRolloverHour > 23
+  ) {
+    return 'Day rollover hour must be 0–23.'
+  }
+  return undefined
+}
 
 export const Model = S.Struct({
-  online: S.Option(S.Boolean),
-  detail: S.Option(S.String),
+  route: AppRoute,
+  overview: Overview,
+  decks: S.Array(DeckSummary),
+  /** The open deck page, when the route carries a deck id. `None` when the id is unknown. */
+  deckDetail: S.Option(DeckDetail),
+  /** Search text on the decks page. */
+  decksQuery: S.String,
+  settings: AppSettings,
+  settingsDraft: SettingsDraft,
 })
 export type Model = typeof Model.Type
 
+export const seedModel = (url: Url.Url): Model => ({
+  route: urlToAppRoute(url),
+  overview: DUMMY_OVERVIEW,
+  decks: [...DUMMY_DECKS],
+  deckDetail: Option.none(),
+  decksQuery: '',
+  settings: DUMMY_SETTINGS,
+  settingsDraft: draftFromSettings(DUMMY_SETTINGS),
+})
+
+/** Resolve the deck detail for a deck id from the dummy source. `None` for unknown ids. */
+export const detailFor = (
+  decks: ReadonlyArray<DeckSummary>,
+  deckId: string,
+): Option.Option<DeckDetail> => {
+  const summary = decks.find((deck) => deck.id === deckId)
+  if (summary === undefined) return Option.none()
+  return Option.some({ summary, cards: [...dummyCardsFor(summary.id)] })
+}
+
 export const Message = defineMessageUnion({
-  Healthy: { online: S.Boolean },
-  Unreachable: { message: S.String },
+  /** A link or back/forward navigation was requested. */
+  ClickedLink: { request: Navigation.UrlRequest },
+  /** The URL changed (link, back/forward, or cold load). */
+  ChangedUrl: { url: Url.Url },
+  CompletedNavigate: {},
+  /** The backend answered a fetch, or every fetch gave up. */
+  GotOverview: { overview: Overview },
+  GotDecks: { decks: S.Array(DeckSummary) },
+  GotDeckDetail: { detail: DeckDetail },
+  GotSettings: { settings: AppSettings },
+  SavedSettings: { settings: AppSettings },
+  LoadFailed: { error: S.String },
+  /** Decks page search text. */
+  TypedDecksQuery: { value: S.String },
+  StartedDeckReview: { deckId: S.String },
+  // Settings draft edits. Each carries the raw field value; validation runs on save.
+  EditedRetention: { value: S.String },
+  EditedWeights: { value: S.String },
+  EditedMaximumInterval: { value: S.String },
+  EditedNewPerDay: { value: S.String },
+  EditedReviewsPerDay: { value: S.String },
+  EditedLapseMinutes: { value: S.String },
+  EditedRolloverHour: { value: S.String },
+  ToggledReviewSounds: { isChecked: S.Boolean },
+  ToggledTapToReveal: { isChecked: S.Boolean },
+  ToggledKeepAwake: { isChecked: S.Boolean },
+  ClickedSaveSettings: {},
+  ClickedResetSettings: {},
 })
 export type Message = typeof Message.Type

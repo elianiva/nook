@@ -154,6 +154,12 @@ importers:
       '@foldkit/ui':
         specifier: 0.164.0
         version: 0.164.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(foldkit@0.164.0(@effect/platform-browser@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))
+      '@nook/api':
+        specifier: workspace:*
+        version: link:../../packages/api
+      '@nook/backend':
+        specifier: workspace:*
+        version: link:../../packages/backend
       cn:
         specifier: ^0.2.4
         version: 0.2.6
@@ -167,6 +173,9 @@ importers:
         specifier: ^1.50.0
         version: 1.51.0
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20261003.1
+        version: 5.20261003.1
       '@foldkit/vite-plugin':
         specifier: ^0.25.0
         version: 0.25.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(foldkit@0.164.0(@effect/platform-browser@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(redis@6.3.0)(vite@8.3.1(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1))
@@ -238,10 +247,25 @@ importers:
 
   packages/backend:
     dependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20261003.1
+        version: 5.20261003.1
+      '@effect/sql-d1':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))
+      '@nook/api':
+        specifier: workspace:*
+        version: link:../api
       effect:
         specifier: 4.0.0
         version: 4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)
     devDependencies:
+      '@effect/sql-sqlite-node':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))
+      '@effect/vitest':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(vitest@5.0.1)
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

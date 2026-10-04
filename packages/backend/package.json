@@ -4,16 +4,25 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./decks": "./src/decks.ts",
+    "./home": "./src/home.ts",
+    "./settings": "./src/settings.ts",
+    "./sql": "./src/sql.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@cloudflare/workers-types": "^5.20261003.1",
+    "@effect/sql-d1": "4.0.0",
+    "@nook/api": "workspace:*",
     "effect": "4.0.0"
   },
   "devDependencies": {
+    "@effect/sql-sqlite-node": "4.0.0",
+    "@effect/vitest": "4.0.0",
     "typescript": "^7.0.2",
     "vitest": "5.0.1"
   }

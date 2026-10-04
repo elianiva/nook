@@ -32,11 +32,18 @@ const domain = process.env['NOOK_DOMAIN'] ?? 'nook.elianiva.com'
  * `Website.Foldkit` drives the app's own `vite build` and uploads the client
  * output; `main` is the Worker entry it bundles alongside the assets.
  *
- * D1 and R2 join this stack with the first feature that stores a Card.
+ * The `DB` binding is the D1 database the Worker reads through `SqlLive`.
+ * Its schema and showcase seed come from `packages/backend/migrations`,
+ * applied on each deploy into Alchemy's `__alchemy_migrations` bookkeeping.
  */
 class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
   rootDir: 'apps/frontend',
   main: 'src/worker.ts',
+  env: {
+    DB: Cloudflare.D1.Database('nook-db', {
+      migrations: './packages/backend/migrations',
+    }),
+  },
   domain,
   access: {
     name: 'nook',
