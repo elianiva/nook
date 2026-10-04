@@ -1,58 +1,57 @@
 /**
- * The app shell's view. It states what nook is and reports whether the Worker
- * answered. The first real feature replaces this with the review screen.
+ * View dispatch: shell plus the active screen.
+ *
+ * Each Route arm delegates to its own screen module. Screen functions are
+ * identity boundaries for the differ, so one screen per function.
  */
 
 import { Option } from 'effect'
 import type { Document, HtmlBuilder } from 'foldkit/html'
-import { Card } from '@/components/ui/card'
-import type { Model } from './model'
-import { Message } from './model'
+import { deckDetailView } from './deck-detail'
+import { decksView } from './decks'
+import { homeView } from './home'
+import type { Message, Model } from './model'
+import { AppRoute } from './routes'
+import { settingsView } from './settings'
+import { shell } from './shell'
 
-const status = (model: Model): string =>
-  Option.match(model.online, {
-    onNone: () => 'checking the Worker…',
-    onSome: (online) => (online ? 'Worker reachable' : 'Worker unreachable'),
-  })
-
-export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
-  title: 'nook',
-  body: h.div(
-    [h.Class('flex min-h-svh items-center justify-center bg-background p-6 text-foreground')],
+const notFoundView = (model: Model, h: HtmlBuilder<Message>) =>
+  shell(
+    model,
     [
-      Card<Message>(
-        { className: 'w-full max-w-sm' },
+      h.div(
+        [h.Class('flex flex-col items-center gap-2 py-16 text-center')],
         [
-          Card.header<Message>(
-            {},
-            [
-              Card.title<Message>({}, ['nook'], h),
-              Card.description<Message>(
-                {},
-                ['A spaced repetition system. Import an Anki deck, then review.'],
-                h,
-              ),
-            ],
-            h,
-          ),
-          Card.content<Message>(
-            {},
-            [
-              h.div(
-                [h.Class('text-xs text-muted-foreground')],
-                [
-                  status(model),
-                  ...(Option.isSome(model.detail)
-                    ? [h.div([h.Class('text-xs text-destructive')], [model.detail.value])]
-                    : []),
-                ],
-              ),
-            ],
-            h,
+          h.span([h.Class('text-4xl font-bold tabular-nums')], ['404']),
+          h.p([h.Class('text-sm text-muted-foreground')], [`Nothing lives at this URL.`]),
+          h.a(
+            [h.Href('/'), h.Class('text-xs font-medium text-primary hover:underline')],
+            ['Back home'],
           ),
         ],
-        h,
       ),
     ],
-  ),
-})
+    h,
+  )
+
+const homeShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, homeView(model, h), h)
+
+const decksShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, decksView(model, h), h)
+
+const deckDetailShell = (model: Model, h: HtmlBuilder<Message>) =>
+  shell(model, deckDetailView(model, h), h)
+
+const settingsShell = (model: Model, h: HtmlBuilder<Message>) =>
+  shell(model, settingsView(model, h), h)
+
+export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
+  void Option.isSome
+  const body = AppRoute.match(model.route, {
+    Home: () => homeShell(model, h),
+    Decks: () => decksShell(model, h),
+    DeckDetail: () => deckDetailShell(model, h),
+    Settings: () => settingsShell(model, h),
+    NotFound: () => notFoundView(model, h),
+  })
+  return { title: 'nook', body }
+}

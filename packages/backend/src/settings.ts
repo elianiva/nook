@@ -1,0 +1,108 @@
+import { Context, Effect, Layer, Option, Schema } from 'effect'
+import { HttpApiBuilder } from 'effect/http-api'
+import * as Sql from 'effect/sql/SqlClient'
+import { Api } from '@nook/api'
+import type { AppSettings } from '@nook/api'
+
+/** One row of the singleton `settings` table. Booleans ride as 0/1, weights as one CSV string. */
+const SettingsRow = Schema.Struct({
+  fsrsDesiredRetention: Schema.Number,
+  fsrsWeights: Schema.String,
+  fsrsMaximumInterval: Schema.Number,
+  fsrsNewPerDay: Schema.Number,
+  fsrsReviewsPerDay: Schema.Number,
+  fsrsLapseMinutes: Schema.Number,
+  behaviourReviewSounds: Schema.Number,
+  behaviourTapToReveal: Schema.Number,
+  behaviourDayRolloverHour: Schema.Number,
+  behaviourKeepAwake: Schema.Number,
+})
+
+export const toSettings = (row: typeof SettingsRow.Type): AppSettings => ({
+  fsrs: {
+    desiredRetention: row.fsrsDesiredRetention,
+    weights: row.fsrsWeights.split(',').map(Number),
+    maximumInterval: row.fsrsMaximumInterval,
+    newPerDay: row.fsrsNewPerDay,
+    reviewsPerDay: row.fsrsReviewsPerDay,
+    lapseMinutes: row.fsrsLapseMinutes,
+  },
+  behaviour: {
+    reviewSounds: row.behaviourReviewSounds === 1,
+    tapToReveal: row.behaviourTapToReveal === 1,
+    dayRolloverHour: row.behaviourDayRolloverHour,
+    keepAwake: row.behaviourKeepAwake === 1,
+  },
+})
+
+const decodeRow = (
+  rows: ReadonlyArray<unknown>,
+): Effect.Effect<Option.Option<typeof SettingsRow.Type>> =>
+  Schema.decodeUnknownEffect(Schema.Array(SettingsRow))(rows).pipe(
+    Effect.map((decoded) => Option.fromUndefinedOr(decoded[0])),
+    Effect.orDie,
+  )
+
+/**
+ * Settings read through the `SqlClient` the layer closes over, so the
+ * service interface carries no requirements — see `Decks` for why.
+ */
+export class Settings extends Context.Service<
+  Settings,
+  {
+    readonly read: Effect.Effect<AppSettings>
+    save(settings: AppSettings): Effect.Effect<AppSettings>
+  }
+>()('nook/backend/Settings') {
+  static readonly layer = Layer.effect(
+    Settings,
+    Effect.gen(function* () {
+      const sql = yield* Sql.SqlClient
+
+      const read = Effect.gen(function* () {
+        const rows = yield* sql`SELECT fsrs_desired_retention AS "fsrsDesiredRetention",
+          fsrs_weights AS "fsrsWeights", fsrs_maximum_interval AS "fsrsMaximumInterval",
+          fsrs_new_per_day AS "fsrsNewPerDay", fsrs_reviews_per_day AS "fsrsReviewsPerDay",
+          fsrs_lapse_minutes AS "fsrsLapseMinutes", behaviour_review_sounds AS "behaviourReviewSounds",
+          behaviour_tap_to_reveal AS "behaviourTapToReveal",
+          behaviour_day_rollover_hour AS "behaviourDayRolloverHour",
+          behaviour_keep_awake AS "behaviourKeepAwake"
+          FROM settings WHERE id = 1`.pipe(Effect.orDie)
+        const found = yield* decodeRow(rows)
+        if (found._tag === 'None') {
+          return yield* Effect.die(new Error('settings row missing: migration 0001 seeds id = 1'))
+        }
+        return toSettings(found.value)
+      }).pipe(Effect.withSpan('Settings.read'))
+
+      const save = (settings: AppSettings): Effect.Effect<AppSettings> =>
+        Effect.gen(function* () {
+          yield* sql`UPDATE settings SET
+            fsrs_desired_retention = ${settings.fsrs.desiredRetention},
+            fsrs_weights = ${settings.fsrs.weights.map(String).join(',')},
+            fsrs_maximum_interval = ${settings.fsrs.maximumInterval},
+            fsrs_new_per_day = ${settings.fsrs.newPerDay},
+            fsrs_reviews_per_day = ${settings.fsrs.reviewsPerDay},
+            fsrs_lapse_minutes = ${settings.fsrs.lapseMinutes},
+            behaviour_review_sounds = ${settings.behaviour.reviewSounds ? 1 : 0},
+            behaviour_tap_to_reveal = ${settings.behaviour.tapToReveal ? 1 : 0},
+            behaviour_day_rollover_hour = ${settings.behaviour.dayRolloverHour},
+            behaviour_keep_awake = ${settings.behaviour.keepAwake ? 1 : 0},
+            updated_at = datetime('now') WHERE id = 1`.pipe(Effect.orDie)
+          return settings
+        }).pipe(Effect.withSpan('Settings.save'))
+
+      return Settings.of({ read, save })
+    }),
+  )
+}
+
+export const SettingsHandlers = HttpApiBuilder.group(Api, 'settings', (handlers) =>
+  Effect.gen(function* () {
+    const settings = yield* Settings
+    return handlers.handleAll({
+      get: () => settings.read,
+      update: ({ payload }) => settings.save(payload),
+    })
+  }),
+)
