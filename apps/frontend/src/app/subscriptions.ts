@@ -1,52 +1,91 @@
 /**
- * Subscriptions: the running Import's progress, read from the Worker.
+ * Subscriptions: the running Import.
  *
- * A Command answers with one Message, so the stream of processing a Learner
- * watches while an Import runs comes from here instead. The Worker holds the
- * durable counts — Notes and Cards written so far — and this polls them while
- * an Import is in flight. When the Import finishes or fails, `importState.id`
- * goes back to `None` and the stream tears down.
+ * A Command answers with one Message, so the stream of progress a Learner
+ * watches while an Import runs comes from here instead. This subscription owns
+ * the Import worker's lifetime: it starts one when the Import becomes active,
+ * turns each event the worker posts into a Message, and terminates the worker
+ * when the Import leaves that state. Because the worker pushes its counts after
+ * every batch, the app never polls.
+ *
+ * The worker reads the archive from IndexedDB, so the Model carries no Blob.
+ * If the archive is gone, the subscription ends quietly; the Import panel still
+ * shows the last counts the Model holds.
  */
 
-import { Effect, Option, Result, Schedule, Schema, Stream } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
-import { Http, Subscription } from 'foldkit'
-import { ImportId, ImportStatus } from '@nook/api'
+import { Effect, Option, Queue, Schema, Stream } from 'effect'
+import { Subscription } from 'foldkit'
+import { ImportId } from '@nook/api'
+import { loadImportJob } from '@/lib/import-jobs'
+import type { ImportWorkerEvent } from '@/lib/import-worker-protocol'
 import { Message } from './model'
 import type { Model } from './model'
 
-/** Often enough to look live, rarely enough to leave the Worker alone. */
-const POLL_INTERVAL = '400 millis'
+/** One worker event, as the Message it becomes. */
+export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => {
+  switch (event.type) {
+    case 'phase':
+      return [Message.ImportWorkerPhase({ phase: event.phase })]
+    case 'progress':
+      return [Message.ReportedImport({ progress: event.progress })]
+    case 'done':
+      return [Message.CompletedImport({ progress: event.progress })]
+    case 'failed':
+      return [Message.FailedImport({ error: event.error })]
+  }
+}
 
-/** Reads the Import's status, or fails quietly when the Worker cannot answer this tick. */
-const pollImport = (id: ImportId): Effect.Effect<Result.Result<ImportStatus, void>, never> =>
-  HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get(`/api/imports/${encodeURIComponent(id)}`)),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(ImportStatus)),
-    Effect.map(Result.succeed),
-    Effect.catch(() => Effect.succeed(Result.fail<void>(undefined))),
-    Effect.provide(Http.layer),
+/**
+ * Starts the Import worker for `id` and streams its events.
+ *
+ * The archive comes from IndexedDB rather than the Model. When it is missing,
+ * the stream ends without starting a worker. The finalizer terminates the
+ * worker when the subscription tears down, which is also how a run is
+ * cancelled: the cursors in D1 make the next run pick up where this one
+ * stopped.
+ */
+const streamImport = (id: ImportId): Stream.Stream<Message, never> =>
+  Stream.callback<Message>((queue) =>
+    Effect.gen(function* () {
+      const job = yield* loadImportJob().pipe(Effect.catch(() => Effect.succeed(Option.none())))
+      if (Option.isNone(job)) {
+        Queue.endUnsafe(queue)
+        return
+      }
+
+      const worker = new Worker(new URL('../import-worker.ts', import.meta.url), {
+        type: 'module',
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => worker.terminate()))
+
+      worker.onmessage = (event: MessageEvent<ImportWorkerEvent>) => {
+        for (const message of toMessages(event.data)) Queue.offerUnsafe(queue, message)
+        if (event.data.type === 'done' || event.data.type === 'failed') Queue.endUnsafe(queue)
+      }
+      worker.onerror = () => {
+        Queue.offerUnsafe(
+          queue,
+          Message.FailedImport({ error: 'The import stopped unexpectedly. Try again.' }),
+        )
+        Queue.endUnsafe(queue)
+      }
+
+      worker.postMessage({ type: 'run', id, filename: job.value.filename, blob: job.value.blob })
+    }),
   )
 
 export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
-  importProgress: entry(
-    { importId: Schema.Option(ImportId) },
+  importRun: entry(
+    { importId: Schema.Option(ImportId), active: Schema.Boolean },
     {
-      modelToDependencies: (model) => ({ importId: model.importState.id }),
-      dependenciesToStream: ({ importId }) =>
-        Option.match(importId, {
-          onNone: () => Stream.empty,
-          onSome: (id) =>
-            Stream.fromEffectSchedule(pollImport(id), Schedule.spaced(POLL_INTERVAL)).pipe(
-              // A tick the Worker could not answer is skipped, not shown.
-              Stream.filterMap((status) => status),
-              // A finished Import needs no more ticks; the Model tears the
-              // stream down anyway, and this keeps the last tick the last one.
-              Stream.takeWhile((status) => status.status !== 'done'),
-              Stream.map((status) => Message.PolledImport({ status })),
-            ),
-        }),
+      // Only the id and the active flag matter here. The phase moves on every
+      // progress tick, and keying on it would tear the worker down mid-run.
+      modelToDependencies: (model) => ({
+        importId: model.importState.id,
+        active: model.importState.active,
+      }),
+      dependenciesToStream: ({ importId, active }) =>
+        active && Option.isSome(importId) ? streamImport(importId.value) : Stream.empty,
     },
   ),
 }))

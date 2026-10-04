@@ -16,7 +16,6 @@
  */
 
 import { Option, Schema as S } from 'effect'
-import { File } from 'foldkit'
 import { defineMessageUnion } from 'foldkit/message'
 import { Navigation } from 'foldkit'
 import { Url } from 'foldkit'
@@ -28,10 +27,10 @@ import {
   DUMMY_OVERVIEW,
   DUMMY_SETTINGS,
   ImportId,
-  ImportStatus,
   Overview,
   dummyCardsFor,
 } from '@nook/api'
+import { ImportProgress } from '@/lib/import-worker-protocol'
 import { AppRoute, urlToAppRoute } from './routes'
 
 /** Editable copy of the settings form. The text field for FSRS weights stays a string so half-typed input never corrupts the numeric model. */
@@ -119,19 +118,48 @@ export const LoadNotice = S.Struct({
 })
 export type LoadNotice = typeof LoadNotice.Type
 
+/**
+ * An Import the client can resume: its id and the archive's name.
+ *
+ * The archive's bytes stay in IndexedDB, out of the Model, because a Blob does
+ * not belong in the state a view reads.
+ */
+export const ImportJobMeta = S.Struct({
+  id: ImportId,
+  filename: S.String,
+})
+export type ImportJobMeta = typeof ImportJobMeta.Type
+
+/** Where an Import is, for the panel to name. `running` means the worker should be up. */
+export const ImportPhase = S.Literals([
+  'idle',
+  'preparing',
+  'running',
+  'reading',
+  'writing',
+  'done',
+  'failed',
+])
+export type ImportPhase = typeof ImportPhase.Type
+
 /** What the Decks page knows about the Import it last started or watched. */
 export const ImportState = S.Struct({
   /**
    * The archive's content hash, which is also the Import's id in D1. `Some`
-   * while a run is in flight, which is what the progress subscription keys on;
-   * `None` once it finishes or fails.
+   * while a run can resume, including after it fails; `None` once it is done
+   * or dismissed.
    */
   id: S.Option(ImportId),
   filename: S.String,
-  /** Where the run is: reading the file, writing batches, finished, or failed. */
-  phase: S.Literals(['idle', 'reading', 'writing', 'done', 'failed']),
-  /** The last status the Worker reported, for the progress bar. */
-  status: S.Option(ImportStatus),
+  /**
+   * Whether the Import worker should be running. This is what the subscription
+   * keys on, so the worker is not torn down when only the phase moves.
+   */
+  active: S.Boolean,
+  /** Where the run is: preparing the file, reading it, writing rows, or an end. */
+  phase: ImportPhase,
+  /** The last counts the worker reported, for the progress bar. */
+  status: S.Option(ImportProgress),
   /** Why the last run failed, as one sentence for the Learner. */
   error: S.Option(S.String),
 })
@@ -140,6 +168,7 @@ export type ImportState = typeof ImportState.Type
 export const idleImport: ImportState = {
   id: Option.none(),
   filename: '',
+  active: false,
   phase: 'idle',
   status: Option.none(),
   error: Option.none(),
@@ -208,15 +237,27 @@ export const Message = defineMessageUnion({
   /** The Learner pressed the Import button. */
   ClickedImport: {},
   /** The Learner picked an archive, and it hashes to this Import id. */
-  GotImportFile: { file: File.File, id: ImportId },
+  GotImportFile: { id: ImportId, filename: S.String },
   /** The Learner dismissed the file picker. */
   CancelledImportSelect: {},
-  /** The Worker answered with how far the running Import has come. */
-  PolledImport: { status: ImportStatus },
+  /** Boot found a stored Import to resume, or none. */
+  RestoredImportJob: { job: S.Option(ImportJobMeta) },
+  /** The Import worker opened the archive, or moved on to writing its rows. */
+  ImportWorkerPhase: { phase: S.Literals(['reading', 'writing']) },
+  /** The worker answered with how far the running Import has come. */
+  ReportedImport: { progress: ImportProgress },
   /** The Import wrote every Note and Card it found. */
-  CompletedImport: { status: ImportStatus },
-  /** The Import stopped before it finished. The cursors are still in D1, so the next run resumes. */
+  CompletedImport: { progress: ImportProgress },
+  /** The Import stopped before it finished. The archive is kept, so Retry resumes. */
   FailedImport: { error: S.String },
+  /** The Learner pressed Retry on a stopped Import. */
+  ClickedRetryImport: {},
+  /** The Learner stopped a running Import. */
+  ClickedCancelImport: {},
+  /** The Learner dismissed the Import panel. */
+  ClickedDismissImport: {},
+  /** The stored archive was deleted. */
+  ClearedImportJob: {},
   // Settings draft edits. Each carries the raw field value; validation runs on save.
   EditedRetention: { value: S.String },
   EditedWeights: { value: S.String },

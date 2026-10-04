@@ -15,7 +15,8 @@ import { input } from '@/components/ui/input'
 import { button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { icon } from '@/lib/icons'
-import type { DeckSummary, ImportStatus } from '@nook/api'
+import type { DeckSummary } from '@nook/api'
+import type { ImportProgress } from '@/lib/import-worker-protocol'
 import { deckRow } from './home'
 import { Message } from './model'
 import type { Model } from './model'
@@ -34,19 +35,19 @@ export const visibleDecks = (model: Model): ReadonlyArray<DeckSummary> => {
 const formatCount = (count: number): string => count.toLocaleString()
 
 /** Share of the archive's rows written so far, 0–100. An archive with no rows is done. */
-const percentWritten = (status: ImportStatus): number => {
-  const total = status.noteCount + status.cardCount
+const percentWritten = (progress: ImportProgress): number => {
+  const total = progress.noteCount + progress.cardCount
   if (total === 0) return 100
-  return Math.round(((status.notesImported + status.cardsImported) / total) * 100)
+  return Math.round(((progress.notesImported + progress.cardsImported) / total) * 100)
 }
 
 /**
  * The Import the Decks page is watching, or the last one it watched.
  *
- * While a run is in flight the numbers come from the Worker, which holds the
- * durable counts, so the bar reflects what is stored rather than what the
- * browser has sent. A failed run keeps its row and its cursors, so pressing
- * Import again and picking the same archive continues it.
+ * While a run is in flight the numbers arrive from the Import worker, which
+ * forwards the Worker's own counts after every batch, so the bar reflects what
+ * is stored rather than what the browser has sent. A failed run keeps its
+ * archive and its cursors, so Retry continues it without another file pick.
  */
 const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   const state = model.importState
@@ -54,6 +55,9 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
 
   const header = (() => {
     switch (state.phase) {
+      case 'preparing':
+        return { tone: 'text-muted-foreground', text: 'Preparing the archive…' }
+      case 'running':
       case 'reading':
         return { tone: 'text-muted-foreground', text: `Reading ${state.filename}…` }
       case 'writing':
@@ -85,6 +89,41 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
         ? null
         : `${formatCount(status.mediaCount)} media files are not imported yet`,
   })
+
+  // A stopped Import keeps its archive, so Retry resumes it without another
+  // file pick. A finished one only needs dismissing, and a running one can be
+  // stopped.
+  const actions: ReadonlyArray<Child> =
+    state.phase === 'failed'
+      ? [
+          button<Message>(
+            { onClick: Message.ClickedRetryImport(), variant: 'outline', size: 'sm' },
+            ['Retry'],
+            h,
+          ),
+          button<Message>(
+            { onClick: Message.ClickedDismissImport(), variant: 'ghost', size: 'sm' },
+            ['Dismiss'],
+            h,
+          ),
+        ]
+      : state.phase === 'done'
+        ? [
+            button<Message>(
+              { onClick: Message.ClickedDismissImport(), variant: 'ghost', size: 'sm' },
+              ['Dismiss'],
+              h,
+            ),
+          ]
+        : state.active
+          ? [
+              button<Message>(
+                { onClick: Message.ClickedCancelImport(), variant: 'ghost', size: 'sm' },
+                ['Cancel'],
+                h,
+              ),
+            ]
+          : []
 
   return Card<Message>(
     { className: 'gap-2 p-3' },
@@ -122,6 +161,7 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
               ? []
               : [h.span([h.Class('text-[11px] text-muted-foreground')], [media])]),
           ]),
+      ...(actions.length === 0 ? [] : [h.div([h.Class('flex gap-1 pt-1')], actions)]),
     ],
     h,
   )
@@ -162,8 +202,7 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
         button<Message>(
           {
             onClick: Message.ClickedImport(),
-            isDisabled:
-              model.importState.phase === 'reading' || model.importState.phase === 'writing',
+            isDisabled: model.importState.active,
             variant: 'outline',
             size: 'icon',
             attributes: [h.AriaLabel('Import deck')],

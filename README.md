@@ -28,10 +28,14 @@ What runs today:
 - An Import. The Decks page reads a `.apkg` archive in the browser — a Worker
   cannot, because workerd's `node:sqlite` is a stub and the wasm engine only
   loads in a browser — and streams the archive's Note Types, Decks, Notes, and
-  Cards into D1 in batches. The Import is keyed by the archive's content hash,
-  so importing the same file twice overwrites instead of duplicating, and a run
-  that fails midway resumes from the cursors it left behind. Media is counted
-  but not stored: R2 has no home for it yet.
+  Cards into D1 in batches. The read runs in a Web Worker, which pushes the
+  progress the panel shows after every batch instead of the page polling for
+  it. The Import is keyed by the archive's content hash, so importing the same
+  file twice overwrites instead of duplicating, and a run that fails midway
+  resumes from the cursors it left behind. The archive is kept in IndexedDB
+  while a run is in flight, so a reload resumes it and a stopped run can Retry
+  without another file pick. Media is counted but not stored: R2 has no home
+  for it yet.
 
 What is decided but not written: FSRS scheduling, the offline queue, and the
 sync protocol. See [Design](#design) and [docs/adr](./docs/adr).

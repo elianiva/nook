@@ -27,9 +27,16 @@ import {
   FetchSettings,
   SaveSettings,
 } from './api-commands'
-import { PrepareImport, RunImport } from './import-commands'
+import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
 import type { LoadRetry } from './model'
-import { Message, detailFor, draftFromSettings, seedModel, validateDraft } from './model'
+import {
+  Message,
+  detailFor,
+  draftFromSettings,
+  idleImport,
+  seedModel,
+  validateDraft,
+} from './model'
 import type { Model } from './model'
 import { AppRoute, urlToAppRoute } from './routes'
 
@@ -50,7 +57,9 @@ export const init = (url: Url): Update.Return<Model, Message> => {
       ...model,
       deckDetail: AppRouteMatchDetail(model),
     },
-    commands: commandsForRoute(model.route),
+    // An Import interrupted by a reload is still in IndexedDB; restore it so the
+    // worker can pick it up again.
+    commands: [...commandsForRoute(model.route), RestoreImportJob()],
   }
 }
 
@@ -178,62 +187,117 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     StartedDeckReview: () => ({ model }),
 
-    ClickedImport: () => ({ model, commands: [PrepareImport()] }),
+    // Clear the last Import and show "preparing" while the picker is open and
+    // the archive is hashed. `active` stays false, so no worker starts yet.
+    ClickedImport: () => ({
+      model: { ...model, importState: { ...idleImport, phase: 'preparing' } },
+      commands: [PrepareImport()],
+    }),
 
-    CancelledImportSelect: () => ({ model }),
+    CancelledImportSelect: () => ({ model: { ...model, importState: idleImport } }),
 
-    GotImportFile: ({ file, id }) => ({
+    GotImportFile: ({ id, filename }) => ({
       model: {
         ...model,
         importState: {
           id: Option.some(id),
-          filename: file.name,
-          phase: 'reading',
+          filename,
+          active: true,
+          phase: 'running',
           status: Option.none(),
           error: Option.none(),
         },
       },
-      commands: [RunImport({ file, id })],
     }),
 
-    // A tick can already be in flight when the run finishes, so a finished or
-    // failed Import ignores it rather than flipping back to "importing".
-    PolledImport: ({ status }) =>
-      model.importState.phase === 'done' || model.importState.phase === 'failed'
-        ? { model }
-        : {
-            model: {
-              ...model,
-              importState: { ...model.importState, phase: 'writing', status: Option.some(status) },
+    // A kept archive means an Import was interrupted. Resume it: the worker
+    // calls `start` again and D1 returns the cursors it stopped at.
+    RestoredImportJob: ({ job }) =>
+      Option.match(job, {
+        onNone: () => ({ model }),
+        onSome: (restored) => ({
+          model: {
+            ...model,
+            importState: {
+              id: Option.some(restored.id),
+              filename: restored.filename,
+              active: true,
+              phase: 'running',
+              status: Option.none(),
+              error: Option.none(),
             },
           },
+        }),
+      }),
 
-    CompletedImport: ({ status }) => ({
+    ImportWorkerPhase: ({ phase }) => ({
+      model: { ...model, importState: { ...model.importState, phase } },
+    }),
+
+    ReportedImport: ({ progress }) => ({
+      model: { ...model, importState: { ...model.importState, status: Option.some(progress) } },
+    }),
+
+    CompletedImport: ({ progress }) => ({
       model: {
         ...model,
         importState: {
           id: Option.none(),
           filename: model.importState.filename,
+          active: false,
           phase: 'done',
-          status: Option.some(status),
+          status: Option.some(progress),
           error: Option.none(),
         },
       },
-      // The Decks page paints what the Import just wrote.
-      commands: [FetchDecks()],
+      // The Decks page paints what the Import just wrote, and the archive is no
+      // longer needed.
+      commands: [FetchDecks(), ClearImportJob()],
     }),
 
+    // The archive is kept, so Retry can resume without another file pick.
     FailedImport: ({ error }) => ({
       model: {
         ...model,
         importState: {
           ...model.importState,
-          id: Option.none(),
+          active: false,
           phase: 'failed',
           error: Option.some(error),
         },
       },
     }),
+
+    ClickedRetryImport: () =>
+      Option.match(model.importState.id, {
+        onNone: () => ({ model }),
+        onSome: () => ({
+          model: {
+            ...model,
+            importState: {
+              ...model.importState,
+              active: true,
+              phase: 'running',
+              error: Option.none(),
+            },
+          },
+        }),
+      }),
+
+    // Stopping a run tears the worker down and forgets the archive, which is
+    // what "active" going false makes the subscription do. The Import's cursors
+    // stay in D1, so importing the same file again later resumes it.
+    ClickedCancelImport: () => ({
+      model: { ...model, importState: idleImport },
+      commands: [ClearImportJob()],
+    }),
+
+    ClickedDismissImport: () => ({
+      model: { ...model, importState: idleImport },
+      commands: [ClearImportJob()],
+    }),
+
+    ClearedImportJob: () => ({ model }),
 
     EditedRetention: ({ value }) => ({
       model: {
