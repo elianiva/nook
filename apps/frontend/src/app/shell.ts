@@ -164,7 +164,13 @@ export const shell = (
           h.Class(
             cn(
               'mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col',
-              focused ? 'gap-0 overflow-hidden' : 'gap-4 overflow-y-auto px-3 py-4',
+              // Every screen child keeps its own height: without `shrink-0`
+              // a flex column squeezes its children below their content
+              // height when the page is taller than the viewport, and cards
+              // with `overflow-hidden` slice their text mid-line instead of
+              // scrolling. (Review manages its own flex children, so it is
+              // exempt.)
+              focused ? 'gap-0 overflow-hidden' : 'gap-4 overflow-y-auto px-3 py-4 [&>*]:shrink-0',
             ),
           ),
         ],

@@ -9,13 +9,19 @@
  *
  * Every field edits a local draft; Save validates the whole form and sends
  * it through the save Command — the view does not change.
+ *
+ * Mobile layout: each row is a stacked label-over-control pair, never a
+ * side-by-side label/input pair. A 390px phone gives ~340px of card content
+ * width, and a 96px-wide number input next to its label squeezes the label
+ * into a tall wrapped column with a clipped input. Chrome on Android also
+ * zooms the page when a sub-16px input takes focus, which breaks the narrow
+ * shell frame — every text control here sets 16px text so focus never zooms.
  */
 
 import { Option } from 'effect'
-import type { Html, HtmlBuilder } from 'foldkit/html'
+import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Download, RotateCcw, Save } from 'lucide'
 import { Card } from '@/components/ui/card'
-import { input } from '@/components/ui/input'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
 import { separator } from '@/components/ui/separator'
 import { switch_ } from '@/components/ui/switch'
@@ -46,6 +52,27 @@ const section = (
     h,
   )
 
+const fieldLabelClass = 'text-sm font-medium leading-none'
+const fieldHintClass = 'text-xs leading-relaxed text-muted-foreground'
+
+const fieldHeader = (
+  id: string,
+  labelText: string,
+  description: string | undefined,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-1')],
+    [
+      h.label([h.For(id), h.Class(fieldLabelClass)], [labelText]),
+      ...(description === undefined ? [] : [h.p([h.Class(fieldHintClass)], [description])]),
+    ],
+  )
+
+/** Shared number-input classes: full width, 16px text so mobile focus never zooms. */
+const numberInputClass =
+  'h-10 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base tabular-nums outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
+
 const numberField = (
   id: string,
   labelText: string,
@@ -53,32 +80,35 @@ const numberField = (
   toMessage: (value: string) => Message,
   description: string | undefined,
   step: string,
+  extra: Readonly<{
+    min?: string
+    max?: string
+    inputMode?: string
+    hintId?: string
+  }>,
   h: HtmlBuilder<Message>,
-): Html =>
-  h.div(
-    [h.Class('grid grid-cols-[1fr_auto] items-center gap-3')],
+): Html => {
+  const describedBy: ReadonlyArray<Attribute<Message>> =
+    extra.hintId === undefined ? [] : [h.AriaDescribedBy(extra.hintId)]
+  return h.div(
+    [h.Class('flex flex-col gap-2')],
     [
-      h.div(
-        [h.Class('flex min-w-0 flex-col gap-0.5')],
-        [
-          h.span([h.Class('text-sm font-medium leading-none')], [labelText]),
-          ...(description === undefined
-            ? []
-            : [h.span([h.Class('text-xs text-muted-foreground')], [description])]),
-        ],
-      ),
+      fieldHeader(id, labelText, description, h),
       h.input([
         h.Id(id),
         h.Type('number'),
         h.Value(String(value)),
         h.OnInput(toMessage),
         h.Step(step),
-        h.Class(
-          'h-8 w-24 rounded-lg border border-input bg-transparent px-2.5 py-1 text-right text-sm tabular-nums outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
-        ),
+        ...(extra.min === undefined ? [] : [h.Min(extra.min)]),
+        ...(extra.max === undefined ? [] : [h.Max(extra.max)]),
+        ...(extra.inputMode === undefined ? [] : [h.InputMode(extra.inputMode)]),
+        ...describedBy,
+        h.Class(numberInputClass),
       ]),
     ],
   )
+}
 
 const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
   section(
@@ -92,6 +122,7 @@ const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         (value) => Message.EditedRetention({ value }),
         'Target recall rate, 0.70–0.95',
         '0.01',
+        { min: '0.7', max: '0.95', inputMode: 'decimal', hintId: 'desired-retention-hint' },
         h,
       ),
       textarea<Message>(
@@ -102,7 +133,8 @@ const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
           value: draft.weightsText,
           onInput: (value) => Message.EditedWeights({ value }),
           rows: 3,
-          wrapperClass: 'gap-1.5',
+          wrapperClass: 'gap-2',
+          className: 'text-base md:text-sm',
         },
         h,
       ),
@@ -113,6 +145,7 @@ const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         (value) => Message.EditedMaximumInterval({ value }),
         'Cap on any interval, in days',
         '1',
+        { min: '1', inputMode: 'numeric' },
         h,
       ),
     ],
@@ -131,6 +164,7 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         (value) => Message.EditedNewPerDay({ value }),
         undefined,
         '1',
+        { min: '0', inputMode: 'numeric' },
         h,
       ),
       numberField(
@@ -140,6 +174,7 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         (value) => Message.EditedReviewsPerDay({ value }),
         undefined,
         '1',
+        { min: '0', inputMode: 'numeric' },
         h,
       ),
       numberField(
@@ -149,6 +184,7 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         (value) => Message.EditedLapseMinutes({ value }),
         'Minutes before an Again Card returns this session',
         '1',
+        { min: '1', inputMode: 'numeric' },
         h,
       ),
     ],
@@ -172,18 +208,35 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
         },
         h,
       ),
-      nativeSelect<Message>(
-        {
-          id: 'rollover-hour',
-          label: 'Day rollover',
-          description: 'When today ends: reviews before this hour count toward yesterday',
-          value: `${draft.dayRolloverHour}:00`,
-          onChange: (value) => Message.EditedRolloverHour({ value: value.split(':')[0] ?? '4' }),
-          options: rolloverOptions.map((option) =>
-            nativeSelectOption<Message>({ value: option, label: option }, h),
+      h.div(
+        [h.Class('flex flex-col gap-2')],
+        [
+          h.div(
+            [h.Class('flex flex-col gap-1')],
+            [
+              h.label([h.For('rollover-hour'), h.Class(fieldLabelClass)], ['Day rollover']),
+              h.p(
+                [h.Class(fieldHintClass)],
+                ['When today ends: reviews before this hour count toward yesterday'],
+              ),
+            ],
           ),
-        },
-        h,
+          nativeSelect<Message>(
+            {
+              id: 'rollover-hour',
+              label: 'Day rollover',
+              value: `${draft.dayRolloverHour}:00`,
+              onChange: (value) =>
+                Message.EditedRolloverHour({ value: value.split(':')[0] ?? '4' }),
+              options: rolloverOptions.map((option) =>
+                nativeSelectOption<Message>({ value: option, label: option }, h),
+              ),
+              labelClass: 'sr-only',
+              className: 'h-10 text-base md:text-sm',
+            },
+            h,
+          ),
+        ],
       ),
     ],
     h,
@@ -203,8 +256,30 @@ const errorBanner = (draft: SettingsDraft, h: HtmlBuilder<Message>): Child =>
       ),
   })
 
+const saveBar = (h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('flex gap-2')],
+    [
+      button<Message>(
+        { onClick: Message.ClickedSaveSettings(), size: 'lg', className: 'h-11 flex-1 text-base' },
+        [icon(h, Save, 'size-4', 'inline-start'), 'Save settings'],
+        h,
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedResetSettings(),
+          variant: 'outline',
+          size: 'lg',
+          className: 'h-11 px-4',
+          attributes: [h.AriaLabel('Reset changes')],
+        },
+        [icon(h, RotateCcw, 'size-4')],
+        h,
+      ),
+    ],
+  )
+
 export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
-  void input
   const draft = model.settingsDraft
   return [
     errorBanner(draft, h),
@@ -223,26 +298,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
     fsrsSection(draft, h),
     defaultsSection(draft, h),
     behaviourSection(draft, h),
-    h.div(
-      [h.Class('flex gap-2 pb-2')],
-      [
-        button<Message>(
-          { onClick: Message.ClickedSaveSettings(), size: 'lg', className: 'flex-1' },
-          [icon(h, Save, 'size-4', 'inline-start'), 'Save settings'],
-          h,
-        ),
-        button<Message>(
-          {
-            onClick: Message.ClickedResetSettings(),
-            variant: 'outline',
-            size: 'lg',
-            attributes: [h.AriaLabel('Reset changes')],
-          },
-          [icon(h, RotateCcw, 'size-4')],
-          h,
-        ),
-      ],
-    ),
+    saveBar(h),
     section(
       'Collection',
       'Your data, out. One JSON file with Decks, Notes, Cards, Schedules, and the Review log.',
@@ -252,7 +308,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
             onClick: Message.ClickedExport(),
             variant: 'outline',
             size: 'lg',
-            className: 'w-full',
+            className: 'h-11 w-full text-base',
           },
           [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
           h,
