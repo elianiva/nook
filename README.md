@@ -24,7 +24,10 @@ What runs today:
   `alchemy dev` and deployed by Alchemy to Cloudflare.
 - A Cloudflare Access application that Alchemy creates and deletes with the
   Worker.
-- Decks, the overview, and settings, read from D1.
+- Decks, the overview, and each Deck page, read from D1 through Foldkit
+  Queries: each read holds its last answer, reloads in place, and ignores a
+  late response from an older request. Settings is a plain fetch, because its
+  answer resets the form (`docs/adr/0004`).
 - An Import. The Decks page reads a `.apkg` archive in the browser — a Worker
   cannot, because workerd's `node:sqlite` is a stub and the wasm engine only
   loads in a browser — and streams the archive's Note Types, Decks, Notes, and
@@ -136,7 +139,20 @@ pulling in the reader's browser-only SQLite engine.
 Screens follow an Elm-style split: `model.ts`, `commands.ts`, `update.ts`, and
 `view.ts`. Custom Foldkit lint rules enforce it and fail the build.
 
+Reads follow the same split. `queries.ts` defines the Query submodels that own
+each list and detail read; `api-commands.ts` keeps the writes and the review
+queue.
+
 ## Design
+
+Reads:
+
+- The overview, the deck list, and one Deck by id are Foldkit Queries. Each
+  owns its fetch, its `AsyncData` state, and a generation number that rejects a
+  late answer from an older request. See
+  [ADR 0004](./docs/adr/0004-queries-own-fetch-state.md).
+- A failed read is local: the slice that failed shows its own message and
+  Retry, and a read that fails after it has data keeps that data.
 
 Storage:
 
@@ -195,9 +211,9 @@ push to `master`. Change that before you fork this, or every push publishes.
   `patches/effect@4.0.0.patch`. The patch is load-bearing: Foldkit redefines
   three `Schema` properties that Effect 4.0.0 defines as non-configurable, and
   an unpatched Effect throws at runtime. Install through pnpm, not around it.
-- `apps/frontend/vite.config.ts` maps `effect/unstable/http` and
-  `effect/unstable/persistence` onto their new top-level paths, because
-  Foldkit 0.164.0 still imports the deleted specifiers.
+- `foldkit` and `@foldkit/ui` track the same version. The list and detail
+  reads use `foldkit/experimental/query`, whose names and Model shape can
+  change while the module stabilizes.
 - `components.json` registers the `@foldcn` registry namespace, but
   `src/components/ui/` holds checked-in copies. Installing a component copies
   the source in; it is not fetched at build time.

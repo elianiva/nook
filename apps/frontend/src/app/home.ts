@@ -8,6 +8,7 @@
  * 4. Deck list (same rows as the Decks page, without search)
  */
 
+import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { ChevronRight, Flame, Inbox, Play } from 'lucide'
@@ -18,9 +19,11 @@ import { Progress } from '@/components/ui/progress'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import type { DeckSummary } from '@nook/api'
+import type { DeckSummary, Overview } from '@nook/api'
+import { errorPanel, loadingPanel } from './load-state'
 import { Message } from './model'
 import type { Model } from './model'
+import { decksQuery, overviewQuery } from './queries'
 import { routeToUrl } from './routes'
 
 type Child = Html | string
@@ -98,7 +101,7 @@ export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
-const hero = (model: Model, h: HtmlBuilder<Message>): Html =>
+const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
   Card<Message>(
     { className: 'border-primary/30 bg-gradient-to-b from-primary/10 to-transparent p-4' },
     [
@@ -111,7 +114,7 @@ const hero = (model: Model, h: HtmlBuilder<Message>): Html =>
             [
               h.span(
                 [h.Class('text-4xl font-bold tabular-nums tracking-tight')],
-                [String(model.overview.dueNow)],
+                [String(overview.dueNow)],
               ),
               h.span([h.Class('text-sm text-muted-foreground')], ['waiting']),
             ],
@@ -119,10 +122,10 @@ const hero = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.div(
             [h.Class('mt-2 flex items-center gap-2')],
             [
-              Progress<Message>({ value: model.overview.todayProgress, className: 'flex-1' }, h),
+              Progress<Message>({ value: overview.todayProgress, className: 'flex-1' }, h),
               h.span(
                 [h.Class('text-xs tabular-nums text-muted-foreground')],
-                [`${model.overview.todayProgress}%`],
+                [`${overview.todayProgress}%`],
               ),
             ],
           ),
@@ -164,23 +167,27 @@ const statCell = (label: string, value: string, sub: string, h: HtmlBuilder<Mess
     ],
   )
 
-const stats = (model: Model, h: HtmlBuilder<Message>): Html =>
+const stats = (
+  overview: Overview,
+  decks: ReadonlyArray<DeckSummary>,
+  h: HtmlBuilder<Message>,
+): Html =>
   h.div(
     [h.Class('flex gap-2')],
     [
-      statCell('Reviewed', String(model.overview.reviewedToday), 'today', h),
-      statCell('Streak', `${model.overview.streakDays}d`, 'in a row', h),
+      statCell('Reviewed', String(overview.reviewedToday), 'today', h),
+      statCell('Streak', `${overview.streakDays}d`, 'in a row', h),
       statCell(
         'Retention',
-        `${model.decks.length === 0 ? 0 : Math.round(model.decks.reduce((sum, deck) => sum + deck.retention7d, 0) / model.decks.length)}%`,
+        `${decks.length === 0 ? 0 : Math.round(decks.reduce((sum, deck) => sum + deck.retention7d, 0) / decks.length)}%`,
         '7-day avg',
         h,
       ),
     ],
   )
 
-const activity = (model: Model, h: HtmlBuilder<Message>): Html => {
-  const max = Math.max(1, ...model.overview.activity14d)
+const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
+  const max = Math.max(1, ...overview.activity14d)
   return Card<Message>(
     {},
     [
@@ -197,15 +204,13 @@ const activity = (model: Model, h: HtmlBuilder<Message>): Html => {
         [
           h.div(
             [h.Class('flex h-16 items-end gap-1')],
-            model.overview.activity14d.map((count, index) =>
+            overview.activity14d.map((count, index) =>
               h.div(
                 [
                   h.Class(
                     cn(
                       'min-w-0 flex-1 rounded-sm',
-                      index === model.overview.activity14d.length - 1
-                        ? 'bg-primary'
-                        : 'bg-primary/30',
+                      index === overview.activity14d.length - 1 ? 'bg-primary' : 'bg-primary/30',
                     ),
                   ),
                   h.Style({ height: `${Math.max(8, Math.round((count / max) * 100))}%` }),
@@ -223,8 +228,8 @@ const activity = (model: Model, h: HtmlBuilder<Message>): Html => {
   )
 }
 
-const streakNote = (model: Model, h: HtmlBuilder<Message>): Child =>
-  model.overview.streakDays >= 7
+const streakNote = (overview: Overview, h: HtmlBuilder<Message>): Child =>
+  overview.streakDays >= 7
     ? h.div(
         [
           h.Class(
@@ -233,40 +238,62 @@ const streakNote = (model: Model, h: HtmlBuilder<Message>): Child =>
         ],
         [
           icon(h, Flame, 'size-4 text-orange-500'),
-          `${model.overview.streakDays}-day streak. Keep it burning.`,
+          `${overview.streakDays}-day streak. Keep it burning.`,
         ],
       )
     : h.empty
 
-export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
-  hero(model, h),
-  stats(model, h),
-  activity(model, h),
-  streakNote(model, h),
-  h.div(
-    [h.Class('flex items-center justify-between')],
+const emptyDecks = (h: HtmlBuilder<Message>): Html =>
+  Empty<Message>(
+    {},
     [
-      h.h2([h.Class('text-sm font-semibold')], ['Decks']),
-      h.a(
-        [
-          h.Href(routeToUrl({ _tag: 'Decks' })),
-          h.Class('text-xs font-medium text-primary hover:underline'),
-        ],
-        ['View all'],
-      ),
+      Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
+      Empty.title<Message>({}, ['No decks yet'], h),
+      Empty.description<Message>({}, ['Import an .apkg archive to start reviewing.'], h),
     ],
-  ),
-  ...(model.decks.length === 0
-    ? [
-        Empty<Message>(
-          {},
+    h,
+  )
+
+const deckList = (
+  decks: ReadonlyArray<DeckSummary>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> =>
+  decks.length === 0 ? [emptyDecks(h)] : decks.map((deck) => deckRow(deck, h))
+
+export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
+  const overviewAsync = overviewQuery.read(model.overview)
+  const decksAsync = decksQuery.read(model.decks)
+  // The retention stat reads the deck list. Use whatever the decks Query holds,
+  // or nothing while it is still loading.
+  const decks = AsyncData.getOrElse(() => [] as ReadonlyArray<DeckSummary>)(decksAsync)
+  return [
+    ...AsyncData.matchData(overviewAsync, {
+      onEmpty: () => [loadingPanel('Loading the overview…', h)],
+      onFailure: (error) => [errorPanel(error, Message.ClickedRetryOverview(), h)],
+      onData: (overview) => [
+        hero(overview, h),
+        stats(overview, decks, h),
+        activity(overview, h),
+        streakNote(overview, h),
+      ],
+    }),
+    h.div(
+      [h.Class('flex items-center justify-between')],
+      [
+        h.h2([h.Class('text-sm font-semibold')], ['Decks']),
+        h.a(
           [
-            Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
-            Empty.title<Message>({}, ['No decks yet'], h),
-            Empty.description<Message>({}, ['Import an .apkg archive to start reviewing.'], h),
+            h.Href(routeToUrl({ _tag: 'Decks' })),
+            h.Class('text-xs font-medium text-primary hover:underline'),
           ],
-          h,
+          ['View all'],
         ),
-      ]
-    : model.decks.map((deck) => deckRow(deck, h))),
-]
+      ],
+    ),
+    ...AsyncData.matchData(decksAsync, {
+      onEmpty: () => [loadingPanel('Loading decks…', h)],
+      onFailure: (error) => [errorPanel(error, Message.ClickedRetryDecks(), h)],
+      onData: (list) => deckList(list, h),
+    }),
+  ]
+}

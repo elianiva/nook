@@ -6,6 +6,7 @@
  * description; the backend will accept the same query string later.
  */
 
+import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Inbox, LoaderCircle, Search, Upload } from 'lucide'
@@ -18,17 +19,22 @@ import { icon } from '@/lib/icons'
 import type { DeckSummary } from '@nook/api'
 import type { ImportProgress } from '@/lib/import-worker-protocol'
 import { deckRow } from './home'
+import { errorPanel, loadingPanel } from './load-state'
 import { Message } from './model'
 import type { Model } from './model'
+import { decksQuery } from './queries'
 
 type Child = Html | string
 
-export const visibleDecks = (model: Model): ReadonlyArray<DeckSummary> => {
-  const query = model.decksQuery.trim().toLowerCase()
-  if (query === '') return model.decks
-  return model.decks.filter(
+export const visibleDecks = (
+  decks: ReadonlyArray<DeckSummary>,
+  query: string,
+): ReadonlyArray<DeckSummary> => {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return decks
+  return decks.filter(
     (deck) =>
-      deck.name.toLowerCase().includes(query) || deck.description.toLowerCase().includes(query),
+      deck.name.toLowerCase().includes(needle) || deck.description.toLowerCase().includes(needle),
   )
 }
 
@@ -169,8 +175,49 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   )
 }
 
+const deckList = (
+  all: ReadonlyArray<DeckSummary>,
+  query: string,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => {
+  const decks = visibleDecks(all, query)
+  return [
+    h.div(
+      [h.Class('text-xs text-muted-foreground')],
+      [
+        `${decks.length} of ${all.length} decks · ${all.reduce((sum, deck) => sum + deck.dueCount, 0)} due total`,
+      ],
+    ),
+    ...(decks.length === 0
+      ? [
+          Empty<Message>(
+            {},
+            [
+              Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
+              Empty.title<Message>(
+                {},
+                [all.length === 0 ? 'No decks yet' : 'No matching decks'],
+                h,
+              ),
+              Empty.description<Message>(
+                {},
+                [
+                  all.length === 0
+                    ? 'Import an .apkg archive to start reviewing.'
+                    : `Nothing matches “${query.trim()}”.`,
+                ],
+                h,
+              ),
+            ],
+            h,
+          ),
+        ]
+      : decks.map((deck) => deckRow(deck, h))),
+  ]
+}
+
 export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
-  const decks = visibleDecks(model)
+  const decksAsync = decksQuery.read(model.decks)
   return [
     h.div(
       [h.Class('flex gap-2')],
@@ -215,36 +262,10 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
       ],
     ),
     importPanel(model, h),
-    h.div(
-      [h.Class('text-xs text-muted-foreground')],
-      [
-        `${decks.length} of ${model.decks.length} decks · ${model.decks.reduce((sum, deck) => sum + deck.dueCount, 0)} due total`,
-      ],
-    ),
-    ...(decks.length === 0
-      ? [
-          Empty<Message>(
-            {},
-            [
-              Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
-              Empty.title<Message>(
-                {},
-                [model.decks.length === 0 ? 'No decks yet' : 'No matching decks'],
-                h,
-              ),
-              Empty.description<Message>(
-                {},
-                [
-                  model.decks.length === 0
-                    ? 'Import an .apkg archive to start reviewing.'
-                    : `Nothing matches “${model.decksQuery.trim()}”.`,
-                ],
-                h,
-              ),
-            ],
-            h,
-          ),
-        ]
-      : decks.map((deck) => deckRow(deck, h))),
+    ...AsyncData.matchData(decksAsync, {
+      onEmpty: () => [loadingPanel('Loading decks…', h)],
+      onFailure: (error) => [errorPanel(error, Message.ClickedRetryDecks(), h)],
+      onData: (all) => deckList(all, model.decksQuery, h),
+    }),
   ]
 }

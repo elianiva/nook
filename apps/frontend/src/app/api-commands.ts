@@ -1,15 +1,15 @@
 /**
- * Fetch/save Commands: one request each, whose answer comes back as a Message.
+ * The writes and the session fetch: one request each, whose answer comes back
+ * as a Message.
  *
- * Each Command calls its endpoint, decodes the JSON body with the same
- * `@nook/api` Schema the backend encodes with, and answers with a `Got*` /
- * `SavedSettings` Message. A 404 on the deck endpoint answers with
- * `GotDeckDetail` cleared to `None` through `DeckMissing`, so the deck page
- * renders its not-found state. Any other failure (network, 503, decode)
- * answers with `LoadFailed` instead, so `update` keeps rendering the seeded
- * Model with a retry banner rather than crashing.
+ * The list and detail reads live in `queries`, which owns their `AsyncData`
+ * state. What stays here is the review session's queue — it belongs to a
+ * larger transition than "retain a resource" — plus the settings Save and the
+ * Grade, which are mutations.
  *
- * Failure is a Message, never a thrown error — Commands must stay total.
+ * Every Command decodes its answer with the same `@nook/api` Schema the backend
+ * encodes with, and answers with a result Message on failure too. Failure is a
+ * Message, never a thrown error — Commands must stay total.
  */
 
 import { Effect, Option, Schema as S } from 'effect'
@@ -19,10 +19,7 @@ import {
   AppSettings,
   CardId,
   DeckId,
-  DeckDetail,
-  DeckSummary,
   Grade,
-  Overview,
   ReviewAccepted,
   ReviewQueue,
   ReviewSubmission,
@@ -32,61 +29,6 @@ import type { LoadRetry } from './model'
 
 const loadFailed = (error: string, retry: LoadRetry) =>
   MessageConstructors.LoadFailed({ error, retry })
-
-export const FetchOverview = Command.define('FetchOverview', {
-  messages: [MessageConstructors.GotOverview, MessageConstructors.LoadFailed],
-  execute: HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get('/api/home')),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(Overview)),
-    Effect.map((overview) => MessageConstructors.GotOverview({ overview })),
-    Effect.catch(() =>
-      Effect.succeed(
-        loadFailed('Could not load the overview. Check the connection and try again.', 'overview'),
-      ),
-    ),
-    Effect.provide(Http.layer),
-  ),
-})
-
-export const FetchDecks = Command.define('FetchDecks', {
-  messages: [MessageConstructors.GotDecks, MessageConstructors.LoadFailed],
-  execute: HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get('/api/decks')),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(S.Array(DeckSummary))),
-    Effect.map((decks) => MessageConstructors.GotDecks({ decks })),
-    Effect.catch(() =>
-      Effect.succeed(
-        loadFailed('Could not load the decks. Check the connection and try again.', 'decks'),
-      ),
-    ),
-    Effect.provide(Http.layer),
-  ),
-})
-
-export const FetchDeckDetail = Command.define('FetchDeckDetail', {
-  args: { deckId: S.String },
-  messages: [
-    MessageConstructors.GotDeckDetail,
-    MessageConstructors.DeckMissing,
-    MessageConstructors.LoadFailed,
-  ],
-  execute: ({ deckId }) =>
-    Effect.gen(function* () {
-      const client = yield* HttpClient.HttpClient
-      const response = yield* client.get(`/api/decks/${encodeURIComponent(deckId)}`)
-      if (response.status === 404) return MessageConstructors.DeckMissing()
-      const ok = yield* HttpClientResponse.filterStatusOk(response)
-      const detail = yield* HttpClientResponse.schemaBodyJson(DeckDetail)(ok)
-      return MessageConstructors.GotDeckDetail({ detail })
-    }).pipe(
-      Effect.orElseSucceed(() =>
-        loadFailed('Could not load this deck. Check the connection and try again.', 'deckDetail'),
-      ),
-      Effect.provide(Http.layer),
-    ),
-})
 
 export const FetchSettings = Command.define('FetchSettings', {
   messages: [MessageConstructors.GotSettings, MessageConstructors.LoadFailed],

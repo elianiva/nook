@@ -2,16 +2,15 @@
  * The app shell's Model and Message (the TEA core).
  *
  * The Model holds the current Route plus one screen-state slice per screen.
- * Each slice is plain data shaped exactly like the backend response it
- * carries — seeded from `@nook/api` dummy data at boot so the first paint
- * is instant, then replaced by answers from the fetch Commands. Views read
- * the Model only; `update` is the only place that writes it.
+ * The list and detail slices are Query Models, so each carries its own
+ * `AsyncData` state; settings is plain data edited locally until Save. Views
+ * read the Model only; `update` is the only place that writes it.
  *
  * Data-volume contract (mirrors `@nook/api`):
  * - home/decks hold `DeckSummary` rows only — counts plus the next Review,
  *   never Card bodies
  * - the deck page holds one `DeckDetail`: its summary plus scheduling-state
- *   rows for its own Cards
+ *   rows for its own Cards, retained per deck id
  * - settings holds `AppSettings`, edited locally until Save
  */
 
@@ -22,20 +21,15 @@ import { Url } from 'foldkit'
 import {
   AppSettings,
   CardId,
-  DeckDetail,
+  DEFAULT_SETTINGS,
   DeckId,
-  DeckSummary,
-  DUMMY_DECKS,
-  DUMMY_OVERVIEW,
-  DUMMY_SETTINGS,
   Grade,
   ImportId,
-  Overview,
   ReviewAccepted,
   ReviewCard,
-  dummyCardsFor,
 } from '@nook/api'
 import { ImportProgress } from '@/lib/import-worker-protocol'
+import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
 
 /** Editable copy of the settings form. The text field for FSRS weights stays a string so half-typed input never corrupts the numeric model. */
@@ -152,15 +146,8 @@ export const idleReview: ReviewState = {
   error: Option.none(),
 }
 
-/** Which fetch or save a notice retry runs. */
-export const LoadRetry = S.Literals([
-  'overview',
-  'decks',
-  'deckDetail',
-  'reviewQueue',
-  'settings',
-  'saveSettings',
-])
+/** Which fetch or save a notice retry runs. The list and detail reads are Queries now, so they carry their own Retry. */
+export const LoadRetry = S.Literals(['reviewQueue', 'settings', 'saveSettings'])
 export type LoadRetry = typeof LoadRetry.Type
 
 /** A failed fetch or save, as the banner shows it: what failed, and what retry runs. */
@@ -230,10 +217,12 @@ export const idleImport: ImportState = {
 
 export const Model = S.Struct({
   route: AppRoute,
-  overview: Overview,
-  decks: S.Array(DeckSummary),
-  /** The open deck page, when the route carries a deck id. `None` when the id is unknown. */
-  deckDetail: S.Option(DeckDetail),
+  /** The overview Query: due counts, streak, and the activity strip. */
+  overview: overviewQuery.Model,
+  /** The decks Query. Home and Decks share it, so one answer fills both. */
+  decks: decksQuery.Model,
+  /** The deck detail KeyedQuery, retained per deck id. */
+  deckDetail: deckDetailQuery.Model,
   /** Search text on the decks page. */
   decksQuery: S.String,
   /** The review screen's queue and cursor. */
@@ -249,26 +238,16 @@ export type Model = typeof Model.Type
 
 export const seedModel = (url: Url.Url): Model => ({
   route: urlToAppRoute(url),
-  overview: DUMMY_OVERVIEW,
-  decks: [...DUMMY_DECKS],
-  deckDetail: Option.none(),
+  overview: overviewQuery.init(),
+  decks: decksQuery.init(),
+  deckDetail: deckDetailQuery.init(),
   decksQuery: '',
   review: idleReview,
-  settings: DUMMY_SETTINGS,
-  settingsDraft: draftFromSettings(DUMMY_SETTINGS),
+  settings: DEFAULT_SETTINGS,
+  settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
   notice: Option.none(),
 })
-
-/** Resolve the deck detail for a deck id from the dummy source. `None` for unknown ids. */
-export const detailFor = (
-  decks: ReadonlyArray<DeckSummary>,
-  deckId: string,
-): Option.Option<DeckDetail> => {
-  const summary = decks.find((deck) => deck.id === deckId)
-  if (summary === undefined) return Option.none()
-  return Option.some({ summary, cards: [...dummyCardsFor(summary.id)] })
-}
 
 export const Message = defineMessageUnion({
   /** A link or back/forward navigation was requested. */
@@ -276,15 +255,17 @@ export const Message = defineMessageUnion({
   /** The URL changed (link, back/forward, or cold load). */
   ChangedUrl: { url: Url.Url },
   CompletedNavigate: {},
-  /** The backend answered a fetch, or every fetch gave up. */
-  GotOverview: { overview: Overview },
-  GotDecks: { decks: S.Array(DeckSummary) },
-  GotDeckDetail: { detail: DeckDetail },
+  /** A Query's fetch completed. The wrapper routes it back through its lifted fold. */
+  GotOverviewMessage: { message: overviewQuery.Message },
+  GotDecksMessage: { message: decksQuery.Message },
+  GotDeckDetailMessage: { message: deckDetailQuery.Message },
   GotSettings: { settings: AppSettings },
   SavedSettings: { settings: AppSettings },
-  /** The deck id names no deck. The deck page renders its not-found state. */
-  DeckMissing: {},
-  /** A fetch or save failed. The notice carries the retry; the seed stays on screen. */
+  /** A Query shows its own error, so its Retry is its own Message. */
+  ClickedRetryOverview: {},
+  ClickedRetryDecks: {},
+  ClickedRetryDeckDetail: { deckId: DeckId },
+  /** A fetch or save failed. The notice carries the retry. */
   LoadFailed: { error: S.String, retry: LoadRetry },
   /** The Learner pressed retry on the notice banner. */
   ClickedRetry: {},

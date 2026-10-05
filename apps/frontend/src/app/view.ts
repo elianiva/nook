@@ -39,9 +39,6 @@ const homeShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, homeVi
 
 const decksShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, decksView(model, h), h)
 
-const deckDetailShell = (model: Model, h: HtmlBuilder<Message>) =>
-  shell(model, deckDetailView(model, h), h)
-
 const settingsShell = (model: Model, h: HtmlBuilder<Message>) =>
   shell(model, settingsView(model, h), h)
 
@@ -52,7 +49,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   const body = AppRoute.match(model.route, {
     Home: () => homeShell(model, h),
     Decks: () => decksShell(model, h),
-    DeckDetail: () => deckDetailShell(model, h),
+    DeckDetail: ({ deckId }) => shell(model, deckDetailView(model, deckId, h), h),
     Review: () => reviewShell(model, h),
     ReviewDeck: () => reviewShell(model, h),
     Settings: () => settingsShell(model, h),

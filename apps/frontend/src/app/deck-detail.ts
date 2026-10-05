@@ -3,9 +3,12 @@
  *
  * The header carries the counts and a Start action; the table lists the
  * Deck's Cards as scheduling rows (state, due, stability, difficulty) —
- * never prompt/answer bodies. Unknown ids render an empty state.
+ * never prompt/answer bodies. The read is the deck-detail KeyedQuery, so an
+ * unknown id renders its not-found state and a known Deck keeps its last
+ * answer while a refresh runs.
  */
 
+import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Play } from 'lucide'
@@ -17,9 +20,11 @@ import { separator } from '@/components/ui/separator'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
-import type { Card as CardData, DeckDetail } from '@nook/api'
+import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
+import { errorPanel, loadingPanel } from './load-state'
 import { Message } from './model'
 import type { Model } from './model'
+import { deckDetailQuery } from './queries'
 import { routeToUrl } from './routes'
 
 type Child = Html | string
@@ -155,57 +160,76 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
     h,
   )
 
-export const deckDetailView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =>
-  Option.match(model.deckDetail, {
-    onNone: () => [
-      Empty<Message>(
+/** A deck id that names no Deck. This is an answer, not a failure to retry. */
+const deckNotFound = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
+  Empty<Message>(
+    {},
+    [
+      Empty.media<Message>({ variant: 'icon' }, [icon(h, CircleAlert, 'size-4')], h),
+      Empty.title<Message>({}, ['Deck not found'], h),
+      Empty.description<Message>({}, ['This deck does not exist on this device.'], h),
+      Empty.content<Message>(
         {},
         [
-          Empty.media<Message>({ variant: 'icon' }, [icon(h, CircleAlert, 'size-4')], h),
-          Empty.title<Message>({}, ['Deck not found'], h),
-          Empty.description<Message>({}, ['This deck does not exist on this device.'], h),
-          Empty.content<Message>(
-            {},
+          h.a(
             [
-              h.a(
-                [
-                  h.Href(routeToUrl({ _tag: 'Decks' })),
-                  h.Class('text-xs font-medium text-primary hover:underline'),
-                ],
-                ['Back to decks'],
-              ),
+              h.Href(routeToUrl({ _tag: 'Decks' })),
+              h.Class('text-xs font-medium text-primary hover:underline'),
             ],
-            h,
+            ['Back to decks'],
           ),
         ],
         h,
       ),
     ],
-    onSome: (detail) => [
-      header(detail, h),
-      h.div(
-        [h.Class('flex items-center justify-between')],
+    h,
+  ),
+]
+
+const deckBody = (detail: DeckDetail, h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
+  header(detail, h),
+  h.div(
+    [h.Class('flex items-center justify-between')],
+    [
+      h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
+      h.span([h.Class('text-[11px] text-muted-foreground')], ['scheduling state only']),
+    ],
+  ),
+  Card<Message>(
+    { className: 'py-0' },
+    detail.cards.map((card, index) => cardRow(card, index, h)),
+    h,
+  ),
+  h.div(
+    [h.Class('px-1')],
+    [
+      separator<Message>({}, h),
+      h.p(
+        [h.Class('py-2 text-[11px] leading-relaxed text-muted-foreground')],
         [
-          h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
-          h.span([h.Class('text-[11px] text-muted-foreground')], ['scheduling state only']),
-        ],
-      ),
-      Card<Message>(
-        { className: 'py-0' },
-        detail.cards.map((card, index) => cardRow(card, index, h)),
-        h,
-      ),
-      h.div(
-        [h.Class('px-1')],
-        [
-          separator<Message>({}, h),
-          h.p(
-            [h.Class('py-2 text-[11px] leading-relaxed text-muted-foreground')],
-            [
-              'Stability is the days a Card survives at your desired recall rate; difficulty runs 1–10. Both belong to FSRS — tune them through Settings, not here.',
-            ],
-          ),
+          'Stability is the days a Card survives at your desired recall rate; difficulty runs 1–10. Both belong to FSRS — tune them through Settings, not here.',
         ],
       ),
     ],
+  ),
+]
+
+export const deckDetailView = (
+  model: Model,
+  deckId: DeckId,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> =>
+  AsyncData.matchData(deckDetailQuery.read(model.deckDetail, { deckId }), {
+    onEmpty: () => [loadingPanel('Loading this deck…', h)],
+    onFailure: (error) =>
+      error === 'notFound'
+        ? deckNotFound(h)
+        : [
+            errorPanel(
+              'Could not load this deck. Check the connection and try again.',
+              Message.ClickedRetryDeckDetail({ deckId }),
+              h,
+            ),
+          ],
+    onData: (detail) => deckBody(detail, h),
   })

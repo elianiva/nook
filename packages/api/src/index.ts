@@ -4,15 +4,14 @@
  * Everything the browser and the Worker must agree on lives here:
  *
  * - the domain Schemas that cross the network boundary (Deck, Settings, …)
- * - the seeded dummy data the UI paints with at boot, before fetch answers
- *   replace it
+ * - `DEFAULT_SETTINGS`, the settings the form starts from before the server answers
  * - the Effect HttpApi contract, one `HttpApiGroup` per feature area
  *
  * The browser bundle imports this package, so it stays free of runtime
  * behaviour. Anything that needs a database client, a bucket, a clock, or a
  * request belongs in `@nook/backend` instead.
  *
- * Data-volume contract (the boot seed mirrors backend rows):
+ * Data-volume contract:
  *
  * - one learner, a handful of Decks (fewer than 20), each Deck holding
  *   dozens to low hundreds of Cards
@@ -22,7 +21,7 @@
  *   whole collection
  */
 
-import { Option, Schema as S } from 'effect'
+import { Schema as S } from 'effect'
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/http-api'
 
 /** Stable identifiers. Branded so a Deck id cannot flow where a Card id is expected. */
@@ -475,77 +474,10 @@ export class Api extends HttpApi.make('nook-api')
   .prefix('/api') {}
 
 /**
- * Boot seed. The UI paints with this at boot, before fetch answers replace
- * it; the shapes are the shapes the endpoints return, so the views never
- * know which source filled the Model.
+ * The settings the form starts from, before the server's own answer arrives.
+ * They match the FSRS-6 defaults, so a first paint is never misleading.
  */
-export const DUMMY_DECKS: ReadonlyArray<DeckSummary> = [
-  {
-    id: DeckId.make('deck-japanese-core'),
-    name: 'Japanese Core 2k',
-    description: 'Everyday vocabulary, kana to kanji',
-    newCount: 48,
-    dueCount: 132,
-    totalCount: 1840,
-    dueDelta: 12,
-    lastStudiedAt: Option.some('2026-10-02T21:40:00+07:00'),
-    retention7d: 68,
-  },
-  {
-    id: DeckId.make('deck-anki-biology'),
-    name: 'Biology 101',
-    description: 'Cell structure, genetics, evolution',
-    newCount: 15,
-    dueCount: 64,
-    totalCount: 420,
-    dueDelta: -8,
-    lastStudiedAt: Option.some('2026-10-03T07:15:00+07:00'),
-    retention7d: 82,
-  },
-  {
-    id: DeckId.make('deck-capitals'),
-    name: 'World Capitals',
-    description: 'Countries and their capitals',
-    newCount: 0,
-    dueCount: 21,
-    totalCount: 196,
-    dueDelta: 0,
-    lastStudiedAt: Option.some('2026-10-01T19:05:00+07:00'),
-    retention7d: 91,
-  },
-  {
-    id: DeckId.make('deck-spanish-verbs'),
-    name: 'Spanish Verbs',
-    description: 'Top 100 irregular conjugations',
-    newCount: 22,
-    dueCount: 0,
-    totalCount: 100,
-    dueDelta: 3,
-    lastStudiedAt: Option.none(),
-    retention7d: 0,
-  },
-  {
-    id: DeckId.make('deck-algorithms'),
-    name: 'Algorithms',
-    description: 'Complexities and proof sketches',
-    newCount: 9,
-    dueCount: 37,
-    totalCount: 158,
-    dueDelta: -2,
-    lastStudiedAt: Option.some('2026-09-30T22:10:00+07:00'),
-    retention7d: 74,
-  },
-]
-
-export const DUMMY_OVERVIEW: Overview = {
-  dueNow: 254,
-  reviewedToday: 96,
-  streakDays: 12,
-  todayProgress: 27,
-  activity14d: [42, 55, 38, 61, 70, 44, 58, 66, 51, 73, 69, 80, 64, 96],
-}
-
-export const DUMMY_SETTINGS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   fsrs: {
     desiredRetention: 0.9,
     weights: [
@@ -563,26 +495,4 @@ export const DUMMY_SETTINGS: AppSettings = {
     dayRolloverHour: 4,
     keepAwake: false,
   },
-}
-
-/** Scheduling-state rows for a deck page. Derived deterministically from the deck id so every deck gets a stable, realistic-looking table. */
-export const dummyCardsFor = (deckId: DeckId): ReadonlyArray<Card> => {
-  let seed = 0
-  for (const char of deckId) seed = (seed * 31 + char.charCodeAt(0)) >>> 0
-  const pick = (n: number) => {
-    seed = (seed * 1664525 + 1013904223) >>> 0
-    return seed % n
-  }
-  const states = ['new', 'learning', 'review', 'review', 'review', 'relearning'] as const
-  return Array.from({ length: 24 }, (_, index) => {
-    const state = states[pick(states.length)] ?? 'review'
-    return {
-      id: CardId.make(`${deckId}#${index + 1}`),
-      deckId,
-      dueInDays: state === 'new' ? 0 : pick(21) - 3,
-      stability: Math.round((0.5 + pick(4000) / 100) * 10) / 10,
-      difficulty: 1 + pick(10),
-      state,
-    } satisfies Card
-  })
 }

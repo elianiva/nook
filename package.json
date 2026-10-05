@@ -26,7 +26,7 @@
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0",
-    "@foldkit/oxlint-plugin": "^0.15.1",
+    "@foldkit/oxlint-plugin": "^0.15.2",
     "@types/node": "^26.6.4",
     "alchemy": "2.0.0-beta.80",
     "effect": "4.0.0",

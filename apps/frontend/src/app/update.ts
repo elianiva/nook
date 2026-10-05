@@ -1,14 +1,11 @@
 /**
  * Update: message → model transition, plus `init`.
  *
- * `init` parses the boot URL into the starting Route and seeds the Model
- * from dummy data so the first paint is instant; per-route fetch Commands
- * replace the seed. `ChangedUrl` re-parses on every navigation and resolves
- * the deck page when the route carries a deck id.
- *
- * A `Got*` answer clears the notice; a `LoadFailed` answer sets it and keeps
- * the seed on screen, so the Learner always sees data plus a retry. `DeckMissing`
- * clears the deck page to its not-found state, which is an answer, not a failure.
+ * `init` parses the boot URL into the starting Route and seeds the Model;
+ * `routeLoads` starts each screen's reads. The list and detail reads are
+ * Queries, so `update` folds their Messages through a lifted fold and starts
+ * them with `revalidateOrLoad`. A Query shows its own failure and Retry;
+ * a `LoadFailed` answer — settings and the review queue — sets the notice.
  *
  * Settings edits write into `settingsDraft` only; Save validates the draft
  * and, when clean, sends it through the save Command, whose answer copies
@@ -16,25 +13,16 @@
  */
 
 import { Option } from 'effect'
-import { Navigation, type Update } from 'foldkit'
+import { Navigation, Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
 import type { Grade } from '@nook/api'
 import { NavigateInternal, NavigateToPath } from './commands'
-import {
-  FetchDeckDetail,
-  FetchDecks,
-  FetchOverview,
-  FetchReviewQueue,
-  FetchSettings,
-  SaveSettings,
-  SubmitGrade,
-} from './api-commands'
+import { FetchReviewQueue, FetchSettings, SaveSettings, SubmitGrade } from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
 import type { LoadRetry } from './model'
 import {
   Message,
-  detailFor,
   draftFromSettings,
   idleImport,
   idleReview,
@@ -42,54 +30,66 @@ import {
   validateDraft,
 } from './model'
 import type { Model } from './model'
+import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, routeToUrl, urlToAppRoute } from './routes'
 
-/** Fetch the data the route's screen renders. The seeded Model paints instantly; answers replace it. */
-const commandsForRoute = (route: AppRoute) =>
-  AppRoute.match(route, {
-    Home: () => [FetchOverview(), FetchDecks()],
-    Decks: () => [FetchDecks()],
-    DeckDetail: ({ deckId }) => [FetchDeckDetail({ deckId })],
-    Review: () => [FetchReviewQueue({ deckId: Option.none() }), FetchSettings()],
-    ReviewDeck: ({ deckId }) => [
-      FetchReviewQueue({ deckId: Option.some(deckId) }),
-      FetchSettings(),
-    ],
-    Settings: () => [FetchSettings()],
-    NotFound: () => [],
+/**
+ * The parent side of each Query: `lift` binds a Query's Model field and its
+ * Messages to this app's Model and Message types.
+ */
+const overview = overviewQuery.lift<Model, Message>({
+  parentField: 'overview',
+  toParentMessage: (message) => Message.GotOverviewMessage({ message }),
+})
+
+const decks = decksQuery.lift<Model, Message>({
+  parentField: 'decks',
+  toParentMessage: (message) => Message.GotDecksMessage({ message }),
+})
+
+const deckDetail = deckDetailQuery.lift<Model, Message>({
+  parentField: 'deckDetail',
+  toParentMessage: (message) => Message.GotDeckDetailMessage({ message }),
+})
+
+/**
+ * The reads a route starts. A Query loads when it is missing and refreshes when
+ * it has data, so returning to a screen shows its last answer while a fresh one
+ * arrives; the already-pending case starts nothing. Settings and the review
+ * queue stay plain fetches: the settings form and the review session own their
+ * own transitions.
+ */
+const routeLoads = (model: Model): Update.Return<Model, Message> =>
+  AppRoute.match<Update.Return<Model, Message>>(model.route, {
+    Home: () =>
+      Update.combine<Model, Message>(model, [overview.revalidateOrLoad, decks.revalidateOrLoad]),
+    Decks: () => decks.revalidateOrLoad(model),
+    DeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
+    Review: () => ({
+      model,
+      commands: [FetchReviewQueue({ deckId: Option.none() }), FetchSettings()],
+    }),
+    ReviewDeck: ({ deckId }) => ({
+      model,
+      commands: [FetchReviewQueue({ deckId: Option.some(deckId) }), FetchSettings()],
+    }),
+    Settings: () => ({ model, commands: [FetchSettings()] }),
+    NotFound: () => ({ model }),
   })
 
 export const init = (url: Url): Update.Return<Model, Message> => {
-  const model = seedModel(url)
+  const loads = routeLoads(seedModel(url))
   return {
-    model: {
-      ...model,
-      deckDetail: AppRouteMatchDetail(model),
-    },
+    model: loads.model,
     // An Import interrupted by a reload is still in IndexedDB; restore it so the
     // worker can pick it up again.
-    commands: [...commandsForRoute(model.route), RestoreImportJob()],
+    commands: [...(loads.commands ?? []), RestoreImportJob()],
   }
-}
-
-const AppRouteMatchDetail = (model: Model): Model['deckDetail'] => {
-  const route = model.route
-  if (route._tag === 'DeckDetail') return detailFor(model.decks, route.deckId)
-  return Option.none()
 }
 
 /** The fetch or save the notice retry runs, rebuilt from the current route and draft. */
 const retryCommandsFor = (model: Model, retry: LoadRetry) => {
   switch (retry) {
-    case 'overview':
-      return [FetchOverview()]
-    case 'decks':
-      return [FetchDecks()]
-    case 'deckDetail': {
-      const route = model.route
-      if (route._tag !== 'DeckDetail') return [FetchDecks()]
-      return [FetchDeckDetail({ deckId: route.deckId })]
-    }
     case 'reviewQueue': {
       const route = model.route
       if (route._tag === 'ReviewDeck') {
@@ -179,33 +179,24 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     ChangedUrl: ({ url }) => {
       const route = urlToAppRoute(url)
-      // A new screen means a new fetch; the old notice and the old review
-      // session belong to the old screen.
-      const next: Model = { ...clearNotice(model), route, review: idleReview }
-      return {
-        model: { ...next, deckDetail: AppRouteMatchDetail(next) },
-        commands: commandsForRoute(route),
-      }
+      // A new screen means new loads; the old notice and the old review session
+      // belong to the old screen.
+      return routeLoads({ ...clearNotice(model), route, review: idleReview })
     },
 
     CompletedNavigate: () => ({ model }),
 
-    GotOverview: ({ overview }) => ({
-      model: clearNotice(modifyFields(model, { overview: () => overview })),
-    }),
+    GotOverviewMessage: ({ message }) => overview.fold(model, message),
 
-    GotDecks: ({ decks }) => {
-      const next: Model = clearNotice(modifyFields(model, { decks: () => [...decks] }))
-      return { model: { ...next, deckDetail: AppRouteMatchDetail(next) } }
-    },
+    GotDecksMessage: ({ message }) => decks.fold(model, message),
 
-    GotDeckDetail: ({ detail }) => ({
-      model: clearNotice(modifyFields(model, { deckDetail: () => Option.some(detail) })),
-    }),
+    GotDeckDetailMessage: ({ message }) => deckDetail.fold(model, message),
 
-    DeckMissing: () => ({
-      model: clearNotice(modifyFields(model, { deckDetail: () => Option.none() })),
-    }),
+    ClickedRetryOverview: () => overview.revalidateOrLoad(model),
+
+    ClickedRetryDecks: () => decks.revalidateOrLoad(model),
+
+    ClickedRetryDeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
 
     GotSettings: ({ settings }) => ({
       model: clearNotice({
@@ -347,8 +338,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: { ...model, importState: { ...model.importState, status: Option.some(progress) } },
     }),
 
-    CompletedImport: ({ progress }) => ({
-      model: {
+    CompletedImport: ({ progress }) => {
+      const next: Model = {
         ...model,
         importState: {
           id: Option.none(),
@@ -358,11 +349,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           status: Option.some(progress),
           error: Option.none(),
         },
-      },
+      }
       // The Decks page paints what the Import just wrote, and the archive is no
       // longer needed.
-      commands: [FetchDecks(), ClearImportJob()],
-    }),
+      return Update.combine<Model, Message>(next, [
+        decks.revalidateOrLoad,
+        (current) => ({ model: current, commands: [ClearImportJob()] }),
+      ])
+    },
 
     // The archive is kept, so Retry can resume without another file pick.
     FailedImport: ({ error }) => ({
