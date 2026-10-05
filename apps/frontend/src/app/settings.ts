@@ -10,6 +10,10 @@
  * Every field edits a local draft; Save validates the whole form and sends
  * it through the save Command — the view does not change.
  *
+ * Appearance sits above the form and outside the draft: picking a Mochi
+ * swatch sends `PickedTheme`, which writes `data-theme` and localStorage at
+ * once, so the dashboard and settings re-tint without a save.
+ *
  * Mobile layout: each row is a stacked label-over-control pair, never a
  * side-by-side label/input pair. A 390px phone gives ~340px of card content
  * width, and a 96px-wide number input next to its label squeezes the label
@@ -21,13 +25,13 @@
 import { Option } from 'effect'
 import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Download, RotateCcw, Save } from 'lucide'
-import { Card } from '@/components/ui/card'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
 import { separator } from '@/components/ui/separator'
 import { switch_ } from '@/components/ui/switch'
 import { textarea } from '@/components/ui/textarea'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
+import { readTheme, themeKeys, themeMeta } from '@/lib/theme'
 import { Message } from './model'
 import type { Model, SettingsDraft } from './model'
 
@@ -39,21 +43,32 @@ const section = (
   children: ReadonlyArray<Child>,
   h: HtmlBuilder<Message>,
 ): Html =>
-  Card<Message>(
-    {},
+  h.div(
+    [h.Class('flex flex-col gap-2.5')],
     [
-      Card.header<Message>(
-        {},
-        [Card.title<Message>({}, [title], h), Card.description<Message>({}, [description], h)],
-        h,
+      h.span(
+        [h.Class('text-[11px] font-bold tracking-[2.2px] text-[var(--theme-sub)] uppercase')],
+        [title],
       ),
-      Card.content<Message>({}, [h.div([h.Class('flex flex-col gap-4')], [...children])], h),
+      h.p([h.Class('text-xs leading-relaxed text-[var(--theme-sub)]')], [description]),
+      ...children,
     ],
-    h,
   )
 
-const fieldLabelClass = 'text-sm font-medium leading-none'
-const fieldHintClass = 'text-xs leading-relaxed text-muted-foreground'
+/**
+ * One settings row: a borderless `--theme-block` field with an ink label, a
+ * muted hint, and a white control. The mockups render every number input,
+ * select, and toggle as its own block; the weights textarea keeps the same
+ * treatment so the form reads as one rhythm.
+ */
+const fieldBlockClass = 'flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3.5'
+
+const fieldLabelClass = 'text-[13px] font-semibold leading-none'
+const fieldHintClass = 'text-xs leading-relaxed text-[var(--theme-sub)]'
+
+/** White control inside a field block: no outline, ink text, 16px text. */
+const fieldControlClass =
+  'rounded-[10px] border-0 bg-white font-semibold text-[var(--theme-ink)] shadow-none tabular-nums outline-none'
 
 const fieldHeader = (
   id: string,
@@ -71,7 +86,8 @@ const fieldHeader = (
 
 /** Shared number-input classes: full width, 16px text so mobile focus never zooms. */
 const numberInputClass =
-  'h-10 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-base tabular-nums outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50'
+  'h-10 w-full px-3 py-2 text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
+  fieldControlClass
 
 const numberField = (
   id: string,
@@ -91,7 +107,7 @@ const numberField = (
   const describedBy: ReadonlyArray<Attribute<Message>> =
     extra.hintId === undefined ? [] : [h.AriaDescribedBy(extra.hintId)]
   return h.div(
-    [h.Class('flex flex-col gap-2')],
+    [h.Class(fieldBlockClass)],
     [
       fieldHeader(id, labelText, description, h),
       h.input([
@@ -133,8 +149,10 @@ const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
           value: draft.weightsText,
           onInput: (value) => Message.EditedWeights({ value }),
           rows: 3,
-          wrapperClass: 'gap-2',
-          className: 'text-base md:text-sm',
+          wrapperClass: fieldBlockClass,
+          labelClass: 'text-[13px] font-semibold leading-none',
+          descriptionClass: 'text-xs text-[var(--theme-sub)]',
+          className: 'border-0 bg-white font-semibold shadow-none outline-none md:text-sm',
         },
         h,
       ),
@@ -198,18 +216,26 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
     'Behaviour',
     'What review sessions feel like and when the day rolls over.',
     [
-      switch_<Message>(
-        {
-          id: 'tap-to-reveal',
-          label: 'Tap anywhere to reveal',
-          description: 'Reveal the answer with a tap, not just the button',
-          isChecked: draft.tapToReveal,
-          onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
-        },
-        h,
+      h.div(
+        [h.Class(fieldBlockClass)],
+        [
+          switch_<Message>(
+            {
+              id: 'tap-to-reveal',
+              label: 'Tap anywhere to reveal',
+              description: 'Reveal the answer with a tap, not just the button',
+              isChecked: draft.tapToReveal,
+              onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
+              className: 'border-0 data-checked:bg-[var(--theme-tint)]',
+              labelClass: 'text-[13px] font-semibold leading-none',
+              descriptionClass: 'text-xs text-[var(--theme-sub)]',
+            },
+            h,
+          ),
+        ],
       ),
       h.div(
-        [h.Class('flex flex-col gap-2')],
+        [h.Class(fieldBlockClass)],
         [
           h.div(
             [h.Class('flex flex-col gap-1')],
@@ -232,7 +258,8 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
                 nativeSelectOption<Message>({ value: option, label: option }, h),
               ),
               labelClass: 'sr-only',
-              className: 'h-10 text-base md:text-sm',
+              className: 'h-10 border-0 bg-white font-semibold shadow-none outline-none',
+              descriptionClass: 'text-xs text-[var(--theme-sub)]',
             },
             h,
           ),
@@ -261,7 +288,11 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
     [h.Class('flex gap-2')],
     [
       button<Message>(
-        { onClick: Message.ClickedSaveSettings(), size: 'lg', className: 'h-11 flex-1 text-base' },
+        {
+          onClick: Message.ClickedSaveSettings(),
+          size: 'lg',
+          className: 'h-11 flex-1 border-0 bg-[var(--theme-ink)] text-base font-bold text-white',
+        },
         [icon(h, Save, 'size-4', 'inline-start'), 'Save settings'],
         h,
       ),
@@ -270,7 +301,7 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
           onClick: Message.ClickedResetSettings(),
           variant: 'outline',
           size: 'lg',
-          className: 'h-11 px-4',
+          className: 'h-11 border-0 bg-[var(--theme-block)] px-4 shadow-none',
           attributes: [h.AriaLabel('Reset changes')],
         },
         [icon(h, RotateCcw, 'size-4')],
@@ -278,6 +309,44 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
       ),
     ],
   )
+
+/**
+ * Appearance: five Mochi swatches in one row. Each button is a plain square
+ * of its own tint; the stored theme marks itself with a strong-tone ring.
+ * Picking sends `PickedTheme`, which writes the DOM and storage at once —
+ * no save gating.
+ */
+const appearanceSection = (h: HtmlBuilder<Message>): Html => {
+  const current = readTheme()
+  return section(
+    'Appearance',
+    'A pastel tint for the dashboard hero and today\u2019s activity bar. Applies at once.',
+    [
+      h.div(
+        [h.Class('flex items-center gap-2.5')],
+        themeKeys.map((key) => {
+          const meta = themeMeta[key]
+          const active = key === current
+          return h.button(
+            [
+              h.OnClick(Message.PickedTheme({ theme: key })),
+              h.Class(
+                active
+                  ? 'size-11 shrink-0 rounded-xl border-0 outline-none ring-2 ring-[var(--theme-strong)] ring-offset-2 ring-offset-white'
+                  : 'size-11 shrink-0 rounded-xl border-0 outline-none',
+              ),
+              h.Style({ backgroundColor: meta.tint }),
+              h.AriaPressed(active ? 'true' : 'false'),
+              h.AriaLabel(`${meta.name} theme`),
+            ],
+            [],
+          )
+        }),
+      ),
+    ],
+    h,
+  )
+}
 
 export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const draft = model.settingsDraft
@@ -295,6 +364,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
           ),
         ]
       : []),
+    appearanceSection(h),
     fsrsSection(draft, h),
     defaultsSection(draft, h),
     behaviourSection(draft, h),
@@ -303,15 +373,20 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
       'Collection',
       'Your data, out. One JSON file with Decks, Notes, Cards, Schedules, and the Review log.',
       [
-        button<Message>(
-          {
-            onClick: Message.ClickedExport(),
-            variant: 'outline',
-            size: 'lg',
-            className: 'h-11 w-full text-base',
-          },
-          [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
-          h,
+        h.div(
+          [h.Class(fieldBlockClass)],
+          [
+            button<Message>(
+              {
+                onClick: Message.ClickedExport(),
+                variant: 'outline',
+                size: 'lg',
+                className: 'h-11 w-full border-0 bg-white text-base shadow-none',
+              },
+              [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
+              h,
+            ),
+          ],
         ),
       ],
       h,
@@ -321,7 +396,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
       [
         separator<Message>({}, h),
         h.p(
-          [h.Class('py-2 text-[11px] leading-relaxed text-muted-foreground')],
+          [h.Class('py-2 text-[11px] leading-relaxed text-[var(--theme-sub)]')],
           [
             'FSRS-6 with 21 weights. Saved settings apply to future Reviews only — existing Schedules keep their intervals.',
           ],

@@ -30,6 +30,7 @@ import {
   UndoGrade,
 } from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
+import { ApplyTheme } from './theme-commands'
 import type { LoadRetry } from './model'
 import {
   Message,
@@ -633,6 +634,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         settingsDraft: { ...model.settingsDraft, tapToReveal: isChecked, saved: false },
       },
     }),
+
+    // The pick applies at once: the Command writes the DOM + storage, and the
+    // section re-reads the stored value so the picked swatch marks itself as
+    // current without waiting for the answer. Unknown values never reach the
+    // view — `settingsView` only sends keys from `themeKeys`.
+    PickedTheme: ({ theme }) => ({ model, commands: [ApplyTheme({ theme })] }),
+
+    AppliedTheme: () => ({ model }),
 
     ClickedSaveSettings: () => {
       const error = validateDraft(model.settingsDraft)

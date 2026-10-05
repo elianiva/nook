@@ -30,7 +30,8 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --font-sans:
-    ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Rubik', ui-sans-serif, system-ui, sans-serif, 'Hiragino Maru Gothic ProN', 'Hiragino Sans',
+    'Noto Sans JP', 'Yu Gothic', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
     'Noto Color Emoji';
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
@@ -144,6 +145,78 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  /**
+   * Mochi themes: one pastel tint plus warm ink per theme. The tint shows in
+   * exactly two places — the dashboard hero background and today's activity
+   * bar — every other block is the neutral `--theme-block` grey. The dark
+   * mode class below keeps working; these variables only paint the light
+   * Mochi surfaces, which always render on the white page.
+   *
+   * Tokens come from the round-L mockups (`.amp/in/redesign/l1..l5-*.html`):
+   * hero bg, ink, sub-label tone, neutral block, readable strong tone, and
+   * the translucent ink track the hero progress bar sits on.
+   */
+  :root,
+  :root[data-theme='mochi-pink'] {
+    --theme-tint: #fbb4c6;
+    --theme-hero: #fbb4c6;
+    --theme-ink: #33272a;
+    --theme-kicker: #43242e;
+    --theme-sub: #6e6259;
+    --theme-nav-idle: #b3a8ab;
+    --theme-block: #f4f4f5;
+    --theme-bar-idle: #e2e2e4;
+    --theme-strong: #b34a63;
+    --theme-track: rgba(51, 39, 42, 0.18);
+  }
+  :root[data-theme='mochi-peach'] {
+    --theme-tint: #f6c177;
+    --theme-hero: #f6c177;
+    --theme-ink: #33272a;
+    --theme-kicker: #33272a;
+    --theme-sub: #75655c;
+    --theme-nav-idle: #75655c;
+    --theme-block: #f4f4f5;
+    --theme-bar-idle: #e2e2e4;
+    --theme-strong: #a3650a;
+    --theme-track: rgba(51, 39, 42, 0.18);
+  }
+  :root[data-theme='mochi-sage'] {
+    --theme-tint: #a8c3a0;
+    --theme-hero: #a8c3a0;
+    --theme-ink: #2b332a;
+    --theme-kicker: #2b332a;
+    --theme-sub: #66705f;
+    --theme-nav-idle: #66705f;
+    --theme-block: #f4f4f5;
+    --theme-bar-idle: #e2e2e4;
+    --theme-strong: #4d7a52;
+    --theme-track: rgba(51, 39, 42, 0.18);
+  }
+  :root[data-theme='mochi-sky'] {
+    --theme-tint: #a8cdf0;
+    --theme-hero: #a8cdf0;
+    --theme-ink: #27333f;
+    --theme-kicker: #27333f;
+    --theme-sub: #66707a;
+    --theme-nav-idle: #66707a;
+    --theme-block: #f4f4f5;
+    --theme-bar-idle: #e2e2e4;
+    --theme-strong: #2f6db3;
+    --theme-track: rgba(51, 39, 42, 0.18);
+  }
+  :root[data-theme='mochi-lilac'] {
+    --theme-tint: #c9b8f0;
+    --theme-hero: #c9b8f0;
+    --theme-ink: #322a3f;
+    --theme-kicker: #322a3f;
+    --theme-sub: #6f6579;
+    --theme-nav-idle: #6f6579;
+    --theme-block: #f4f4f5;
+    --theme-bar-idle: #e2e2e4;
+    --theme-strong: #6d4fc2;
+    --theme-track: rgba(51, 39, 42, 0.18);
   }
   html {
     -webkit-text-size-adjust: 100%;

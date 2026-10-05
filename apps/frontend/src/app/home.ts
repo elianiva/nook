@@ -12,7 +12,6 @@ import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { ChevronRight, Flame, Inbox, Play } from 'lucide'
-import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
 import { button } from '@/components/ui/button'
@@ -40,79 +39,96 @@ const lastStudied = (deck: DeckSummary): string =>
     },
   })
 
-export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html =>
-  h.a(
+export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html => {
+  const initial = deck.name.trim().charAt(0) || '?'
+  return h.a(
     [h.Href(routeToUrl({ _tag: 'DeckDetail', deckId: deck.id }))],
     [
-      Card<Message>(
-        { className: 'p-3 transition-colors hover:border-ring' },
+      h.div(
+        [h.Class('flex items-center gap-3 rounded-[14px] border-0 bg-[var(--theme-block)] p-3')],
         [
           h.div(
-            [h.Class('flex items-center gap-3')],
+            [
+              h.Class(
+                'flex size-10 shrink-0 items-center justify-center rounded-xl bg-white text-[17px] font-bold text-[var(--theme-ink)]',
+              ),
+            ],
+            [initial],
+          ),
+          h.div(
+            [h.Class('flex min-w-0 flex-1 flex-col gap-1')],
             [
               h.div(
-                [h.Class('flex min-w-0 flex-1 flex-col gap-1')],
-                [
-                  h.div(
-                    [h.Class('flex items-center gap-2')],
-                    [h.span([h.Class('truncate text-sm font-semibold')], [deck.name])],
-                  ),
-                  h.div(
-                    [h.Class('text-xs text-muted-foreground')],
-                    [`${deck.dueCount} due · ${deck.newCount} new · ${lastStudied(deck)}`],
-                  ),
-                  Progress<Message>({ value: deck.retention7d, className: 'mt-1' }, h),
-                ],
+                [h.Class('flex items-center gap-2')],
+                [h.span([h.Class('truncate text-sm font-semibold')], [deck.name])],
               ),
               h.div(
-                [h.Class('flex shrink-0 flex-col items-end gap-1')],
-                [
-                  h.span(
-                    [
-                      h.Class(
-                        cn('text-xl font-bold tabular-nums leading-none', dueTone(deck.dueCount)),
-                      ),
-                    ],
-                    [String(deck.dueCount)],
-                  ),
-                  h.span([h.Class('text-[11px] text-muted-foreground')], ['due']),
-                  icon(h, ChevronRight, 'size-4 text-muted-foreground'),
-                ],
+                [h.Class('text-xs text-[var(--theme-sub)]')],
+                [`${deck.dueCount} due · ${deck.newCount} new · ${lastStudied(deck)}`],
+              ),
+              Progress<Message>(
+                {
+                  value: deck.retention7d,
+                  className: 'mt-1 [&_[data-slot=progress-track]]:bg-[var(--theme-bar-idle)]',
+                },
+                h,
               ),
             ],
           ),
+          h.div(
+            [h.Class('flex shrink-0 flex-col items-end gap-1')],
+            [
+              h.span(
+                [
+                  h.Class(
+                    cn('text-xl font-bold tabular-nums leading-none', dueTone(deck.dueCount)),
+                  ),
+                ],
+                [String(deck.dueCount)],
+              ),
+              h.span([h.Class('text-[11px] text-[var(--theme-sub)]')], ['due']),
+              icon(h, ChevronRight, 'size-4 text-[var(--theme-sub)]'),
+            ],
+          ),
         ],
-        h,
       ),
     ],
   )
+}
 
 const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
-  Card<Message>(
-    { className: 'border-primary/30 bg-gradient-to-b from-primary/10 to-transparent p-4' },
+  h.div(
+    [h.Class('rounded-[20px] border-0 bg-[var(--theme-hero)] p-[18px] text-[var(--theme-ink)]')],
     [
       h.div(
         [h.Class('flex flex-col gap-1')],
         [
-          h.span([h.Class('text-xs font-medium text-muted-foreground')], ['Due now']),
+          h.span(
+            [h.Class('text-xs font-bold tracking-[1.6px] text-[var(--theme-kicker)] uppercase')],
+            ['Due now · All decks'],
+          ),
           h.div(
             [h.Class('flex items-baseline gap-2')],
             [
               h.span(
-                [h.Class('text-4xl font-bold tabular-nums tracking-tight')],
+                [h.Class('text-[52px] leading-[1.05] font-bold tabular-nums tracking-tight')],
                 [String(overview.dueNow)],
               ),
-              h.span([h.Class('text-sm text-muted-foreground')], ['waiting']),
+              h.span([h.Class('text-sm')], ['waiting']),
             ],
           ),
           h.div(
             [h.Class('mt-2 flex items-center gap-2')],
             [
-              Progress<Message>({ value: overview.todayProgress, className: 'flex-1' }, h),
-              h.span(
-                [h.Class('text-xs tabular-nums text-muted-foreground')],
-                [`${overview.todayProgress}%`],
+              Progress<Message>(
+                {
+                  value: overview.todayProgress,
+                  className:
+                    'flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--theme-ink)] [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-[var(--theme-track)]',
+                },
+                h,
               ),
+              h.span([h.Class('text-xs tabular-nums')], [`${overview.todayProgress}%`]),
             ],
           ),
           h.div(
@@ -122,34 +138,31 @@ const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
                 {
                   onClick: Message.StartedReview({ deckId: Option.none() }),
                   size: 'xl',
-                  className: 'flex-1',
+                  className:
+                    'flex-1 border-0 bg-[var(--theme-ink)] text-[15px] font-bold text-white',
                 },
                 [icon(h, Play, 'size-4', 'inline-start'), 'Start reviewing'],
                 h,
               ),
             ],
           ),
-          h.p(
-            [h.Class('text-[11px] text-muted-foreground')],
-            ['Every Deck that is due, newest Cards last.'],
-          ),
+          h.p([h.Class('text-[11px]')], ['Every Deck that is due, newest Cards last.']),
         ],
       ),
     ],
-    h,
   )
 
 const statCell = (label: string, value: string, sub: string, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
       h.Class(
-        'flex flex-1 flex-col items-center gap-0.5 rounded-lg bg-muted/60 px-2 py-2.5 text-center',
+        'flex flex-1 flex-col items-center gap-0.5 rounded-[14px] border-0 bg-[var(--theme-block)] px-2 py-2.5 text-center',
       ),
     ],
     [
       h.span([h.Class('text-lg font-bold tabular-nums leading-none')], [value]),
       h.span([h.Class('text-[11px] font-medium')], [label]),
-      h.span([h.Class('text-[10px] text-muted-foreground')], [sub]),
+      h.span([h.Class('text-[10px] text-[var(--theme-sub)]')], [sub]),
     ],
   )
 
@@ -174,32 +187,30 @@ const stats = (
 
 const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
   const max = Math.max(1, ...overview.activity14d)
-  return Card<Message>(
-    {},
+  return h.div(
+    [h.Class('flex flex-col gap-2')],
     [
-      Card.header<Message>(
-        {},
-        [
-          Card.title<Message>({}, ['Activity'], h),
-          Card.description<Message>({}, ['Reviews per day, last 14 days'], h),
-        ],
-        h,
+      h.span(
+        [h.Class('text-[11px] font-bold tracking-[1.8px] text-[var(--theme-sub)] uppercase')],
+        ['Activity · Last 14 days'],
       ),
-      Card.content<Message>(
-        {},
+      h.div(
+        [h.Class('rounded-[14px] border-0 bg-[var(--theme-block)] p-[14px]')],
         [
           h.div(
             [h.Class('flex h-16 items-end gap-1')],
             overview.activity14d.map((count, index) =>
               h.div(
                 [
-                  h.Class(
-                    cn(
-                      'min-w-0 flex-1 rounded-sm',
-                      index === overview.activity14d.length - 1 ? 'bg-primary' : 'bg-primary/30',
-                    ),
-                  ),
-                  h.Style({ height: `${Math.max(8, Math.round((count / max) * 100))}%` }),
+                  h.Class('min-w-0 flex-1 rounded-full'),
+                  h.Style({
+                    height: `${Math.max(8, Math.round((count / max) * 100))}%`,
+                    backgroundColor:
+                      index === overview.activity14d.length - 1
+                        ? 'var(--theme-tint)'
+                        : 'var(--theme-bar-idle)',
+                    minHeight: '5px',
+                  }),
                   h.Title(`${count} reviews`),
                 ],
                 [],
@@ -207,10 +218,9 @@ const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
             ),
           ),
         ],
-        h,
+        // h.div children: the bar strip only
       ),
     ],
-    h,
   )
 }
 
@@ -219,12 +229,21 @@ const streakNote = (overview: Overview, h: HtmlBuilder<Message>): Child =>
     ? h.div(
         [
           h.Class(
-            'flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs',
+            'flex items-center gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2 text-xs font-semibold',
           ),
         ],
         [
-          icon(h, Flame, 'size-4 text-orange-500'),
-          `${overview.streakDays}-day streak. Keep it burning.`,
+          icon(h, Flame, 'size-4 text-[var(--theme-strong)]'),
+          h.span(
+            [],
+            [
+              h.span(
+                [h.Class('font-bold text-[var(--theme-strong)]')],
+                [`${overview.streakDays}-day streak`],
+              ),
+              '. Keep it burning.',
+            ],
+          ),
         ],
       )
     : h.empty
@@ -270,7 +289,7 @@ export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<C
         h.a(
           [
             h.Href(routeToUrl({ _tag: 'Decks' })),
-            h.Class('text-xs font-medium text-primary hover:underline'),
+            h.Class('text-xs font-medium text-[var(--theme-strong)] hover:underline'),
           ],
           ['View all'],
         ),

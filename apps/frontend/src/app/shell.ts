@@ -52,7 +52,7 @@ const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
                 [
                   h.Href(backHref(model)),
                   h.Class(
-                    'flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground',
+                    'flex size-8 items-center justify-center rounded-lg text-[var(--theme-sub)] hover:bg-[var(--theme-block)]',
                   ),
                   h.AriaLabel('Back'),
                 ],
@@ -61,7 +61,7 @@ const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
             : h.div(
                 [
                   h.Class(
-                    'flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground',
+                    'flex size-8 items-center justify-center rounded-lg bg-[var(--theme-ink)] text-white',
                   ),
                 ],
                 [icon(h, House, 'size-4')],
@@ -86,7 +86,9 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Class(
         cn(
           'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-2 text-[11px] font-medium',
-          active ? 'text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          active
+            ? 'text-[var(--theme-strong)]'
+            : 'text-[var(--theme-nav-idle)] hover:bg-[var(--theme-block)]',
         ),
       ),
       ...(active ? [h.AriaCurrent('page')] : []),

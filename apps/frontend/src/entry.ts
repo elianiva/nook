@@ -6,6 +6,13 @@ import { Model } from './app/model'
 import { subscriptions } from './app/subscriptions'
 import { init, update } from './app/update'
 import { view } from './app/view'
+import { readTheme } from './lib/theme'
+
+// The stored Mochi theme lands before the first render, so a reload never
+// flashes the default tint. A plain read is enough: the choice is
+// localStorage only, and `data-theme` falls back to the default CSS values
+// when nothing is stored.
+document.documentElement.dataset['theme'] = readTheme()
 
 const program = Runtime.makeApplication({
   Model,

@@ -366,6 +366,10 @@ export const Message = defineMessageUnion({
   EditedLapseMinutes: { value: S.String },
   EditedRolloverHour: { value: S.String },
   ToggledTapToReveal: { isChecked: S.Boolean },
+  /** The learner picked a Mochi swatch in Appearance. Applies at once. */
+  PickedTheme: { theme: S.String },
+  /** `ApplyTheme` ran: the DOM and storage already hold the theme. */
+  AppliedTheme: {},
   ClickedSaveSettings: {},
   ClickedResetSettings: {},
 })

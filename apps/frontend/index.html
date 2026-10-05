@@ -11,6 +11,26 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // The stored Mochi theme, before first paint: no flash of the default
+      // tint on reload. Mirrors `readTheme` in `src/lib/theme.ts`.
+      try {
+        var storedTheme = localStorage.getItem('nook:theme')
+        var knownThemes = ['mochi-pink', 'mochi-peach', 'mochi-sage', 'mochi-sky', 'mochi-lilac']
+        document.documentElement.dataset.theme =
+          storedTheme !== null && knownThemes.indexOf(storedTheme) !== -1
+            ? storedTheme
+            : 'mochi-pink'
+      } catch (error) {
+        document.documentElement.dataset.theme = 'mochi-pink'
+      }
+    </script>
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
