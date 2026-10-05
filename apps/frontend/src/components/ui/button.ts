@@ -36,6 +36,8 @@ export const buttonSizeKeys = [
   'xs',
   'sm',
   'lg',
+  'xl',
+  '2xl',
   'icon',
   'icon-xs',
   'icon-sm',
@@ -47,6 +49,8 @@ export const buttonSizes: Record<ButtonSize, string> = {
   xs: "h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
   sm: "h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
   lg: 'h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
+  xl: 'h-12 gap-1.5 rounded-xl px-4 text-sm',
+  '2xl': 'h-14 gap-1.5 rounded-xl px-3 text-sm font-semibold',
   icon: 'size-8',
   'icon-xs':
     "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",

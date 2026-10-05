@@ -9,6 +9,11 @@ describe('migrations stay append-only', () => {
       .readdirSync(dir)
       .filter((file) => file.endsWith('.sql'))
       .sort()
-    expect(files).toEqual(['0001_schema.sql', '0002_showcase_seed.sql', '0003_import.sql'])
+    expect(files).toEqual([
+      '0001_schema.sql',
+      '0002_showcase_seed.sql',
+      '0003_import.sql',
+      '0004_review.sql',
+    ])
   })
 })

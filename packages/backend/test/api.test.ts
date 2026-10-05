@@ -7,32 +7,9 @@ import { Api, DeckId } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Settings, SettingsHandlers } from '../src/settings'
+import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
-
-const migrate = Effect.gen(function* () {
-  const { readFileSync, readdirSync } = yield* Effect.promise(() => import('node:fs'))
-  const { join } = yield* Effect.promise(() => import('node:path'))
-  const dir = join(import.meta.dirname, '..', 'migrations')
-  const files = readdirSync(dir)
-    .filter((file) => file.endsWith('.sql'))
-    .sort()
-  const { SqlClient } = yield* Effect.promise(() => import('effect/sql'))
-  const sql = yield* SqlClient.SqlClient
-  for (const file of files) {
-    const text = readFileSync(join(dir, file), 'utf8')
-    const statements = text
-      .split('\n')
-      .filter((line) => !line.trimStart().startsWith('--'))
-      .join('\n')
-      .split(';')
-    for (const statement of statements) {
-      const trimmed = statement.trim()
-      if (trimmed.length === 0) continue
-      yield* sql.unsafe(trimmed)
-    }
-  }
-})
 
 // Handlers need SqlClient at runtime. `provideMerge` wires the single SqlLive
 // instance into them (merge alone would leave it an open requirement) while
@@ -77,7 +54,7 @@ layer(TestLayers)('backend over sqlite', (it) => {
       expect(overview.activity14d.length).toBe(14)
 
       const settings = yield* client.settings.get()
-      expect(settings.fsrs.weights.length).toBe(17)
+      expect(settings.fsrs.weights.length).toBe(21)
       const saved = yield* client.settings.update({
         payload: {
           ...settings,

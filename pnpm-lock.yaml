@@ -256,6 +256,9 @@ importers:
       '@effect/sql-d1':
         specifier: 4.0.0
         version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))
+      '@nook/anki':
+        specifier: workspace:*
+        version: link:../anki
       '@nook/api':
         specifier: workspace:*
         version: link:../api

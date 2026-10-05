@@ -65,6 +65,7 @@ describe('worker events as Messages', () => {
     const progress = {
       notesImported: 2,
       cardsImported: 1,
+      mediaImported: 0,
       noteCount: 4,
       cardCount: 4,
       mediaCount: 0,
@@ -78,6 +79,7 @@ describe('worker events as Messages', () => {
     const progress = {
       notesImported: 4,
       cardsImported: 4,
+      mediaImported: 0,
       noteCount: 4,
       cardCount: 4,
       mediaCount: 0,
@@ -98,6 +100,7 @@ describe('ImportProgress', () => {
     const plain = {
       notesImported: 1,
       cardsImported: 2,
+      mediaImported: 3,
       noteCount: 3,
       cardCount: 4,
       mediaCount: 5,

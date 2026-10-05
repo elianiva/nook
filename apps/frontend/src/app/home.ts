@@ -131,8 +131,8 @@ const hero = (model: Model, h: HtmlBuilder<Message>): Html =>
             [
               button<Message>(
                 {
-                  onClick: Message.StartedDeckReview({ deckId: '' }),
-                  size: 'lg',
+                  onClick: Message.StartedReview({ deckId: Option.none() }),
+                  size: 'xl',
                   className: 'flex-1',
                 },
                 [icon(h, Play, 'size-4', 'inline-start'), 'Start reviewing'],
@@ -142,7 +142,7 @@ const hero = (model: Model, h: HtmlBuilder<Message>): Html =>
           ),
           h.p(
             [h.Class('text-[11px] text-muted-foreground')],
-            ['Review flow is out of scope for this pass — the button is inert.'],
+            ['Every Deck that is due, newest Cards last.'],
           ),
         ],
       ),

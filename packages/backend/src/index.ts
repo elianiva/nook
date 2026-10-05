@@ -13,6 +13,7 @@
 export { Decks, DecksHandlers } from './decks'
 export { Home, HomeHandlers } from './home'
 export { Imports, ImportsHandlers } from './imports'
+export { Reviews, ReviewsHandlers } from './reviews'
 export { Settings, SettingsHandlers } from './settings'
 export { SqlLive } from './sql'
 export { withStorageErrorPassThrough, decodeRows } from './storage-error'

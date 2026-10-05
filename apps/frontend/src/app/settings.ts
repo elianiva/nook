@@ -98,7 +98,7 @@ const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         {
           id: 'fsrs-weights',
           label: 'FSRS weights (advanced)',
-          description: '17 comma-separated values for FSRS-6. Wrong count blocks save.',
+          description: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
           value: draft.weightsText,
           onInput: (value) => Message.EditedWeights({ value }),
           rows: 3,
@@ -270,7 +270,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
         h.p(
           [h.Class('py-2 text-[11px] leading-relaxed text-muted-foreground')],
           [
-            'FSRS-6 with 17 weights. Saved settings apply to future Reviews only — existing Schedules keep their intervals.',
+            'FSRS-6 with 21 weights. Saved settings apply to future Reviews only — existing Schedules keep their intervals.',
           ],
         ),
       ],

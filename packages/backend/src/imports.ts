@@ -1,11 +1,9 @@
-import { D1Client } from '@effect/sql-d1'
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import type { SqlError } from 'effect/sql/SqlError'
-import type * as Statement from 'effect/sql/Statement'
 import { Api, ImportId, ImportNotFound, StorageUnavailable } from '@nook/api'
 import type { ImportCard, ImportManifest, ImportNote, ImportStatus } from '@nook/api'
+import { runStatements } from './batch'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 
 /** One row of the `imports` table, as SQLite returns it. */
@@ -89,20 +87,6 @@ export class Imports extends Context.Service<
     Imports,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
-      const maybeD1 = yield* Effect.serviceOption(D1Client.D1Client)
-
-      /** Runs statements in order, atomically on D1 and sequentially elsewhere. */
-      const runStatements = (
-        statements: ReadonlyArray<Statement.Statement<unknown>>,
-      ): Effect.Effect<void, SqlError> =>
-        Option.match(maybeD1, {
-          onNone: () =>
-            Effect.forEach(statements, (statement) => statement, {
-              concurrency: 1,
-              discard: true,
-            }),
-          onSome: (d1) => Effect.asVoid(d1.batch(statements)),
-        })
 
       const read = (id: ImportId): Effect.Effect<ImportStatus | undefined, StorageUnavailable> =>
         Effect.gen(function* () {

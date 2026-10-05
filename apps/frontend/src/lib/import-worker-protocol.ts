@@ -30,6 +30,7 @@ export type ImportWorkerPhase = 'reading' | 'writing'
 export const ImportProgress = Schema.Struct({
   notesImported: Schema.Number,
   cardsImported: Schema.Number,
+  mediaImported: Schema.Number,
   noteCount: Schema.Number,
   cardCount: Schema.Number,
   mediaCount: Schema.Number,

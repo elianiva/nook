@@ -21,13 +21,18 @@ import { Navigation } from 'foldkit'
 import { Url } from 'foldkit'
 import {
   AppSettings,
+  CardId,
   DeckDetail,
+  DeckId,
   DeckSummary,
   DUMMY_DECKS,
   DUMMY_OVERVIEW,
   DUMMY_SETTINGS,
+  Grade,
   ImportId,
   Overview,
+  ReviewAccepted,
+  ReviewCard,
   dummyCardsFor,
 } from '@nook/api'
 import { ImportProgress } from '@/lib/import-worker-protocol'
@@ -82,7 +87,7 @@ export const validateDraft = (draft: SettingsDraft): string | undefined => {
   }
   const weights = parseWeights(draft.weightsText)
   if (weights === undefined) return 'Weights must be a comma-separated list of numbers.'
-  if (weights.length !== 17) return `Weights need 17 values (FSRS-6), found ${weights.length}.`
+  if (weights.length !== 21) return `Weights need 21 values (FSRS-6), found ${weights.length}.`
   if (!Number.isInteger(draft.maximumInterval) || draft.maximumInterval < 1) {
     return 'Maximum interval must be a whole number of days, at least 1.'
   }
@@ -105,8 +110,57 @@ export const validateDraft = (draft: SettingsDraft): string | undefined => {
   return undefined
 }
 
+/** Where the review screen is: fetching a queue, showing a Card, or at an end. */
+export const ReviewPhase = S.Literals(['loading', 'reviewing', 'done', 'failed'])
+export type ReviewPhase = typeof ReviewPhase.Type
+
+/** A Grade the app has applied on screen but the server has not confirmed yet. */
+export const ReviewPending = S.Struct({
+  id: S.String,
+  cardId: CardId,
+  grade: Grade,
+})
+export type ReviewPending = typeof ReviewPending.Type
+
+/**
+ * The review screen's state.
+ *
+ * `cards` is the queue the server served, already rendered. `index` walks it,
+ * and `graded` counts what this session has landed. A Grade advances `index`
+ * immediately and rides in `pending` until the server confirms it, so grading
+ * never waits for the network; a failed Grade stays in `pending` for Retry.
+ */
+export const ReviewState = S.Struct({
+  phase: ReviewPhase,
+  cards: S.Array(ReviewCard),
+  index: S.Number,
+  revealed: S.Boolean,
+  pending: S.Array(ReviewPending),
+  graded: S.Number,
+  /** Why the last grade failed, as one sentence for the Learner. */
+  error: S.Option(S.String),
+})
+export type ReviewState = typeof ReviewState.Type
+
+export const idleReview: ReviewState = {
+  phase: 'loading',
+  cards: [],
+  index: 0,
+  revealed: false,
+  pending: [],
+  graded: 0,
+  error: Option.none(),
+}
+
 /** Which fetch or save a notice retry runs. */
-export const LoadRetry = S.Literals(['overview', 'decks', 'deckDetail', 'settings', 'saveSettings'])
+export const LoadRetry = S.Literals([
+  'overview',
+  'decks',
+  'deckDetail',
+  'reviewQueue',
+  'settings',
+  'saveSettings',
+])
 export type LoadRetry = typeof LoadRetry.Type
 
 /** A failed fetch or save, as the banner shows it: what failed, and what retry runs. */
@@ -182,6 +236,8 @@ export const Model = S.Struct({
   deckDetail: S.Option(DeckDetail),
   /** Search text on the decks page. */
   decksQuery: S.String,
+  /** The review screen's queue and cursor. */
+  review: ReviewState,
   settings: AppSettings,
   settingsDraft: SettingsDraft,
   /** The Import the Decks page is showing: what is running, or what last ran. */
@@ -197,6 +253,7 @@ export const seedModel = (url: Url.Url): Model => ({
   decks: [...DUMMY_DECKS],
   deckDetail: Option.none(),
   decksQuery: '',
+  review: idleReview,
   settings: DUMMY_SETTINGS,
   settingsDraft: draftFromSettings(DUMMY_SETTINGS),
   importState: idleImport,
@@ -233,7 +290,24 @@ export const Message = defineMessageUnion({
   ClickedRetry: {},
   /** Decks page search text. */
   TypedDecksQuery: { value: S.String },
-  StartedDeckReview: { deckId: S.String },
+  /** The Learner pressed a Start action: one Deck's queue, or every Deck's. */
+  StartedReview: { deckId: S.Option(DeckId) },
+  /** The backend answered with the Cards to review, already rendered. */
+  GotReviewQueue: { cards: S.Array(ReviewCard) },
+  /** The Learner revealed the answer side. */
+  RevealedAnswer: {},
+  /** The Learner graded the shown Card. */
+  ClickedGrade: { grade: Grade },
+  /** A grade key was pressed. Ignored unless the answer is showing. */
+  PressedGrade: { grade: Grade },
+  /** Space or Enter was pressed: reveal, then grade Good. */
+  PressedSpace: {},
+  /** The server accepted the grade and rescheduled the Card. */
+  GradeAccepted: { id: S.String, accepted: ReviewAccepted },
+  /** The grade did not land. It waits in `pending` for Retry. */
+  GradeFailed: { error: S.String },
+  /** The Learner pressed Retry on a grade that did not land. */
+  ClickedRetryGrades: {},
   /** The Learner pressed the Import button. */
   ClickedImport: {},
   /** The Learner picked an archive, and it hashes to this Import id. */

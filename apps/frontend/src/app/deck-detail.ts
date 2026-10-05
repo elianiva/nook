@@ -140,8 +140,8 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
       ),
       button<Message>(
         {
-          onClick: Message.StartedDeckReview({ deckId: detail.summary.id }),
-          size: 'lg',
+          onClick: Message.StartedReview({ deckId: Option.some(detail.summary.id) }),
+          size: 'xl',
           className: 'mt-3 w-full',
           isDisabled: detail.summary.dueCount + detail.summary.newCount === 0,
         },

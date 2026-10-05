@@ -27,8 +27,8 @@ export class Home extends Context.Service<
       const sql = yield* Sql.SqlClient
 
       const overview = Effect.gen(function* () {
-        const dueValues =
-          yield* sql`SELECT COUNT(*) AS n FROM cards WHERE state != 'new' AND due_in_days <= 0`
+        const dueValues = yield* sql`SELECT COUNT(*) AS n FROM cards WHERE state != 'new'
+            AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`
         const dueRows = yield* decodeRows(CountRow, dueValues)
         const reviewedValues =
           yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE reviewed_at >= date('now')`

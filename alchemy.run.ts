@@ -35,6 +35,9 @@ const domain = process.env['NOOK_DOMAIN'] ?? 'nook.elianiva.com'
  * The `DB` binding is the D1 database the Worker reads through `SqlLive`.
  * Its schema and showcase seed come from `packages/backend/migrations`,
  * applied on each deploy into Alchemy's `__alchemy_migrations` bookkeeping.
+ *
+ * The `MEDIA` binding is the R2 bucket a Card's images and audio live in. The
+ * bucket is never public: the Worker serves every object through `/api/media`.
  */
 class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
   rootDir: 'apps/frontend',
@@ -43,6 +46,7 @@ class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
     DB: Cloudflare.D1.Database('nook-db', {
       migrations: './packages/backend/migrations',
     }),
+    MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
   },
   domain,
   access: {

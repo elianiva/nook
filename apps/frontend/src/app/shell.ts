@@ -15,7 +15,7 @@ import { button } from '@/components/ui/button'
 import { Option } from 'effect'
 import { Message } from './model'
 import type { Model } from './model'
-import { NAV_TABS, routeTitle, routeToTab, routeToUrl, tabToRoute } from './routes'
+import { AppRoute, NAV_TABS, routeTitle, routeToTab, routeToUrl, tabToRoute } from './routes'
 import type { NavTab } from './routes'
 
 type Child = Html | string
@@ -24,10 +24,21 @@ const tabIcon = { home: House, decks: Layers, settings: Settings } as const
 const tabLabel = { home: 'Home', decks: 'Decks', settings: 'Settings' } as const
 
 const showBack = (model: Model): boolean =>
-  model.route._tag === 'DeckDetail' || model.route._tag === 'NotFound'
+  model.route._tag === 'DeckDetail' ||
+  model.route._tag === 'Review' ||
+  model.route._tag === 'ReviewDeck' ||
+  model.route._tag === 'NotFound'
 
 const backHref = (model: Model): string =>
-  model.route._tag === 'DeckDetail' ? routeToUrl({ _tag: 'Decks' }) : routeToUrl({ _tag: 'Home' })
+  AppRoute.match(model.route, {
+    DeckDetail: () => routeToUrl({ _tag: 'Decks' }),
+    ReviewDeck: ({ deckId }) => routeToUrl({ _tag: 'DeckDetail', deckId }),
+    Review: () => routeToUrl({ _tag: 'Decks' }),
+    Home: () => routeToUrl({ _tag: 'Home' }),
+    Decks: () => routeToUrl({ _tag: 'Home' }),
+    Settings: () => routeToUrl({ _tag: 'Home' }),
+    NotFound: () => routeToUrl({ _tag: 'Home' }),
+  })
 
 const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.header(
@@ -74,7 +85,7 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Href(routeToUrl(tabToRoute(tab))),
       h.Class(
         cn(
-          'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-1.5 text-[11px] font-medium',
+          'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-2 text-[11px] font-medium',
           active ? 'text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
         ),
       ),
@@ -92,7 +103,7 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
     [
       h.div(
-        [h.Class('mx-auto flex w-full max-w-md items-stretch gap-1 px-3 py-1.5')],
+        [h.Class('mx-auto flex w-full max-w-md items-stretch gap-1 px-3 pt-1.5 pb-nav')],
         NAV_TABS.map((tab) => tabLink(model, tab, h)),
       ),
     ],
@@ -127,16 +138,43 @@ const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
       ),
   })
 
+/**
+ * Review owns the whole screen: the tab bar and the page padding step aside so
+ * the grade bar sits under the thumb, and the Card fills the space between.
+ */
+const isFocused = (model: Model): boolean =>
+  model.route._tag === 'Review' || model.route._tag === 'ReviewDeck'
+
 /** The shell frame. `content` is the active screen. */
-export const shell = (model: Model, content: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
-  h.div(
-    [h.Class('flex min-h-svh flex-col bg-background text-foreground')],
+export const shell = (
+  model: Model,
+  content: ReadonlyArray<Child>,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const focused = isFocused(model)
+  return h.div(
+    // A fixed viewport height, so the bars stay put and only the content
+    // between them scrolls. On a phone that keeps the actions under the thumb
+    // instead of below a long page.
+    [h.Class('flex h-dvh flex-col bg-background text-foreground')],
     [
       topBar(model, h),
       h.main(
-        [h.Class('mx-auto flex w-full max-w-md flex-1 flex-col gap-4 px-3 py-4')],
-        [noticeBanner(model, h), ...content],
+        [
+          h.Class(
+            cn(
+              'mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col',
+              focused ? 'gap-0 overflow-hidden' : 'gap-4 overflow-y-auto px-3 py-4',
+            ),
+          ),
+        ],
+        focused
+          ? Option.isSome(model.notice)
+            ? [h.div([h.Class('px-3 pt-3')], [noticeBanner(model, h)]), ...content]
+            : [...content]
+          : [noticeBanner(model, h), ...content],
       ),
-      bottomNav(model, h),
+      ...(focused ? [] : [bottomNav(model, h)]),
     ],
   )
+}

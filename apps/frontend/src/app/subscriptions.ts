@@ -88,4 +88,30 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         active && Option.isSome(importId) ? streamImport(importId.value) : Stream.empty,
     },
   ),
+
+  /**
+   * Review shortcuts: Space or Enter reveals, then grades Good; 1–4 grade
+   * directly. Grading is one tap on a phone, but a keyboard makes it faster.
+   */
+  reviewKeys: entry(
+    { onReview: Schema.Boolean },
+    {
+      modelToDependencies: (model) => ({
+        onReview: model.route._tag === 'Review' || model.route._tag === 'ReviewDeck',
+      }),
+      dependenciesToStream: ({ onReview }) =>
+        onReview
+          ? Subscription.keyBindings<Message>({
+              bindings: [
+                { keys: 'Space', mapEvent: () => Message.PressedSpace() },
+                { keys: 'Enter', mapEvent: () => Message.PressedSpace() },
+                { keys: '1', mapEvent: () => Message.PressedGrade({ grade: 'Again' }) },
+                { keys: '2', mapEvent: () => Message.PressedGrade({ grade: 'Hard' }) },
+                { keys: '3', mapEvent: () => Message.PressedGrade({ grade: 'Good' }) },
+                { keys: '4', mapEvent: () => Message.PressedGrade({ grade: 'Easy' }) },
+              ],
+            })
+          : Stream.empty,
+    },
+  ),
 }))

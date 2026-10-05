@@ -12,10 +12,21 @@
  * Failure is a Message, never a thrown error — Commands must stay total.
  */
 
-import { Effect, Schema as S } from 'effect'
+import { Effect, Option, Schema as S } from 'effect'
 import { Command, Http } from 'foldkit'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
-import { AppSettings, DeckDetail, DeckSummary, Overview } from '@nook/api'
+import {
+  AppSettings,
+  CardId,
+  DeckId,
+  DeckDetail,
+  DeckSummary,
+  Grade,
+  Overview,
+  ReviewAccepted,
+  ReviewQueue,
+  ReviewSubmission,
+} from '@nook/api'
 import { Message as MessageConstructors } from './model'
 import type { LoadRetry } from './model'
 
@@ -113,6 +124,56 @@ export const SaveSettings = Command.define('SaveSettings', {
             'Could not save the settings. The form is intact — try again.',
             'saveSettings',
           ),
+        ),
+      ),
+      Effect.provide(Http.layer),
+    ),
+})
+
+export const FetchReviewQueue = Command.define('FetchReviewQueue', {
+  args: { deckId: S.Option(DeckId) },
+  messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
+  execute: ({ deckId }) =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient
+      const query = Option.match(deckId, {
+        onNone: () => '',
+        onSome: (id) => `?deckId=${encodeURIComponent(id)}`,
+      })
+      const response = yield* client.get(`/api/reviews/queue${query}`)
+      const ok = yield* HttpClientResponse.filterStatusOk(response)
+      const queue = yield* HttpClientResponse.schemaBodyJson(ReviewQueue)(ok)
+      return MessageConstructors.GotReviewQueue({ cards: queue.cards })
+    }).pipe(
+      Effect.orElseSucceed(() =>
+        loadFailed(
+          'Could not load the review queue. Check the connection and try again.',
+          'reviewQueue',
+        ),
+      ),
+      Effect.provide(Http.layer),
+    ),
+})
+
+export const SubmitGrade = Command.define('SubmitGrade', {
+  args: { id: S.String, cardId: CardId, grade: Grade },
+  messages: [MessageConstructors.GradeAccepted, MessageConstructors.GradeFailed],
+  execute: ({ id, cardId, grade }) =>
+    HttpClient.HttpClient.pipe(
+      Effect.flatMap((client) =>
+        HttpClientRequest.post('/api/reviews/grade').pipe(
+          HttpClientRequest.schemaBodyJson(ReviewSubmission)({ id, cardId, grade }),
+          Effect.flatMap(client.execute),
+        ),
+      ),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(ReviewAccepted)),
+      Effect.map((accepted) => MessageConstructors.GradeAccepted({ id, accepted })),
+      Effect.catch(() =>
+        Effect.succeed(
+          MessageConstructors.GradeFailed({
+            error: 'Could not save that grade. It is waiting — try again.',
+          }),
         ),
       ),
       Effect.provide(Http.layer),

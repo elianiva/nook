@@ -35,6 +35,10 @@ export type CardId = typeof CardId.Type
 export const NoteTypeId = S.String.pipe(S.brand('NoteTypeId'))
 export type NoteTypeId = typeof NoteTypeId.Type
 
+/** Where a Card is in its life. */
+export const CardState = S.Literals(['new', 'learning', 'review', 'relearning'])
+export type CardState = typeof CardState.Type
+
 /** One recallable item. The list screens never carry prompt/answer bodies — those arrive one at a time in the review queue. */
 export const Card = S.Struct({
   id: CardId,
@@ -45,7 +49,7 @@ export const Card = S.Struct({
   stability: S.Number,
   /** Current FSRS difficulty, 1–10. Owned by FSRS; shown, never edited directly. */
   difficulty: S.Number,
-  state: S.Literals(['new', 'learning', 'review', 'relearning']),
+  state: CardState,
 })
 export type Card = typeof Card.Type
 
@@ -95,7 +99,7 @@ export type Overview = typeof Overview.Type
 export const FsrsSettings = S.Struct({
   /** Target recall probability, 0.7–0.95. */
   desiredRetention: S.Number,
-  /** FSRS-6 weight vector (17 values). Advanced; edited as text. */
+  /** FSRS-6 weight vector (21 values). Advanced; edited as text. */
   weights: S.Array(S.Number),
   /** Cap on any single interval, in days. */
   maximumInterval: S.Number,
@@ -286,6 +290,71 @@ export class StorageUnavailable extends S.TaggedError<StorageUnavailable>()('Sto
   message: S.String,
 }) {}
 
+/** The judgement a Learner makes during a Review. The order is FSRS's rating order. */
+export const Grade = S.Literals(['Again', 'Hard', 'Good', 'Easy'])
+export type Grade = typeof Grade.Type
+
+/**
+ * One Card as the review queue serves it.
+ *
+ * The two sides arrive rendered, because the Worker owns the Note Type's
+ * Template and stylesheet. `css` is scoped to the card container, so a Note
+ * Type's stylesheet cannot restyle the app.
+ */
+export const ReviewCard = S.Struct({
+  cardId: CardId,
+  deckId: DeckId,
+  noteId: S.String,
+  /** The question side, rendered from the Note Type's Template. */
+  question: S.String,
+  /** The answer side, with the question repeated through `FrontSide`. */
+  answer: S.String,
+  /** The Note Type's stylesheet, scoped to the card container. */
+  css: S.String,
+  state: CardState,
+  dueInDays: S.Number,
+  stability: S.Number,
+  difficulty: S.Number,
+})
+export type ReviewCard = typeof ReviewCard.Type
+
+/** The Cards waiting to be reviewed, due first, then new. */
+export const ReviewQueue = S.Struct({
+  cards: S.Array(ReviewCard),
+})
+export type ReviewQueue = typeof ReviewQueue.Type
+
+/**
+ * One graded Review, as the browser sends it.
+ *
+ * `id` is generated on the device, so the server can ignore a replay after a
+ * dropped response: the same id never lands twice (ADR 0002). The server
+ * timestamps the Review, because client clocks lie.
+ */
+export const ReviewSubmission = S.Struct({
+  id: S.String,
+  cardId: CardId,
+  grade: Grade,
+})
+export type ReviewSubmission = typeof ReviewSubmission.Type
+
+/** The Card's scheduling state after a graded Review. */
+export const ReviewAccepted = S.Struct({
+  cardId: CardId,
+  grade: Grade,
+  state: CardState,
+  dueInDays: S.Number,
+  stability: S.Number,
+  difficulty: S.Number,
+  intervalDays: S.Number,
+})
+export type ReviewAccepted = typeof ReviewAccepted.Type
+
+/** The Card a Review names does not exist. Returned as a 404. */
+export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', {
+  cardId: CardId,
+}) {}
+
 export class DecksGroup extends HttpApiGroup.make('decks')
   .add(
     HttpApiEndpoint.get('list', '/', {
@@ -379,11 +448,30 @@ export class ImportsGroup extends HttpApiGroup.make('imports')
   )
   .prefix('/imports') {}
 
+export class ReviewsGroup extends HttpApiGroup.make('reviews')
+  .add(
+    HttpApiEndpoint.get('queue', '/queue', {
+      query: { deckId: S.optional(DeckId) },
+      success: ReviewQueue,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
+    }),
+    HttpApiEndpoint.post('grade', '/grade', {
+      payload: ReviewSubmission,
+      success: ReviewAccepted,
+      error: [
+        CardNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+  )
+  .prefix('/reviews') {}
+
 export class Api extends HttpApi.make('nook-api')
   .add(DecksGroup)
   .add(HomeGroup)
   .add(SettingsGroup)
   .add(ImportsGroup)
+  .add(ReviewsGroup)
   .prefix('/api') {}
 
 /**
@@ -461,8 +549,8 @@ export const DUMMY_SETTINGS: AppSettings = {
   fsrs: {
     desiredRetention: 0.9,
     weights: [
-      0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.7969, 1.4835,
-      0.0614, 0.2629, 1.6483, 0.6014, 1.8729,
+      0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835,
+      0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
     ],
     maximumInterval: 365,
     newPerDay: 20,

@@ -19,13 +19,16 @@ import { Option } from 'effect'
 import { Navigation, type Update } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
-import { NavigateInternal } from './commands'
+import type { Grade } from '@nook/api'
+import { NavigateInternal, NavigateToPath } from './commands'
 import {
   FetchDeckDetail,
   FetchDecks,
   FetchOverview,
+  FetchReviewQueue,
   FetchSettings,
   SaveSettings,
+  SubmitGrade,
 } from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
 import type { LoadRetry } from './model'
@@ -34,11 +37,12 @@ import {
   detailFor,
   draftFromSettings,
   idleImport,
+  idleReview,
   seedModel,
   validateDraft,
 } from './model'
 import type { Model } from './model'
-import { AppRoute, urlToAppRoute } from './routes'
+import { AppRoute, routeToUrl, urlToAppRoute } from './routes'
 
 /** Fetch the data the route's screen renders. The seeded Model paints instantly; answers replace it. */
 const commandsForRoute = (route: AppRoute) =>
@@ -46,6 +50,11 @@ const commandsForRoute = (route: AppRoute) =>
     Home: () => [FetchOverview(), FetchDecks()],
     Decks: () => [FetchDecks()],
     DeckDetail: ({ deckId }) => [FetchDeckDetail({ deckId })],
+    Review: () => [FetchReviewQueue({ deckId: Option.none() }), FetchSettings()],
+    ReviewDeck: ({ deckId }) => [
+      FetchReviewQueue({ deckId: Option.some(deckId) }),
+      FetchSettings(),
+    ],
     Settings: () => [FetchSettings()],
     NotFound: () => [],
   })
@@ -80,6 +89,13 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
       const route = model.route
       if (route._tag !== 'DeckDetail') return [FetchDecks()]
       return [FetchDeckDetail({ deckId: route.deckId })]
+    }
+    case 'reviewQueue': {
+      const route = model.route
+      if (route._tag === 'ReviewDeck') {
+        return [FetchReviewQueue({ deckId: Option.some(route.deckId) })]
+      }
+      return [FetchReviewQueue({ deckId: Option.none() })]
     }
     case 'settings':
       return [FetchSettings()]
@@ -120,6 +136,39 @@ const settingsFromDraft = (model: Model) => {
 
 const clearNotice = (model: Model): Model => ({ ...model, notice: Option.none() })
 
+/**
+ * Applies a Grade on screen and sends it.
+ *
+ * The screen advances before the request lands, so grading never waits for the
+ * network. The Grade rides in `pending` until the server confirms it, and a
+ * Retry reuses the same id, so a Grade that landed but was not acknowledged is
+ * not applied twice (ADR 0002).
+ */
+const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message> => {
+  const review = model.review
+  const card = review.cards[review.index]
+  if (card === undefined || !review.revealed) return { model }
+  const entry = { id: crypto.randomUUID(), cardId: card.cardId, grade }
+  const index = review.index + 1
+  const done = index >= review.cards.length
+  return {
+    model: clearNotice(
+      modifyFields(model, {
+        review: () => ({
+          ...review,
+          index,
+          revealed: false,
+          pending: [...review.pending, entry],
+          graded: review.graded + 1,
+          phase: done ? 'done' : 'reviewing',
+          error: Option.none(),
+        }),
+      }),
+    ),
+    commands: [SubmitGrade(entry)],
+  }
+}
+
 export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
   Message.match<Update.Return<Model, Message>>(message, {
     ClickedLink: ({ request }) =>
@@ -130,8 +179,9 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     ChangedUrl: ({ url }) => {
       const route = urlToAppRoute(url)
-      // A new screen means a new fetch; the old notice belongs to the old screen.
-      const next: Model = { ...clearNotice(model), route }
+      // A new screen means a new fetch; the old notice and the old review
+      // session belong to the old screen.
+      const next: Model = { ...clearNotice(model), route, review: idleReview }
       return {
         model: { ...next, deckDetail: AppRouteMatchDetail(next) },
         commands: commandsForRoute(route),
@@ -185,7 +235,66 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: modifyFields(model, { decksQuery: () => value }),
     }),
 
-    StartedDeckReview: () => ({ model }),
+    // A Start action is a navigation: the review route fetches its own queue.
+    StartedReview: ({ deckId }) => {
+      const path = Option.match(deckId, {
+        onNone: (): AppRoute => ({ _tag: 'Review' }),
+        onSome: (id): AppRoute => ({ _tag: 'ReviewDeck', deckId: id }),
+      })
+      return { model, commands: [NavigateToPath({ path: routeToUrl(path) })] }
+    },
+
+    GotReviewQueue: ({ cards }) => ({
+      model: clearNotice(
+        modifyFields(model, {
+          review: () => ({
+            ...idleReview,
+            phase: cards.length === 0 ? 'done' : 'reviewing',
+            cards: [...cards],
+          }),
+        }),
+      ),
+    }),
+
+    RevealedAnswer: () => ({
+      model: modifyFields(model, { review: () => ({ ...model.review, revealed: true }) }),
+    }),
+
+    ClickedGrade: ({ grade }) => gradeCurrent(model, grade),
+
+    PressedGrade: ({ grade }) => gradeCurrent(model, grade),
+
+    // Space reveals, then grades Good: the one-hand rhythm.
+    PressedSpace: () => {
+      const review = model.review
+      if (review.phase !== 'reviewing') return { model }
+      if (!review.revealed) {
+        return { model: modifyFields(model, { review: () => ({ ...review, revealed: true }) }) }
+      }
+      return gradeCurrent(model, 'Good')
+    },
+
+    GradeAccepted: ({ id }) => ({
+      model: modifyFields(model, {
+        review: () => ({
+          ...model.review,
+          pending: model.review.pending.filter((entry) => entry.id !== id),
+        }),
+      }),
+    }),
+
+    GradeFailed: ({ error }) => ({
+      model: modifyFields(model, {
+        review: () => ({ ...model.review, error: Option.some(error) }),
+      }),
+    }),
+
+    ClickedRetryGrades: () => ({
+      model: modifyFields(model, {
+        review: () => ({ ...model.review, error: Option.none() }),
+      }),
+      commands: model.review.pending.map((entry) => SubmitGrade(entry)),
+    }),
 
     // Clear the last Import and show "preparing" while the picker is open and
     // the archive is hashed. `active` stays false, so no worker starts yet.

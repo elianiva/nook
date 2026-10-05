@@ -15,8 +15,8 @@ deck format, FSRS scheduling, and a review that never waits for the network.
 
 ## Status
 
-**The product is not built.** This repository currently holds the
-infrastructure, the tooling, and the coding conventions the product will use.
+The Import, the Decks, and the review flow run end to end. The offline queue
+and the sync protocol do not: Review is online only.
 
 What runs today:
 
@@ -34,19 +34,31 @@ What runs today:
   file twice overwrites instead of duplicating, and a run that fails midway
   resumes from the cursors it left behind. The archive is kept in IndexedDB
   while a run is in flight, so a reload resumes it and a stopped run can Retry
-  without another file pick. Media is counted but not stored: R2 has no home
-  for it yet.
+  without another file pick. Media streams into R2, and the Worker serves it
+  from `/api/media`.
+- A Review. The Worker serves a queue of due and new Cards with both sides
+  already rendered from the Note Type's Template and stylesheet, and the app
+  grades them. Each Grade is one append-only row in the Review log plus the
+  Card's FSRS-6 state, written in one batch; a replayed Grade id is ignored
+  (ADR 0002). A Grade reschedules the Card to a real due instant.
 
-What is decided but not written: FSRS scheduling, the offline queue, and the
-sync protocol. See [Design](#design) and [docs/adr](./docs/adr).
+What is decided but not written: the offline queue and the sync protocol. See
+[Design](#design) and [docs/adr](./docs/adr).
 
-## What v1 will do
+## What v1 does
 
 - Import a modern `.apkg` archive: note types, fields, templates, styling,
   decks, tags, and media.
-- Render Cards the way Anki renders them, including the deck's own CSS.
+- Render Cards the way Anki renders them, including the Note Type's own CSS.
+  Fields, `{{FrontSide}}`, conditionals, cloze deletions, `[sound:]`, and Media
+  URLs are supported. LaTeX and TTS tags are not.
 - Reset scheduling on import, so every imported Card starts as new.
-- Schedule with FSRS only. There is no SM-2 code path.
+- Schedule with FSRS-6 only. There is no SM-2 code path.
+- Review online: the Worker serves a queue of due and new Cards, and a Grade
+  reschedules the Card.
+
+Still to come:
+
 - Prefetch the next 200 Cards and grade them with no network wait.
 - Sync an append-only Review log when the network returns.
 
@@ -107,6 +119,7 @@ fails to bundle fails the build, before any deploy.
 
 ```
 apps/frontend      @nook/frontend  The Foldkit client and the Worker entry
+packages/anki      @nook/anki      The `.apkg` archive reader and the Card renderer
 packages/api       @nook/api       The RPC contract, the Drizzle schema, types
 packages/backend   @nook/backend   Effect RPC handlers and the services behind them
 alchemy.run.ts                     The Cloudflare stack
@@ -115,6 +128,10 @@ alchemy.run.ts                     The Cloudflare stack
 `packages/api` stays free of runtime behaviour. The browser bundle imports it,
 so anything that needs a database client, a bucket, a clock, or a request
 belongs in `packages/backend`.
+
+`packages/anki` is pure: the reader opens an archive, and `@nook/anki/render`
+turns a Note into a Card's two sides. The Worker imports the renderer without
+pulling in the reader's browser-only SQLite engine.
 
 Screens follow an Elm-style split: `model.ts`, `commands.ts`, `update.ts`, and
 `view.ts`. Custom Foldkit lint rules enforce it and fail the build.
@@ -126,15 +143,15 @@ Storage:
 - D1 holds the system of record. D1 has no transactions, so multi-statement
   writes use `db.batch()`. See
   [ADR 0003](./docs/adr/0003-d1-with-batch-instead-of-transactions.md).
-- R2 holds Media, served through the Worker. The bucket is never public. It
-  joins the stack with the first feature that stores a Card.
+- R2 holds Media, served through the Worker. The bucket is never public: every
+  object is read through `/api/media/<name>`.
 - Drizzle owns the schema and generates the migrations.
 
 Scheduling:
 
-- FSRS runs on the device and on the server. The algorithm is deterministic, so
-  both compute the same Stability and Difficulty from the same inputs, and the
-  server stays authoritative.
+- FSRS-6 runs on the server today. The algorithm is deterministic, so the
+  device can run the same code offline later, and the server stays
+  authoritative.
 - Every Review is an append-only row. Card state is derived, never overwritten
   in place.
 

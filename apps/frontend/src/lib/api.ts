@@ -17,5 +17,9 @@ export const API_PATHS = {
   decks: `${API_PREFIX}/decks`,
   home: `${API_PREFIX}/home`,
   imports: `${API_PREFIX}/imports`,
+  reviews: `${API_PREFIX}/reviews`,
   settings: `${API_PREFIX}/settings`,
 } as const
+
+/** Media is served by the Worker from R2, outside the HttpApi. */
+export const MEDIA_PATH = `${API_PREFIX}/media`

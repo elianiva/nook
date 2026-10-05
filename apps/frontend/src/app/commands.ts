@@ -6,7 +6,7 @@
  * thrown error.
  */
 
-import { Effect } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import { Command, Navigation, Url } from 'foldkit'
 import { Message } from './model'
 
@@ -15,4 +15,11 @@ export const NavigateInternal = Command.define('NavigateInternal', {
   messages: [Message.CompletedNavigate],
   execute: ({ url }) =>
     Navigation.pushUrl(Url.toString(url)).pipe(Effect.as(Message.CompletedNavigate())),
+})
+
+/** Navigates to a path the app built itself, such as a Start action's review URL. */
+export const NavigateToPath = Command.define('NavigateToPath', {
+  args: { path: S.String },
+  messages: [Message.CompletedNavigate],
+  execute: ({ path }) => Navigation.pushUrl(path).pipe(Effect.as(Message.CompletedNavigate())),
 })

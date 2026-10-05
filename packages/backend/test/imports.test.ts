@@ -9,39 +9,9 @@ import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Imports, ImportsHandlers } from '../src/imports'
 import { Settings, SettingsHandlers } from '../src/settings'
+import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
-
-const migrate = Effect.gen(function* () {
-  const { readFileSync, readdirSync } = yield* Effect.promise(() => import('node:fs'))
-  const { join } = yield* Effect.promise(() => import('node:path'))
-  const dir = join(import.meta.dirname, '..', 'migrations')
-  const files = readdirSync(dir)
-    .filter((file) => file.endsWith('.sql'))
-    .sort()
-  const { SqlClient } = yield* Effect.promise(() => import('effect/sql'))
-  const sql = yield* SqlClient.SqlClient
-  // The layer shares one `:memory:` database across the tests in this file, so
-  // each test starts from an empty schema rather than the last test's rows.
-  // Children go first: SQLite runs an implicit DELETE on DROP TABLE, and a
-  // parent dropped while its children still hold rows fails the foreign key.
-  for (const table of ['reviews', 'notes', 'cards', 'imports', 'decks', 'note_types', 'settings']) {
-    yield* sql.unsafe(`DROP TABLE IF EXISTS ${table}`)
-  }
-  for (const file of files) {
-    const text = readFileSync(join(dir, file), 'utf8')
-    const statements = text
-      .split('\n')
-      .filter((line) => !line.trimStart().startsWith('--'))
-      .join('\n')
-      .split(';')
-    for (const statement of statements) {
-      const trimmed = statement.trim()
-      if (trimmed.length === 0) continue
-      yield* sql.unsafe(trimmed)
-    }
-  }
-})
 
 const HandlersLive = Layer.mergeAll(
   DecksHandlers,
@@ -121,11 +91,13 @@ const note = (id: number, front: string): ImportNote => ({
   tags: ['noun'],
 })
 
-const countRows = (table: string) =>
+const countRows = (table: string, where = '1 = 1') =>
   Effect.gen(function* () {
     const { SqlClient } = yield* Effect.promise(() => import('effect/sql'))
     const sql = yield* SqlClient.SqlClient
-    const rows = yield* sql.unsafe<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)
+    const rows = yield* sql.unsafe<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`,
+    )
     return rows[0]?.n ?? 0
   })
 
@@ -191,8 +163,8 @@ layer(TestLayers)('imports over sqlite', (it) => {
         params: { importId: IMPORT_ID },
         payload: { notes: [note(10, '水 (edited)')], cards: [] },
       })
-      expect(yield* countRows('notes')).toBe(2)
-      expect(yield* countRows('note_types')).toBe(1)
+      expect(yield* countRows('notes', `import_id = '${IMPORT_ID}'`)).toBe(2)
+      expect(yield* countRows('note_types', `id = '100'`)).toBe(1)
     }),
   )
 

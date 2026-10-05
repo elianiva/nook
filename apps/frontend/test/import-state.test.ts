@@ -30,6 +30,7 @@ const decksModel = (): Model => seedModel(url('/decks'))
 const progress = {
   notesImported: 2,
   cardsImported: 2,
+  mediaImported: 0,
   noteCount: 2,
   cardCount: 2,
   mediaCount: 1,

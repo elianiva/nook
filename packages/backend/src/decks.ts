@@ -72,9 +72,14 @@ export class Decks extends Context.Service<
       const list = Effect.gen(function* () {
         const rows = yield* sql`SELECT id, name, description,
           (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
-          (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new' AND due_in_days <= 0) AS "dueCount",
+          (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+            AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS "dueCount",
           (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
-          due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt", retention_7d AS "retention7d"
+          due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt",
+          (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
+            FROM reviews r JOIN cards c ON c.id = r.card_id
+            WHERE c.deck_id = decks.id
+              AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
           FROM decks ORDER BY name`
         const decoded = yield* decodeRows(DeckRow, rows)
         return decoded.map(toSummary)
@@ -86,14 +91,20 @@ export class Decks extends Context.Service<
         Effect.gen(function* () {
           const summaryRows = yield* sql`SELECT id, name, description,
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new' AND due_in_days <= 0) AS "dueCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
-            due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt", retention_7d AS "retention7d"
+            due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt",
+            (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
+              FROM reviews r JOIN cards c ON c.id = r.card_id
+              WHERE c.deck_id = decks.id
+                AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
             FROM decks WHERE id = ${id}`
           const summaries = yield* decodeRows(DeckRow, summaryRows)
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
-          const cardRows = yield* sql`SELECT id, deck_id AS "deckId", due_in_days AS "dueInDays",
+          const cardRows = yield* sql`SELECT id, deck_id AS "deckId",
+            COALESCE(CAST(julianday(due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`
           const cards = yield* decodeRows(CardRow, cardRows)
           return { summary: toSummary(summary), cards: cards.map(toCard) } satisfies DeckDetail

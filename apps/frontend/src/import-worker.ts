@@ -16,7 +16,7 @@
 import { Effect, Stream } from 'effect'
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { AnkiArchive, AnkiSqliteMemory, layer as ankiLayer } from '@nook/anki'
-import type { AnkiManifest } from '@nook/anki'
+import type { AnkiManifest, OpenedMedia } from '@nook/anki'
 import { ImportBatchPayload, ImportFailure, ImportId, ImportStart, ImportStatus } from '@nook/api'
 import type {
   ImportBatchPayload as ImportBatch,
@@ -32,7 +32,11 @@ import type {
 /** How many Notes or Cards ride in one request. Each row is one SQLite statement. */
 const ROWS_PER_REQUEST = 200
 
+/** How many Media files upload per progress tick. Media is heavier than a row. */
+const MEDIA_PER_REQUEST = 4
+
 const IMPORTS_URL = '/api/imports'
+const MEDIA_URL = '/api/media'
 
 /** As much of the worker global scope as this module uses. */
 type WorkerScope = {
@@ -61,9 +65,10 @@ const toManifest = (manifest: AnkiManifest): ImportManifest => ({
 })
 
 /** The counts the panel shows, as plain data a `postMessage` can carry. */
-const toProgress = (status: ImportStatus): ImportProgress => ({
+const toProgress = (status: ImportStatus, mediaImported: number): ImportProgress => ({
   notesImported: status.notesImported,
   cardsImported: status.cardsImported,
+  mediaImported,
   noteCount: status.noteCount,
   cardCount: status.cardCount,
   mediaCount: status.mediaCount,
@@ -95,6 +100,16 @@ const send = <E, R>(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(ImportStatus)),
   )
+
+/** Uploads one Media file. The name is the archive's own, so a re-upload overwrites. */
+const putMedia = (client: HttpClient.HttpClient, file: OpenedMedia) =>
+  client
+    .execute(
+      HttpClientRequest.put(`${MEDIA_URL}/${encodeURIComponent(file.name)}`).pipe(
+        HttpClientRequest.bodyUint8Array(file.bytes, 'application/octet-stream'),
+      ),
+    )
+    .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.asVoid)
 
 /** The sentences an Anki error carries are written for the Learner; anything else is not. */
 const toSentence = (error: unknown): string => {
@@ -130,19 +145,29 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
       )
 
       post({ type: 'phase', phase: 'writing' })
-      post({ type: 'progress', progress: toProgress(started) })
+
+      // The last counts the Worker answered with, so a Media tick reports
+      // progress without another round trip.
+      let last = started
+      let mediaImported = 0
+      const report = (): void =>
+        post({ type: 'progress', progress: toProgress(last, mediaImported) })
+      report()
 
       // The Import already finished on an earlier run: there is nothing to
       // write, and the cursors say so.
       if (started.status === 'done') {
-        post({ type: 'done', progress: toProgress(started) })
+        post({ type: 'done', progress: toProgress(started, mediaImported) })
         return
       }
 
       const writeBatch = (batch: ImportBatch) =>
         send(client, batchRequest(command.id, batch)).pipe(
           Effect.tap((status) =>
-            Effect.sync(() => post({ type: 'progress', progress: toProgress(status) })),
+            Effect.sync(() => {
+              last = status
+              report()
+            }),
           ),
         )
 
@@ -159,8 +184,28 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
         Stream.runForEach((cards) => writeBatch({ notes: [], cards: Array.from(cards) })),
       )
 
+      // Media last, one file per request: a Card renders without its audio, but
+      // a half-written Note cannot. A re-run overwrites, so a retry is safe.
+      yield* opened.media.pipe(
+        Stream.grouped(MEDIA_PER_REQUEST),
+        Stream.runForEach((group) => {
+          const files = Array.from(group)
+          return Effect.forEach(files, (file) => putMedia(client, file), {
+            concurrency: 1,
+            discard: true,
+          }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                mediaImported += files.length
+                report()
+              }),
+            ),
+          )
+        }),
+      )
+
       const status = yield* send(client, completeRequest(command.id))
-      post({ type: 'done', progress: toProgress(status) })
+      post({ type: 'done', progress: toProgress(status, mediaImported) })
     }),
   ).pipe(
     // The read is scoped, so the archive's zip reader and its SQLite database

@@ -36,9 +36,11 @@ const formatCount = (count: number): string => count.toLocaleString()
 
 /** Share of the archive's rows written so far, 0–100. An archive with no rows is done. */
 const percentWritten = (progress: ImportProgress): number => {
-  const total = progress.noteCount + progress.cardCount
+  const total = progress.noteCount + progress.cardCount + progress.mediaCount
   if (total === 0) return 100
-  return Math.round(((progress.notesImported + progress.cardsImported) / total) * 100)
+  return Math.round(
+    ((progress.notesImported + progress.cardsImported + progress.mediaImported) / total) * 100,
+  )
 }
 
 /**
@@ -81,13 +83,13 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
       `${formatCount(status.cardsImported)} of ${formatCount(status.cardCount)} cards`,
   })
 
-  // Media has no home yet, so say so rather than let the Import look complete.
+  // Media now has a home in R2, so show how far it has come.
   const media = Option.match(state.status, {
     onNone: () => null,
     onSome: (status) =>
       status.mediaCount === 0
         ? null
-        : `${formatCount(status.mediaCount)} media files are not imported yet`,
+        : `${formatCount(status.mediaImported)} of ${formatCount(status.mediaCount)} media`,
   })
 
   // A stopped Import keeps its archive, so Retry resumes it without another
@@ -204,7 +206,7 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
             onClick: Message.ClickedImport(),
             isDisabled: model.importState.active,
             variant: 'outline',
-            size: 'icon',
+            size: 'icon-lg',
             attributes: [h.AriaLabel('Import deck')],
           },
           [icon(h, Upload, 'size-4')],

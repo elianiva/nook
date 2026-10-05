@@ -145,8 +145,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     @apply bg-background text-foreground;
+    /* No grey flash on tap; controls respond like native ones. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+  button,
+  a,
+  [role='button'] {
+    touch-action: manipulation;
   }
   [data-leave] {
     --tw-animation-fill-mode: both;
@@ -159,4 +171,14 @@
   &::-webkit-scrollbar {
     display: none;
   }
+}
+
+/** Keeps a bottom action bar clear of the home indicator. */
+@utility pb-safe {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/** The tab bar's own safe-area padding, a little tighter than `pb-safe`. */
+@utility pb-nav {
+  padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
 }

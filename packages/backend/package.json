@@ -18,6 +18,7 @@
   "dependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",
     "@effect/sql-d1": "4.0.0",
+    "@nook/anki": "workspace:*",
     "@nook/api": "workspace:*",
     "effect": "4.0.0"
   },

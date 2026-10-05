@@ -12,6 +12,7 @@ import { decksView } from './decks'
 import { homeView } from './home'
 import type { Message, Model } from './model'
 import { AppRoute } from './routes'
+import { reviewView } from './review'
 import { settingsView } from './settings'
 import { shell } from './shell'
 
@@ -44,12 +45,16 @@ const deckDetailShell = (model: Model, h: HtmlBuilder<Message>) =>
 const settingsShell = (model: Model, h: HtmlBuilder<Message>) =>
   shell(model, settingsView(model, h), h)
 
+const reviewShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, reviewView(model, h), h)
+
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
   void Option.isSome
   const body = AppRoute.match(model.route, {
     Home: () => homeShell(model, h),
     Decks: () => decksShell(model, h),
     DeckDetail: () => deckDetailShell(model, h),
+    Review: () => reviewShell(model, h),
+    ReviewDeck: () => reviewShell(model, h),
     Settings: () => settingsShell(model, h),
     NotFound: () => notFoundView(model, h),
   })

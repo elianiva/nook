@@ -20,6 +20,8 @@ export const AppRoute = defineRouteUnion({
   Home: {},
   Decks: {},
   DeckDetail: { deckId: DeckId },
+  Review: {},
+  ReviewDeck: { deckId: DeckId },
   Settings: {},
   NotFound: { path: S.String },
 })
@@ -35,9 +37,24 @@ const deckDetailRouter = pipe(
   Route.mapTo(AppRoute.DeckDetail),
 )
 
+const reviewRouter = pipe(Route.literal('review'), Route.mapTo(AppRoute.Review))
+
+const reviewDeckRouter = pipe(
+  Route.literal('review'),
+  Route.slash(Route.schemaSegment('deckId', DeckId)),
+  Route.mapTo(AppRoute.ReviewDeck),
+)
+
 const settingsRouter = pipe(Route.literal('settings'), Route.mapTo(AppRoute.Settings))
 
-const routeParser = Route.oneOf(deckDetailRouter, decksRouter, settingsRouter, homeRouter)
+const routeParser = Route.oneOf(
+  reviewDeckRouter,
+  deckDetailRouter,
+  decksRouter,
+  reviewRouter,
+  settingsRouter,
+  homeRouter,
+)
 
 export const urlToAppRoute = Route.parseUrlWithFallback(routeParser, AppRoute.NotFound)
 
@@ -47,6 +64,8 @@ export const routeToUrl = (route: AppRoute): string =>
     Home: () => homeRouter.build({}),
     Decks: () => decksRouter.build({}),
     DeckDetail: ({ deckId }) => deckDetailRouter.build({ deckId }),
+    Review: () => reviewRouter.build({}),
+    ReviewDeck: ({ deckId }) => reviewDeckRouter.build({ deckId }),
     Settings: () => settingsRouter.build({}),
     NotFound: ({ path }) => path,
   })
@@ -56,6 +75,8 @@ export const routeTitle = (route: AppRoute): string =>
     Home: () => 'Home',
     Decks: () => 'Decks',
     DeckDetail: () => 'Deck',
+    Review: () => 'Review',
+    ReviewDeck: () => 'Review',
     Settings: () => 'Settings',
     NotFound: () => 'Not found',
   })
@@ -69,6 +90,8 @@ export const routeToTab = (route: AppRoute): NavTab =>
     Home: () => 'home' as NavTab,
     Decks: () => 'decks' as NavTab,
     DeckDetail: () => 'decks' as NavTab,
+    Review: () => 'decks' as NavTab,
+    ReviewDeck: () => 'decks' as NavTab,
     Settings: () => 'settings' as NavTab,
     NotFound: () => 'home' as NavTab,
   })
