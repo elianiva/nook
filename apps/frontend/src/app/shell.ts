@@ -3,10 +3,14 @@
  *
  * A narrow column (`max-w-md`) centres on larger screens, so the desktop
  * layout derives from the mobile design instead of the other way round.
- * The top bar names the screen; the bottom bar holds the three tabs
- * (Home, Decks, Settings) with the active tab marked.
+ * The top bar is a bare wordmark row — the `nook` mark, the screen name,
+ * and a live tint chip — with no border, so it reads as part of the page
+ * instead of browser chrome. The bottom bar holds the three tabs
+ * (Home, Decks, Settings) as quiet uppercase labels; the active tab alone
+ * wears the theme tint.
  */
 
+import { AsyncData } from 'foldkit'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { ArrowLeft, CircleAlert, House, Layers, RotateCcw, Settings } from 'lucide'
 import { icon } from '@/lib/icons'
@@ -17,6 +21,7 @@ import { Message } from './model'
 import type { Model } from './model'
 import { AppRoute, NAV_TABS, routeTitle, routeToTab, routeToUrl, tabToRoute } from './routes'
 import type { NavTab } from './routes'
+import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 
 type Child = Html | string
 
@@ -40,43 +45,148 @@ const backHref = (model: Model): string =>
     NotFound: () => routeToUrl({ _tag: 'Home' }),
   })
 
-const topBar = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.header(
-    [h.Class('sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur')],
+/**
+ * The live chip in the top bar. On Home it names the due count; on a deck
+ * page it names that deck's due-plus-new total; elsewhere it wears the
+ * streak. Nothing renders until the Query backing the chip has data, so a
+ * loading screen keeps a bare wordmark row instead of a wrong number.
+ */
+const topChip = (model: Model): string | undefined =>
+  AppRoute.match(model.route, {
+    Home: () =>
+      Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
+        onNone: () => undefined,
+        onSome: (overview) => `${overview.dueNow} due`,
+      }),
+    Decks: () =>
+      Option.match(AsyncData.getData(decksQuery.read(model.decks)), {
+        onNone: () => undefined,
+        onSome: (decks) => `${decks.reduce((sum, deck) => sum + deck.dueCount, 0)} due`,
+      }),
+    DeckDetail: ({ deckId }) =>
+      Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
+        onNone: () => undefined,
+        onSome: (detail) => `${detail.summary.dueCount + detail.summary.newCount} to review`,
+      }),
+    Review: () =>
+      Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
+        onNone: () => undefined,
+        onSome: (overview) => `${overview.dueNow} due`,
+      }),
+    ReviewDeck: ({ deckId }) => topChip({ ...model, route: AppRoute.DeckDetail({ deckId }) }),
+    Settings: () =>
+      Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
+        onNone: () => undefined,
+        onSome: (overview) =>
+          overview.streakDays < 2 ? undefined : `${overview.streakDays}-day streak`,
+      }),
+    NotFound: () => undefined,
+  })
+
+/** The screen name in the top bar: the deck's name on its pages, the route name elsewhere. */
+const topTitle = (model: Model): string =>
+  AppRoute.match(model.route, {
+    Home: () => routeTitle(model.route),
+    Decks: () => routeTitle(model.route),
+    DeckDetail: ({ deckId }) =>
+      Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
+        onNone: () => routeTitle(model.route),
+        onSome: (detail) => detail.summary.name,
+      }),
+    Review: () => routeTitle(model.route),
+    ReviewDeck: ({ deckId }) =>
+      Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
+        onNone: () => routeTitle(model.route),
+        onSome: (detail) => detail.summary.name,
+      }),
+    Settings: () => routeTitle(model.route),
+    NotFound: () => routeTitle(model.route),
+  })
+
+const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const chip = topChip(model)
+  return h.div(
+    [h.Class('mx-auto flex w-full max-w-md items-center gap-2 px-3 pt-3')],
     [
-      h.div(
-        [h.Class('mx-auto flex h-12 w-full max-w-md items-center gap-1 px-3')],
-        [
-          showBack(model)
-            ? h.a(
-                [
-                  h.Href(backHref(model)),
-                  h.Class(
-                    'flex size-8 items-center justify-center rounded-lg text-[var(--theme-sub)] hover:bg-[var(--theme-block)]',
-                  ),
-                  h.AriaLabel('Back'),
-                ],
-                [icon(h, ArrowLeft, 'size-4')],
-              )
-            : h.div(
-                [
-                  h.Class(
-                    'flex size-8 items-center justify-center rounded-lg bg-[var(--theme-ink)] text-white',
-                  ),
-                ],
-                [icon(h, House, 'size-4')],
-              ),
-          h.div(
-            [h.Class('flex flex-col leading-tight')],
+      showBack(model)
+        ? h.a(
             [
-              h.span([h.Class('text-sm font-semibold')], [routeTitle(model.route)]),
-              h.span([h.Class('text-[11px] text-muted-foreground')], ['nook']),
+              h.Href(backHref(model)),
+              h.Class(
+                'flex size-9 items-center justify-center rounded-full bg-[var(--theme-block)] text-[var(--theme-ink)]',
+              ),
+              h.AriaLabel('Back'),
             ],
+            [icon(h, ArrowLeft, 'size-4')],
+          )
+        : h.div(
+            [
+              h.Class(
+                'flex h-9 items-center rounded-lg bg-[var(--theme-ink)] px-2.5 text-[13px] font-extrabold tracking-tight text-white',
+              ),
+            ],
+            ['nook'],
           ),
+      h.div(
+        [h.Class('flex min-w-0 flex-1 flex-col leading-tight')],
+        [
+          h.span(
+            [h.Class('truncate text-[17px] font-extrabold tracking-tight')],
+            [topTitle(model)],
+          ),
+          h.span([h.Class('text-[11px] font-medium text-[var(--theme-sub)]')], [topSub(model)]),
         ],
       ),
+      ...(chip === undefined
+        ? []
+        : [
+            h.span(
+              [
+                h.Class(
+                  'shrink-0 rounded-full bg-[var(--theme-hero)] px-2.5 py-1.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums',
+                ),
+              ],
+              [chip],
+            ),
+          ]),
     ],
   )
+}
+
+/** The muted line under the screen name: the date on Home, the deck totals elsewhere. */
+const topSub = (model: Model): string =>
+  AppRoute.match(model.route, {
+    Home: () => {
+      const date = new Date().toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+      return Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
+        onNone: () => date,
+        onSome: (overview) => `${date} · ${overview.reviewedToday} reviewed`,
+      })
+    },
+    Decks: () =>
+      Option.match(AsyncData.getData(decksQuery.read(model.decks)), {
+        onNone: () => 'Every deck in one place',
+        onSome: (decks) => `${decks.length} ${decks.length === 1 ? 'deck' : 'decks'} in one place`,
+      }),
+    DeckDetail: ({ deckId }) =>
+      Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
+        onNone: () => 'Deck',
+        onSome: (detail) =>
+          `${detail.summary.dueCount} due · ${detail.summary.newCount} new · ${detail.summary.totalCount} total`,
+      }),
+    Review: () => 'Grade honestly — FSRS does the rest',
+    ReviewDeck: ({ deckId }) =>
+      Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
+        onNone: () => 'Grade honestly — FSRS does the rest',
+        onSome: (detail) => detail.summary.name,
+      }),
+    Settings: () => 'FSRS, deck defaults, behaviour',
+    NotFound: () => 'Nothing lives here',
+  })
 
 const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
   const active = routeToTab(model.route) === tab
@@ -85,27 +195,29 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Href(routeToUrl(tabToRoute(tab))),
       h.Class(
         cn(
-          'flex flex-1 flex-col items-center gap-0.5 rounded-lg py-2 text-[11px] font-medium',
-          active
-            ? 'text-[var(--theme-strong)]'
-            : 'text-[var(--theme-nav-idle)] hover:bg-[var(--theme-block)]',
+          'flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-extrabold tracking-[1.6px] uppercase',
+          active ? 'text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
         ),
       ),
       ...(active ? [h.AriaCurrent('page')] : []),
     ],
-    [icon(h, tabIcon[tab], 'size-4'), tabLabel[tab]],
+    [
+      icon(h, tabIcon[tab], 'size-[22px]'),
+      tabLabel[tab].toUpperCase(),
+      h.span(
+        [h.Class(cn('h-1 w-4 rounded-full', active ? 'bg-[var(--theme-hero)]' : 'bg-transparent'))],
+        [],
+      ),
+    ],
   )
 }
 
 const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.nav(
-    [
-      h.Class('sticky bottom-0 z-10 border-t border-border bg-background/95 backdrop-blur'),
-      h.AriaLabel('Sections'),
-    ],
+    [h.AriaLabel('Sections')],
     [
       h.div(
-        [h.Class('mx-auto flex w-full max-w-md items-stretch gap-1 px-3 pt-1.5 pb-nav')],
+        [h.Class('mx-auto flex w-full max-w-md items-stretch px-3 pt-1 pb-nav')],
         NAV_TABS.map((tab) => tabLink(model, tab, h)),
       ),
     ],
@@ -160,7 +272,7 @@ export const shell = (
     // instead of below a long page.
     [h.Class('flex h-dvh flex-col bg-background text-foreground')],
     [
-      topBar(model, h),
+      topChrome(model, h),
       h.main(
         [
           h.Class(
