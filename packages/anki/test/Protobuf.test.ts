@@ -9,25 +9,23 @@ import {
   stringField,
   uint32Field,
 } from './Protobuf'
+import { natural, text } from './Generators'
+
+/** A message built from hex, for values the test encoder cannot write. */
+const hex = (value: string): Uint8Array =>
+  Uint8Array.from(value.match(/../g) ?? [], (byte) => parseInt(byte, 16))
 
 describe('ProtobufReader', () => {
-  it('reads a varint that fits in one byte', () => {
-    const reader = new ProtobufReader(uint32Field(1, 3))
-    expect(reader.next()).toEqual({ number: 1, wireType: 'varint' })
-    expect(reader.varint()).toBe(3)
-    expect(reader.done).toBe(true)
+  it.prop('reads back every varint value it can carry', [natural], ([value]) => {
+    const reader = new ProtobufReader(uint32Field(1, value))
+    reader.next()
+    expect(reader.varint()).toBe(value)
   })
 
-  it('reads a varint that Anki writes as a millisecond timestamp', () => {
-    const reader = new ProtobufReader(uint32Field(1, 1_706_642_722_425))
+  it.prop('reads back every string, including characters outside ASCII', [text], ([value]) => {
+    const reader = new ProtobufReader(stringField(3, value))
     reader.next()
-    expect(reader.varint()).toBe(1_706_642_722_425)
-  })
-
-  it('reads a string, including characters outside ASCII', () => {
-    const reader = new ProtobufReader(stringField(3, '.card { font-family: "游ゴシック" }'))
-    reader.next()
-    expect(reader.string()).toBe('.card { font-family: "游ゴシック" }')
+    expect(reader.string()).toBe(value)
   })
 
   it('reads a bool as a varint', () => {
@@ -84,6 +82,38 @@ describe('ProtobufReader', () => {
       }
     }
     expect(reader.done).toBe(true)
+  })
+
+  it('steps over an unknown 64-bit varint without carrying it', () => {
+    // Anki 23.10 writes a random `int64` id into every Field and Template
+    // config. These are the real bytes from Kaishi: one positive, one negative.
+    const reader = new ProtobufReader(
+      concat(
+        uint32Field(1, 7),
+        new Uint8Array([0x48]),
+        hex('98c4c4ffec8d89e534'),
+        new Uint8Array([0x48]),
+        hex('ffffffffffffffffff01'),
+      ),
+    )
+    const numbers: Array<number> = []
+    for (let tag = reader.next(); tag !== null; tag = reader.next()) {
+      numbers.push(tag.number)
+      if (tag.number === 1) {
+        expect(reader.varint()).toBe(7)
+      } else {
+        reader.skip(tag)
+      }
+    }
+    expect(numbers).toEqual([1, 9, 9])
+    expect(reader.done).toBe(true)
+  })
+
+  it('refuses a skipped varint that runs past ten bytes', () => {
+    const reader = new ProtobufReader(concat(new Uint8Array([0x48]), new Uint8Array(11).fill(0x80)))
+    const tag = reader.next()
+    expect(tag).not.toBeNull()
+    expect(() => reader.skip(tag!)).toThrow(ProtobufError)
   })
 
   it('stops at the end of the message', () => {

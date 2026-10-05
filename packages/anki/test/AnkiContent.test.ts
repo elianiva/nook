@@ -1,18 +1,46 @@
-import { describe, expect, it } from '@effect/vitest'
+import { assert, describe, expect, it } from '@effect/vitest'
 import { Schema } from 'effect'
 import { AnkiCard, AnkiNote } from '../src/AnkiContent'
 
 const decodeNote = Schema.decodeUnknownSync(AnkiNote)
+const encodeNote = Schema.encodeSync(AnkiNote)
 const decodeCard = Schema.decodeUnknownSync(AnkiCard)
+const encodeCard = Schema.encodeSync(AnkiCard)
+
+/** A row of `notes`, with Anki's column names and both joined columns as text. */
+const NoteRow = Schema.Struct({
+  id: Schema.Number,
+  guid: Schema.String,
+  mid: Schema.Number,
+  mod: Schema.Number,
+  flds: Schema.String,
+  tags: Schema.String,
+})
+
+/** A row of `cards`, with every scheduling column, even the ones nook drops. */
+const CardRow = Schema.Struct({
+  id: Schema.Number,
+  nid: Schema.Number,
+  did: Schema.Number,
+  odid: Schema.Number,
+  ord: Schema.Number,
+  queue: Schema.Number,
+  flags: Schema.Number,
+})
 
 describe('AnkiNote', () => {
+  it.prop('decodes any row into a Note that encodes back to the same Note', [NoteRow], ([row]) => {
+    const note = decodeNote(row)
+    assert.deepStrictEqual(decodeNote(encodeNote(note)), note)
+  })
+
   it("reads a row of the notes table using Anki's column names", () => {
     const note = decodeNote({
       id: 1_706_642_722_424,
       guid: 'g1',
       mid: 1_700_000_000_001,
       mod: 1_707_681_587,
-      flds: 'Cloze\u001fThe {{c1::word}} is {{c2::defined}}',
+      flds: 'Cloze\x1fThe {{c1::word}} is {{c2::defined}}',
       tags: ' noun verb ',
     })
 
@@ -32,7 +60,7 @@ describe('AnkiNote', () => {
       guid: '',
       mid: 2,
       mod: 0,
-      flds: 'Front\u001f\u001fBack',
+      flds: 'Front\x1f\x1fBack',
       tags: '',
     })
     expect(note.fields).toEqual(['Front', '', 'Back'])
@@ -44,12 +72,17 @@ describe('AnkiNote', () => {
   })
 
   it('encodes back to the row Anki would have written', () => {
-    const row = { id: 1, guid: 'g', mid: 2, mod: 3, flds: 'a\u001fb', tags: ' t ' }
-    expect(Schema.encodeSync(AnkiNote)(decodeNote(row))).toEqual(row)
+    const row = { id: 1, guid: 'g', mid: 2, mod: 3, flds: 'a\x1fb', tags: ' t ' }
+    expect(encodeNote(decodeNote(row))).toEqual(row)
   })
 })
 
 describe('AnkiCard', () => {
+  it.prop('decodes any row into a Card that encodes back to the same Card', [CardRow], ([row]) => {
+    const card = decodeCard(row)
+    assert.deepStrictEqual(decodeCard(encodeCard(card)), card)
+  })
+
   it('reads a row of the cards table and drops every scheduling column', () => {
     const card = decodeCard({
       id: 10,
@@ -69,14 +102,6 @@ describe('AnkiCard', () => {
       suspended: false,
       flag: 0,
     })
-    expect(Object.keys(card).sort()).toEqual([
-      'deckId',
-      'flag',
-      'id',
-      'noteId',
-      'suspended',
-      'templateOrd',
-    ])
   })
 
   it('sends a Card home when a filtered Deck moved it', () => {
@@ -84,32 +109,22 @@ describe('AnkiCard', () => {
     expect(card.deckId).toBe(42)
   })
 
-  it('reads a Card the Learner suspended', () => {
-    expect(
-      decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: -1, flags: 0 }).suspended,
-    ).toBe(true)
-  })
+  it('reads a Card the Learner suspended, and not one that is only buried', () => {
+    const suspended = decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: -1, flags: 0 })
+    expect(suspended.suspended).toBe(true)
 
-  it('reads a buried Card as not suspended, because burying ends on its own', () => {
-    expect(
-      decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: -2, flags: 0 }).suspended,
-    ).toBe(false)
+    const buried = decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: -2, flags: 0 })
+    expect(buried.suspended).toBe(false)
   })
 
   it('keeps only the star colour out of cards.flags', () => {
-    expect(
-      decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: 0, flags: 0b1101 }).flag,
-    ).toBe(0b101)
-  })
-
-  it('encodes back to the row Anki would have written', () => {
-    const row = { id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: 0, flags: 2 }
-    expect(Schema.encodeSync(AnkiCard)(decodeCard(row))).toEqual(row)
+    const card = decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: 0, flags: 0b1101 })
+    expect(card.flag).toBe(0b101)
   })
 
   it('encodes a suspended Card with the queue Anki suspends to', () => {
     const card = decodeCard({ id: 1, nid: 2, did: 3, odid: 0, ord: 0, queue: -1, flags: 0 })
-    expect(Schema.encodeSync(AnkiCard)(card)).toEqual({
+    expect(encodeCard(card)).toEqual({
       id: 1,
       nid: 2,
       did: 3,

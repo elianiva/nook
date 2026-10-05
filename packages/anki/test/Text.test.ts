@@ -1,46 +1,41 @@
 import { describe, expect, it } from '@effect/vitest'
-import { joinFields, joinTags, splitFields, splitTags } from '../src/Text'
+import { Arbitrary, Schema } from 'effect'
+import { FIELD_SEPARATOR, joinFields, joinTags, splitFields, splitTags } from '../src/Text'
+import { nonEmptyText, text } from './Generators'
 
-describe('splitFields', () => {
+/** A Field Anki can store: the separator would end it early, so it holds none. */
+const field = text.pipe(Arbitrary.filter((value) => !value.includes(FIELD_SEPARATOR)))
+
+/** A Tag Anki can store: non-empty, and free of both separators. */
+const tag = nonEmptyText.pipe(Arbitrary.filter((value) => !/[ 　]/.test(value)))
+
+describe('splitFields and joinFields', () => {
+  it.prop(
+    'round-trips every Field Anki can store',
+    [Arbitrary.array(field, { minLength: 1 })],
+    ([fields]) => {
+      expect(splitFields(joinFields(fields))).toEqual(fields)
+    },
+  )
+
+  it.prop('returns the joined text unchanged', [Arbitrary.schema(Schema.String)], ([joined]) => {
+    expect(joinFields(splitFields(joined))).toBe(joined)
+  })
+
   it('keeps empty Fields, because their position carries meaning', () => {
-    expect(splitFields('Front\u001f\u001fBack')).toEqual(['Front', '', 'Back'])
-  })
-
-  it('reads a Note with one Field', () => {
-    expect(splitFields('Cloze')).toEqual(['Cloze'])
-  })
-
-  it('reads a Note with no Fields at all', () => {
-    expect(splitFields('')).toEqual([''])
-  })
-})
-
-describe('joinFields', () => {
-  it('round-trips every Field that Anki can store', () => {
-    const fields = ['Front', '', 'Back', 'a-nbsp', ' spaced ']
-    expect(splitFields(joinFields(fields))).toEqual(fields)
+    expect(splitFields('Front\x1f\x1fBack')).toEqual(['Front', '', 'Back'])
   })
 
   it('cannot round-trip a Field that holds the separator, which is why Anki corrupts it', () => {
-    expect(splitFields(joinFields(['Back\u001finside']))).toEqual(['Back', 'inside'])
+    expect(splitFields(joinFields(['Back\x1finside']))).toEqual(['Back', 'inside'])
   })
 })
 
-describe('splitTags', () => {
-  it('drops the padding Anki writes at both ends', () => {
-    expect(splitTags(' noun verb ')).toEqual(['noun', 'verb'])
+describe('splitTags and joinTags', () => {
+  it.prop('round-trips every Tag Anki can store', [Arbitrary.array(tag)], ([tags]) => {
+    expect(splitTags(joinTags(tags))).toEqual(tags)
   })
 
-  it('treats an ideographic space as a separator too', () => {
-    expect(splitTags('　noun　verb　')).toEqual(['noun', 'verb'])
-  })
-
-  it('reads a Note with no Tags', () => {
-    expect(splitTags('')).toEqual([])
-  })
-})
-
-describe('joinTags', () => {
   it('wraps the run in one space at each end, as Anki does', () => {
     expect(joinTags(['noun', 'verb'])).toBe(' noun verb ')
   })
@@ -49,8 +44,7 @@ describe('joinTags', () => {
     expect(joinTags([])).toBe('')
   })
 
-  it('round-trips every Tag', () => {
-    const tags = ['marked', 'leech', 'to-rome']
-    expect(splitTags(joinTags(tags))).toEqual(tags)
+  it('drops the padding Anki writes, including an ideographic space', () => {
+    expect(splitTags(' noun　verb ')).toEqual(['noun', 'verb'])
   })
 })
