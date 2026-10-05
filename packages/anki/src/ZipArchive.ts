@@ -91,6 +91,27 @@ export const readMediaBytes = (entry: Uint8Array): Effect.Effect<Uint8Array, Ank
   })
 
 /**
+ * One Media file inside an archive, decompressed.
+ *
+ * In the format nook reads, Anki wraps every Media file in its own bare zstd
+ * frame, exactly as it wraps the collection and the Media index. The bytes this
+ * returns are the file a Learner expects; the frame around them is not part of
+ * it, and uploading the frame would store a file nothing can open.
+ */
+export const readMediaFileBytes = (
+  entry: Uint8Array,
+): Effect.Effect<Uint8Array, AnkiCorruptArchive> =>
+  Effect.try({
+    try: () => decompress(entry),
+    catch: () =>
+      new AnkiCorruptArchive({
+        reason: 'zstd',
+        message:
+          'This Anki export is damaged: one of its Media files does not decompress. Export it again from Anki.',
+      }),
+  })
+
+/**
  * One named entry of an `.apkg` archive, as bytes.
  *
  * A missing name is not an error here: `meta` is absent in a legacy archive,

@@ -11,10 +11,10 @@ import type { CollectionSpec } from './Collection'
 /**
  * An `.apkg` archive, shaped the way Anki shapes one.
  *
- * Each entry arrives compressed by zip; the collection and media-index entries
- * carry a second layer, a bare zstd frame around the SQLite file and around the
- * Media index. `node:zlib` writes that layer here the way Anki does, and fzstd
- * reads it back in production, so the round trip crosses two implementations.
+ * Each entry arrives compressed by zip; the collection, the media index, and
+ * every Media file carry a second layer, a bare zstd frame around the file.
+ * `node:zlib` writes that layer here the way Anki does, and fzstd reads it back
+ * in production, so the round trip crosses two implementations.
  */
 const buildArchive = async (
   spec: CollectionSpec,
@@ -47,7 +47,10 @@ const buildArchive = async (
       new Uint8ArrayReader(new Uint8Array(zlib.zstdCompressSync(indexPayload))),
     )
     for (const [position, file] of mediaFiles.entries()) {
-      await writer.add(String(position), new Uint8ArrayReader(file.bytes))
+      await writer.add(
+        String(position),
+        new Uint8ArrayReader(new Uint8Array(zlib.zstdCompressSync(file.bytes))),
+      )
     }
     return writer.close()
   } finally {

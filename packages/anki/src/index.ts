@@ -10,8 +10,9 @@
  * `PackageMetadata` message that names the package format. `collection.anki21b`
  * is a bare zstd frame that decompresses to a SQLite database, which is where
  * the normalized `notetypes`, `fields`, `templates`, `decks`, `notes`, and
- * `cards` tables live. Media files are numbered zip entries, and the `media`
- * entry maps them. The legacy `collection.anki21` and `collection.anki2` layouts
+ * `cards` tables live. Media files are numbered zip entries, each a bare zstd
+ * frame around the file itself, and the `media` entry maps them. The legacy
+ * `collection.anki21` and `collection.anki2` layouts
  * keep their content in the dead JSON blobs inside `col`, and nook rejects them.
  *
  * Two facts about the archive drive the SQL this package writes. Anki registers

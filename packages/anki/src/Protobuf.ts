@@ -136,7 +136,7 @@ export class ProtobufReader {
   skip(tag: ProtobufTag): void {
     switch (tag.wireType) {
       case 'varint':
-        this.varint()
+        this.#skipVarint()
         return
       case 'fixed64':
         this.#take(8)
@@ -147,6 +147,27 @@ export class ProtobufReader {
       case 'fixed32':
         this.#take(4)
         return
+    }
+  }
+
+  /**
+   * Steps over a varint without computing its value.
+   *
+   * An unknown `int64` field can hold a value a `number` cannot carry exactly:
+   * Anki 23.10 writes `Field.Config.id` and `Template.Config.id` as random
+   * 64-bit ids, which run to ten bytes and often negative. `varint` refuses
+   * those, because a known field is always small enough to read exactly, but
+   * skipping needs only the field's length, not its value.
+   */
+  #skipVarint(): void {
+    for (let length = 1; ; length++) {
+      if ((this.#byte() & 0x80) === 0) {
+        return
+      }
+      if (length === 10) {
+        // A 64-bit varint is ten bytes at most, so an eleventh means malformed.
+        throw new ProtobufError('a varint runs past ten bytes', this.#offset)
+      }
     }
   }
 

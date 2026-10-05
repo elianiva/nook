@@ -22,7 +22,13 @@ import {
   readMediaIndex,
 } from './PackageFormat'
 import type { AnkiSqliteSource } from './SqliteArchive'
-import { openZip, readCollectionBytes, readMediaBytes, readZipEntry } from './ZipArchive'
+import {
+  openZip,
+  readCollectionBytes,
+  readMediaBytes,
+  readMediaFileBytes,
+  readZipEntry,
+} from './ZipArchive'
 
 export type { AnkiSqliteSource }
 
@@ -174,17 +180,23 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
             }
           })
 
-          // A zip read after open is a damaged archive, not a crash: map the
-          // zip-reader failure into the read-error channel as missing bytes.
+          // A zip read after open fails with a corrupt-archive error, which is
+          // already in the read-error channel, rather than crashing. Each Media
+          // file arrives in its own zstd frame, unwrapped here so the caller
+          // receives the file itself.
           const media: Stream.Stream<OpenedMedia, AnkiReadError> = Stream.fromIterable(
             mediaIndex,
           ).pipe(
             Stream.mapEffect((entry) =>
               readZipEntry(zip, entry.entry).pipe(
-                Effect.mapError((error): AnkiReadError => error),
+                Effect.flatMap((entryBytes) =>
+                  entryBytes === undefined
+                    ? Effect.succeed(new Uint8Array(0))
+                    : readMediaFileBytes(entryBytes),
+                ),
                 Effect.map((bytes) => ({
                   name: entry.name,
-                  bytes: bytes ?? new Uint8Array(0),
+                  bytes,
                   checksum: entry.checksum,
                 })),
               ),
