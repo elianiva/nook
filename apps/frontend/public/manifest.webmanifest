@@ -1,0 +1,10 @@
+{
+  "name": "nook",
+  "short_name": "nook",
+  "description": "A spaced repetition system. Import an Anki deck, then review.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -41,10 +41,23 @@ const stateVariant = (state: CardData['state']): 'default' | 'secondary' | 'outl
   }
 }
 
-const dueLabel = (dueInDays: number): string => {
-  if (dueInDays <= 0) return dueInDays === 0 ? 'due now' : `${-dueInDays}d overdue`
-  if (dueInDays === 1) return 'due tomorrow'
-  return `in ${dueInDays}d`
+const dueLabel = (card: CardData): string => {
+  if (card.dueInDays <= 0) {
+    // An intraday due shows its clock time; an overdue one shows days.
+    if (card.dueInDays === 0) {
+      const at = Option.getOrNull(card.dueAt)
+      if (at !== null) {
+        const date = new Date(at)
+        if (!Number.isNaN(date.getTime())) {
+          return `due ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+        }
+      }
+      return 'due now'
+    }
+    return `${-card.dueInDays}d overdue`
+  }
+  if (card.dueInDays === 1) return 'due tomorrow'
+  return `in ${card.dueInDays}d`
 }
 
 const dueClass = (dueInDays: number): string =>
@@ -70,7 +83,7 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
       ),
       h.span(
         [h.Class(cn('text-right text-xs font-medium tabular-nums', dueClass(card.dueInDays)))],
-        [dueLabel(card.dueInDays)],
+        [dueLabel(card)],
       ),
       h.div(
         [

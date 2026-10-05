@@ -9,12 +9,13 @@
  * The layout is built for one hand: the Card fills the screen, and the actions
  * sit in a bar under the thumb. Reveal, then grade. Grading advances the Card
  * immediately and sends the Grade in the background, so the screen never waits
- * for the network.
+ * for the network. `Again` returns the Card later this session; Undo steps
+ * back one grade.
  */
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { Check, Inbox, LoaderCircle } from 'lucide'
+import { Check, Download, Inbox, LoaderCircle, Undo2 } from 'lucide'
 import { button } from '@/components/ui/button'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
@@ -67,6 +68,7 @@ const loadingView = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
 const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const graded = model.review.graded
   const saving = model.review.pending.length
+  const queued = model.review.offline.length
   const nothingDue = graded === 0 && model.review.cards.length === 0
   return [
     centered(
@@ -92,15 +94,39 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
             ...(saving === 0
               ? []
               : [h.p([h.Class('text-[11px] text-muted-foreground')], [`Saving ${saving}…`])]),
+            ...(queued === 0
+              ? []
+              : [
+                  h.p(
+                    [h.Class('text-[11px] text-amber-600')],
+                    [
+                      `${queued} ${queued === 1 ? 'grade' : 'grades'} saved on this device — they send when the network returns.`,
+                    ],
+                  ),
+                ]),
             Empty.content<Message>(
               {},
               [
-                h.a(
+                h.div(
+                  [h.Class('flex items-center justify-center gap-2')],
                   [
-                    h.Href(routeToUrl({ _tag: 'Decks' })),
-                    h.Class('text-xs font-medium text-primary hover:underline'),
+                    h.a(
+                      [
+                        h.Href(routeToUrl({ _tag: 'Decks' })),
+                        h.Class('text-xs font-medium text-primary hover:underline'),
+                      ],
+                      ['Back to decks'],
+                    ),
+                    button<Message>(
+                      {
+                        onClick: Message.ClickedExport(),
+                        variant: 'outline',
+                        size: 'sm',
+                      },
+                      [icon(h, Download, 'size-3.5', 'inline-start'), 'Export collection'],
+                      h,
+                    ),
                   ],
-                  ['Back to decks'],
                 ),
               ],
               h,
@@ -179,6 +205,8 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   const answered = review.index + (review.revealed ? 1 : 0)
   const percent = total === 0 ? 0 : Math.round((answered / total) * 100)
   const saving = review.pending.length
+  const canUndo = Option.isSome(review.lastGrade)
+  const requeued = review.requeue.length
   const tapToReveal = model.settings.behaviour.tapToReveal
 
   const error = Option.match(review.error, {
@@ -204,9 +232,20 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
               ],
               [
                 h.span([], [`Card ${review.index + 1} of ${total}`]),
-                h.span(saving > 0 ? [h.Class('text-primary')] : [], [
-                  saving > 0 ? `Saving ${saving}…` : `${review.graded} reviewed`,
-                ]),
+                h.span(
+                  review.offline.length > 0
+                    ? [h.Class('flex items-center gap-1 text-amber-600')]
+                    : saving > 0
+                      ? [h.Class('text-primary')]
+                      : [],
+                  [
+                    review.offline.length > 0
+                      ? `${review.offline.length} offline`
+                      : saving > 0
+                        ? `Saving ${saving}…`
+                        : `${review.graded} reviewed`,
+                  ],
+                ),
               ],
             ),
           ],
@@ -230,20 +269,60 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
           ],
           [
             ...(error === null ? [] : [errorBanner(error, h)]),
-            review.revealed
-              ? gradeRow(h)
-              : button<Message>(
+            ...(review.undone
+              ? [
+                  h.p(
+                    [h.Class('pb-2 text-center text-[11px] text-emerald-600')],
+                    ['Undone — the Card is back as it was.'],
+                  ),
+                ]
+              : []),
+            ...(requeued === 0
+              ? []
+              : [
+                  h.p(
+                    [h.Class('pb-2 text-center text-[11px] text-muted-foreground')],
+                    [
+                      `${requeued} lapsed ${requeued === 1 ? 'Card returns' : 'Cards return'} later this session.`,
+                    ],
+                  ),
+                ]),
+            h.div(
+              [h.Class('flex gap-2')],
+              [
+                h.div(
+                  [h.Class('flex-1')],
+                  [
+                    review.revealed
+                      ? gradeRow(h)
+                      : button<Message>(
+                          {
+                            onClick: Message.RevealedAnswer(),
+                            size: 'xl',
+                            className:
+                              'w-full select-none transition-transform active:scale-[0.99]',
+                          },
+                          ['Show answer'],
+                          h,
+                        ),
+                  ],
+                ),
+                button<Message>(
                   {
-                    onClick: Message.RevealedAnswer(),
+                    onClick: Message.ClickedUndoGrade(),
+                    variant: 'outline',
                     size: 'xl',
-                    className: 'w-full select-none transition-transform active:scale-[0.99]',
+                    className: 'shrink-0 select-none px-3',
+                    isDisabled: !canUndo,
                   },
-                  ['Show answer'],
+                  [icon(h, Undo2, 'size-4')],
                   h,
                 ),
+              ],
+            ),
             h.p(
               [h.Class('hidden pt-2 text-center text-[11px] text-muted-foreground sm:block')],
-              [review.revealed ? '1–4 to grade' : 'Space to reveal'],
+              [review.revealed ? '1–4 to grade · U to undo' : 'Space to reveal'],
             ),
             ...(review.revealed || !tapToReveal
               ? []

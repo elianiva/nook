@@ -48,7 +48,6 @@ const detail = (name: string): DeckDetail => ({
     newCount: 0,
     dueCount: 0,
     totalCount: 0,
-    dueDelta: 0,
     lastStudiedAt: Option.none(),
     retention7d: 0,
   },

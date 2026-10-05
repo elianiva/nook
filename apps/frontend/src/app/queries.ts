@@ -28,6 +28,18 @@ import { API_PATHS } from '@/lib/api'
 export const DeckDetailError = S.Literals(['notFound', 'unavailable'])
 export type DeckDetailError = typeof DeckDetailError.Type
 
+/** The learner timezone, for the day boundary. The server defaults to UTC without it. */
+const timezoneParam = (): string => {
+  const params = new URLSearchParams({ timezone: 'UTC' })
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (zone !== undefined && zone !== '') params.set('timezone', zone)
+  } catch {
+    // No Intl: the server falls back to UTC.
+  }
+  return params.toString()
+}
+
 /** GET a JSON body, decode it, and collapse every failure to one sentence. */
 const getJson = <A, AI>(
   path: string,
@@ -35,7 +47,7 @@ const getJson = <A, AI>(
   message: string,
 ): Effect.Effect<A, string, never> =>
   HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get(path)),
+    Effect.flatMap((client) => client.get(`${path}?${timezoneParam()}`)),
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
     Effect.mapError(() => message),
@@ -79,7 +91,9 @@ export const deckDetailQuery = Query.define({
   execute: ({ deckId }) =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient
-      const response = yield* client.get(`${API_PATHS.decks}/${encodeURIComponent(deckId)}`)
+      const response = yield* client.get(
+        `${API_PATHS.decks}/${encodeURIComponent(deckId)}?${timezoneParam()}`,
+      )
       if (response.status === 404) return yield* Effect.fail('notFound' as const)
       const ok = yield* HttpClientResponse.filterStatusOk(response)
       return yield* HttpClientResponse.schemaBodyJson(DeckDetail)(ok)

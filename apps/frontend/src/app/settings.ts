@@ -13,7 +13,7 @@
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, RotateCcw, Save } from 'lucide'
+import { CircleAlert, Download, RotateCcw, Save } from 'lucide'
 import { Card } from '@/components/ui/card'
 import { input } from '@/components/ui/input'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
@@ -147,7 +147,7 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         'Lapse minutes',
         draft.lapseMinutes,
         (value) => Message.EditedLapseMinutes({ value }),
-        'Pause before a lapsed Card returns',
+        'Minutes before an Again Card returns this session',
         '1',
         h,
       ),
@@ -155,23 +155,13 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
     h,
   )
 
-const rolloverOptions = [0, 1, 2, 3, 4, 5, 6, 21, 22, 23].map((hour) => `${hour}:00`)
+const rolloverOptions = Array.from({ length: 24 }, (_, hour) => `${hour}:00`)
 
 const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
   section(
     'Behaviour',
     'What review sessions feel like and when the day rolls over.',
     [
-      switch_<Message>(
-        {
-          id: 'review-sounds',
-          label: 'Review sounds',
-          description: 'Play a sound when grading a Card',
-          isChecked: draft.reviewSounds,
-          onToggle: (isChecked) => Message.ToggledReviewSounds({ isChecked }),
-        },
-        h,
-      ),
       switch_<Message>(
         {
           id: 'tap-to-reveal',
@@ -182,21 +172,11 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
         },
         h,
       ),
-      switch_<Message>(
-        {
-          id: 'keep-awake',
-          label: 'Keep screen awake',
-          description: 'Prevent sleep during a review session',
-          isChecked: draft.keepAwake,
-          onToggle: (isChecked) => Message.ToggledKeepAwake({ isChecked }),
-        },
-        h,
-      ),
       nativeSelect<Message>(
         {
           id: 'rollover-hour',
           label: 'Day rollover',
-          description: 'When the next day’s Reviews become due',
+          description: 'When today ends: reviews before this hour count toward yesterday',
           value: `${draft.dayRolloverHour}:00`,
           onChange: (value) => Message.EditedRolloverHour({ value: value.split(':')[0] ?? '4' }),
           options: rolloverOptions.map((option) =>
@@ -262,6 +242,23 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
           h,
         ),
       ],
+    ),
+    section(
+      'Collection',
+      'Your data, out. One JSON file with Decks, Notes, Cards, Schedules, and the Review log.',
+      [
+        button<Message>(
+          {
+            onClick: Message.ClickedExport(),
+            variant: 'outline',
+            size: 'lg',
+            className: 'w-full',
+          },
+          [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
+          h,
+        ),
+      ],
+      h,
     ),
     h.div(
       [h.Class('px-1')],

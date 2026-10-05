@@ -21,3 +21,12 @@ const program = Runtime.makeApplication({
 })
 
 Runtime.run(program)
+
+// The shell serves from cache (see `public/service-worker.js`): register it
+// once, and let an update wait for the next load rather than interrupting a
+// review session mid-grade.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch(() => {})
+  })
+}

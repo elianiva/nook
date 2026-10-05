@@ -78,7 +78,8 @@ describe('scheduleReview', () => {
     expect(good.lapses).toBe(0)
     expect(good.intervalDays).toBe(2)
 
-    expect(scheduleReview(fresh, 'Again', settings, now).intervalDays).toBe(1)
+    // `Again` re-queues later this session, after `lapseMinutes`: interval 0.
+    expect(scheduleReview(fresh, 'Again', settings, now).intervalDays).toBe(0)
     expect(scheduleReview(fresh, 'Again', settings, now).state).toBe('learning')
     expect(scheduleReview(fresh, 'Again', settings, now).lapses).toBe(1)
     expect(scheduleReview(fresh, 'Easy', settings, now).intervalDays).toBe(8)
@@ -100,7 +101,8 @@ describe('scheduleReview', () => {
     expect(scheduled.lapses).toBe(1)
     expect(scheduled.reps).toBe(6)
     expect(scheduled.stability).toBeLessThan(10)
-    expect(scheduled.intervalDays).toBeGreaterThanOrEqual(1)
+    // Interval 0: the Card returns later this session, not tomorrow.
+    expect(scheduled.intervalDays).toBe(0)
   })
 
   it('uses the short-term formula for a same-day Review', () => {

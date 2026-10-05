@@ -24,7 +24,9 @@ layer(TestLayers)('reviews over sqlite', (it) => {
       yield* migrate
       const client = yield* makeClient
 
-      const queue = yield* client.reviews.queue({ query: { deckId: showcaseDeck } })
+      const queue = yield* client.reviews.queue({
+        query: { deckId: showcaseDeck, timezone: 'UTC' },
+      })
       // Four due Cards plus two new ones.
       expect(queue.cards.length).toBe(6)
 
@@ -53,7 +55,9 @@ layer(TestLayers)('reviews over sqlite', (it) => {
       expect(graded.intervalDays).toBeGreaterThanOrEqual(1)
 
       // The graded new Card leaves the queue.
-      const after = yield* client.reviews.queue({ query: { deckId: showcaseDeck } })
+      const after = yield* client.reviews.queue({
+        query: { deckId: showcaseDeck, timezone: 'UTC' },
+      })
       expect(after.cards.length).toBe(5)
       expect(after.cards.some((card) => card.cardId === fresh.cardId)).toBe(false)
 
@@ -62,7 +66,9 @@ layer(TestLayers)('reviews over sqlite', (it) => {
         payload: { id: 'review-test-1', cardId: fresh.cardId, grade: 'Again' },
       })
       expect(replayed.state).toBe('review')
-      const stillAfter = yield* client.reviews.queue({ query: { deckId: showcaseDeck } })
+      const stillAfter = yield* client.reviews.queue({
+        query: { deckId: showcaseDeck, timezone: 'UTC' },
+      })
       expect(stillAfter.cards.length).toBe(5)
 
       const missing = yield* Effect.exit(

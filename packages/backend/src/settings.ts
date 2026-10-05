@@ -13,10 +13,8 @@ const SettingsRow = Schema.Struct({
   fsrsNewPerDay: Schema.Number,
   fsrsReviewsPerDay: Schema.Number,
   fsrsLapseMinutes: Schema.Number,
-  behaviourReviewSounds: Schema.Number,
   behaviourTapToReveal: Schema.Number,
   behaviourDayRolloverHour: Schema.Number,
-  behaviourKeepAwake: Schema.Number,
 })
 
 export const toSettings = (row: typeof SettingsRow.Type): AppSettings => ({
@@ -29,10 +27,8 @@ export const toSettings = (row: typeof SettingsRow.Type): AppSettings => ({
     lapseMinutes: row.fsrsLapseMinutes,
   },
   behaviour: {
-    reviewSounds: row.behaviourReviewSounds === 1,
     tapToReveal: row.behaviourTapToReveal === 1,
     dayRolloverHour: row.behaviourDayRolloverHour,
-    keepAwake: row.behaviourKeepAwake === 1,
   },
 })
 
@@ -61,10 +57,9 @@ export class Settings extends Context.Service<
         const rows = yield* sql`SELECT fsrs_desired_retention AS "fsrsDesiredRetention",
           fsrs_weights AS "fsrsWeights", fsrs_maximum_interval AS "fsrsMaximumInterval",
           fsrs_new_per_day AS "fsrsNewPerDay", fsrs_reviews_per_day AS "fsrsReviewsPerDay",
-          fsrs_lapse_minutes AS "fsrsLapseMinutes", behaviour_review_sounds AS "behaviourReviewSounds",
+          fsrs_lapse_minutes AS "fsrsLapseMinutes",
           behaviour_tap_to_reveal AS "behaviourTapToReveal",
-          behaviour_day_rollover_hour AS "behaviourDayRolloverHour",
-          behaviour_keep_awake AS "behaviourKeepAwake"
+          behaviour_day_rollover_hour AS "behaviourDayRolloverHour"
           FROM settings WHERE id = 1`
         const decoded = yield* decodeRows(SettingsRow, rows)
         const found = Option.fromUndefinedOr(decoded[0])
@@ -87,10 +82,8 @@ export class Settings extends Context.Service<
             fsrs_new_per_day = ${settings.fsrs.newPerDay},
             fsrs_reviews_per_day = ${settings.fsrs.reviewsPerDay},
             fsrs_lapse_minutes = ${settings.fsrs.lapseMinutes},
-            behaviour_review_sounds = ${settings.behaviour.reviewSounds ? 1 : 0},
             behaviour_tap_to_reveal = ${settings.behaviour.tapToReveal ? 1 : 0},
             behaviour_day_rollover_hour = ${settings.behaviour.dayRolloverHour},
-            behaviour_keep_awake = ${settings.behaviour.keepAwake ? 1 : 0},
             updated_at = datetime('now') WHERE id = 1`
           return settings
         }).pipe(Effect.withSpan('Settings.save'), (self) =>

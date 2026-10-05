@@ -14,6 +14,7 @@ describe('migrations stay append-only', () => {
       '0002_showcase_seed.sql',
       '0003_import.sql',
       '0004_review.sql',
+      '0005_day_boundary.sql',
     ])
   })
 })

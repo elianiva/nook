@@ -71,7 +71,16 @@ export const migrate = Effect.gen(function* () {
     .sort()
   const sql = yield* Sql.SqlClient
 
-  for (const table of ['reviews', 'notes', 'cards', 'imports', 'decks', 'note_types', 'settings']) {
+  for (const table of [
+    'review_snapshots',
+    'reviews',
+    'notes',
+    'cards',
+    'imports',
+    'decks',
+    'note_types',
+    'settings',
+  ]) {
     yield* sql.unsafe(`DROP TABLE IF EXISTS ${table}`)
   }
 

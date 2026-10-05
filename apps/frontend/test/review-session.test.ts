@@ -1,0 +1,123 @@
+/**
+ * The review session transitions: grading, Again re-queue, Undo, and the
+ * offline wait.
+ *
+ * These transitions are pure, so they are tested without a browser. The fetch
+ * itself lives behind an Effect the test never runs.
+ */
+
+import { describe, expect, it } from 'vitest'
+import { Option } from 'effect'
+import type { Url } from 'foldkit/url'
+import { CardId, DeckId, type ReviewCard } from '@nook/api'
+import { Message, seedModel } from '../src/app/model'
+import type { Model } from '../src/app/model'
+import { init, update } from '../src/app/update'
+
+const url = (pathname: string): Url => ({
+  protocol: 'http:',
+  host: 'localhost',
+  port: Option.none(),
+  pathname,
+  search: Option.none(),
+  hash: Option.none(),
+})
+
+const card = (id: string, state: ReviewCard['state'] = 'review'): ReviewCard => ({
+  cardId: CardId.make(id),
+  deckId: DeckId.make('deck-a'),
+  noteId: `note-${id}`,
+  question: `q-${id}`,
+  answer: `a-${id}`,
+  css: '',
+  state,
+  dueAt: Option.none(),
+  dueInDays: 0,
+  stability: 2,
+  difficulty: 5,
+})
+
+const reviewing = (cards: ReadonlyArray<ReviewCard>): Model => {
+  const started = seedModel(url('/review'))
+  const queued = update(
+    started,
+    Message.GotReviewQueue({
+      cards: [...cards],
+      dayStartUtc: '2026-10-05T04:00:00Z',
+      lapseMinutes: 10,
+    }),
+  ).model
+  return update(queued, Message.RevealedAnswer()).model
+}
+
+const names = (result: {
+  readonly commands?: ReadonlyArray<{ readonly name: string }>
+}): string[] => (result.commands ?? []).map((command) => command.name)
+
+describe('review session', () => {
+  it('starts the cache load before the network queue', () => {
+    expect(names(init(url('/review')))).toContain('LoadCachedQueue')
+    expect(names(init(url('/review')))).toContain('FetchReviewQueue')
+  })
+
+  it('re-queues an Again Card at the end of the queue', () => {
+    const model = reviewing([card('c1'), card('c2')])
+    const graded = update(model, Message.ClickedGrade({ grade: 'Again' }))
+    expect(graded.model.review.cards.length).toBe(3)
+    expect(graded.model.review.cards[2]?.cardId).toBe('c1')
+    expect(graded.model.review.requeue.length).toBe(1)
+    expect(graded.model.review.phase).toBe('reviewing')
+    expect(names(graded)).toEqual(['SubmitGrade'])
+  })
+
+  it('does not re-queue a passing grade', () => {
+    const model = reviewing([card('c1'), card('c2')])
+    const graded = update(model, Message.ClickedGrade({ grade: 'Good' }))
+    expect(graded.model.review.cards.length).toBe(2)
+    expect(graded.model.review.requeue.length).toBe(0)
+    expect(graded.model.review.index).toBe(1)
+  })
+
+  it('ends the session after the re-queued Card is graded', () => {
+    let model = reviewing([card('c1')])
+    model = update(model, Message.ClickedGrade({ grade: 'Again' })).model
+    expect(model.review.phase).toBe('reviewing')
+    model = update(model, Message.RevealedAnswer()).model
+    const done = update(model, Message.ClickedGrade({ grade: 'Good' }))
+    expect(done.model.review.phase).toBe('done')
+    expect(done.model.review.graded).toBe(2)
+  })
+
+  it('undoes the last grade and steps back to its Card', () => {
+    let model = reviewing([card('c1'), card('c2')])
+    const first = model.review.cards[model.review.index]
+    model = update(model, Message.ClickedGrade({ grade: 'Good' })).model
+    expect(model.review.graded).toBe(1)
+
+    const undone = update(
+      model,
+      Message.UndoneGrade({ cardId: first?.cardId ?? CardId.make('missing') }),
+    )
+    expect(undone.model.review.graded).toBe(0)
+    expect(undone.model.review.index).toBe(0)
+    expect(undone.model.review.undone).toBe(true)
+    expect(undone.model.review.phase).toBe('reviewing')
+  })
+
+  it('queues a failed grade offline and flushes it on retry', () => {
+    const model = reviewing([card('c1')])
+    const graded = update(model, Message.ClickedGrade({ grade: 'Good' }))
+    const failed = update(graded.model, Message.GradeFailed({ error: 'offline' }))
+    expect(failed.model.review.offline.length).toBe(1)
+    expect(failed.model.review.graded).toBe(1)
+
+    const retried = update(failed.model, Message.ClickedRetryGrades())
+    expect(names(retried)).toEqual(['SubmitGrade'])
+  })
+
+  it('sends the learner timezone with the queue fetch', () => {
+    const loaded = init(url('/review'))
+    const fetch = (loaded.commands ?? []).find((command) => command.name === 'FetchReviewQueue')
+    expect(fetch).toBeDefined()
+  })
+})

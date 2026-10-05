@@ -15,8 +15,8 @@ deck format, FSRS scheduling, and a review that never waits for the network.
 
 ## Status
 
-The Import, the Decks, and the review flow run end to end. The offline queue
-and the sync protocol do not: Review is online only.
+The Import, the Decks, and the review flow run end to end, including offline
+review from a prefetched queue, undo, export, and per-day limits.
 
 What runs today:
 
@@ -43,10 +43,22 @@ What runs today:
   already rendered from the Note Type's Template and stylesheet, and the app
   grades them. Each Grade is one append-only row in the Review log plus the
   Card's FSRS-6 state, written in one batch; a replayed Grade id is ignored
-  (ADR 0002). A Grade reschedules the Card to a real due instant.
+  (ADR 0002). A Grade reschedules the Card to a real due instant, anchored at
+  the learner-day boundary (`dayRolloverHour` in the learner timezone).
+  `Again` returns the Card later this session, after `lapseMinutes`; one Undo
+  steps back the last grade.
+- Offline review. The device prefetches the next 200 rendered Cards into
+  IndexedDB (ADR 0001) and grades them with no network wait; grades made
+  offline flush when the network returns. The shell is cached by a service
+  worker and installable via the manifest. The server stays authoritative and
+  the sync protocol is the append-only Review log (ADR 0002): no other
+  conflict path exists.
+- An export. The review-done screen and the Settings page download the whole
+  collection — Decks, Notes, Cards with scheduling state, and the Review log —
+  as one JSON file. Media files stay in R2; the export names what it cannot
+  carry. There is no delete and no re-import of an export yet.
 
-What is decided but not written: the offline queue and the sync protocol. See
-[Design](#design) and [docs/adr](./docs/adr).
+See [Design](#design) and [docs/adr](./docs/adr).
 
 ## What v1 does
 
@@ -57,15 +69,13 @@ What is decided but not written: the offline queue and the sync protocol. See
   URLs are supported. LaTeX and TTS tags are not.
 - Reset scheduling on import, so every imported Card starts as new.
 - Schedule with FSRS-6 only. There is no SM-2 code path.
-- Review online: the Worker serves a queue of due and new Cards, and a Grade
-  reschedules the Card.
+- Review online or offline: the Worker serves a queue of due and new Cards,
+  the device prefetches the next 200 rendered Cards, and a Grade reschedules
+  the Card — `Again` back into this session, anything else to a later day.
+- Export the collection as JSON, with scheduling state and the Review log.
+- Undo the last grade.
 
-Still to come:
-
-- Prefetch the next 200 Cards and grade them with no network wait.
-- Sync an append-only Review log when the network returns.
-
-v1 has no card editor. You import; you do not author.
+v1 has no card editor. You import; you do not author. There is no delete.
 
 ## Requirements
 
@@ -168,8 +178,9 @@ Scheduling:
 - FSRS-6 runs on the server today. The algorithm is deterministic, so the
   device can run the same code offline later, and the server stays
   authoritative.
-- Every Review is an append-only row. Card state is derived, never overwritten
-  in place.
+- Every Review is an append-only row. Card state derives from the log: each
+  grade writes one Review row, one before-grade snapshot for undo, and the
+  Card's new FSRS-6 state, in one batch.
 
 Sync:
 

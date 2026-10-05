@@ -18,7 +18,17 @@ import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
 import type { Grade } from '@nook/api'
 import { NavigateInternal, NavigateToPath } from './commands'
-import { FetchReviewQueue, FetchSettings, SaveSettings, SubmitGrade } from './api-commands'
+import {
+  DownloadFile,
+  FetchExport,
+  FetchReviewQueue,
+  FetchSettings,
+  LoadCachedQueue,
+  PersistReviewQueue,
+  SaveSettings,
+  SubmitGrade,
+  UndoGrade,
+} from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
 import type { LoadRetry } from './model'
 import {
@@ -67,11 +77,19 @@ const routeLoads = (model: Model): Update.Return<Model, Message> =>
     DeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
     Review: () => ({
       model,
-      commands: [FetchReviewQueue({ deckId: Option.none() }), FetchSettings()],
+      commands: [
+        LoadCachedQueue({ deckId: Option.none() }),
+        FetchReviewQueue({ deckId: Option.none() }),
+        FetchSettings(),
+      ],
     }),
     ReviewDeck: ({ deckId }) => ({
       model,
-      commands: [FetchReviewQueue({ deckId: Option.some(deckId) }), FetchSettings()],
+      commands: [
+        LoadCachedQueue({ deckId: Option.some(deckId) }),
+        FetchReviewQueue({ deckId: Option.some(deckId) }),
+        FetchSettings(),
+      ],
     }),
     Settings: () => ({ model, commands: [FetchSettings()] }),
     NotFound: () => ({ model }),
@@ -93,14 +111,27 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
     case 'reviewQueue': {
       const route = model.route
       if (route._tag === 'ReviewDeck') {
-        return [FetchReviewQueue({ deckId: Option.some(route.deckId) })]
+        return [
+          LoadCachedQueue({ deckId: Option.some(route.deckId) }),
+          FetchReviewQueue({ deckId: Option.some(route.deckId) }),
+        ]
       }
-      return [FetchReviewQueue({ deckId: Option.none() })]
+      return [
+        LoadCachedQueue({ deckId: Option.none() }),
+        FetchReviewQueue({ deckId: Option.none() }),
+      ]
     }
     case 'settings':
       return [FetchSettings()]
     case 'saveSettings':
       return [SaveSettings({ settings: settingsFromDraft(model) })]
+    case 'undoReview': {
+      const last = model.review.lastGrade
+      if (Option.isNone(last)) return []
+      return [UndoGrade({ cardId: last.value.cardId })]
+    }
+    case 'collectionExport':
+      return [FetchExport()]
   }
 }
 
@@ -126,10 +157,8 @@ const settingsFromDraft = (model: Model) => {
       lapseMinutes: model.settingsDraft.lapseMinutes,
     },
     behaviour: {
-      reviewSounds: model.settingsDraft.reviewSounds,
       tapToReveal: model.settingsDraft.tapToReveal,
       dayRolloverHour: model.settingsDraft.dayRolloverHour,
-      keepAwake: model.settingsDraft.keepAwake,
     },
   }
 }
@@ -142,24 +171,33 @@ const clearNotice = (model: Model): Model => ({ ...model, notice: Option.none() 
  * The screen advances before the request lands, so grading never waits for the
  * network. The Grade rides in `pending` until the server confirms it, and a
  * Retry reuses the same id, so a Grade that landed but was not acknowledged is
- * not applied twice (ADR 0002).
+ * not applied twice (ADR 0002). An `Again` grade re-queues its Card later this
+ * session; the queue grows by one and the session ends only when both the
+ * queue and the re-queue are walked. The grade is also the undo point until
+ * the next grade lands.
  */
 const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message> => {
   const review = model.review
   const card = review.cards[review.index]
   if (card === undefined || !review.revealed) return { model }
   const entry = { id: crypto.randomUUID(), cardId: card.cardId, grade }
+  const requeue = grade === 'Again' ? [...review.requeue, card] : review.requeue
+  const cards = grade === 'Again' ? [...review.cards, card] : review.cards
   const index = review.index + 1
-  const done = index >= review.cards.length
+  const done = index >= cards.length
   return {
     model: clearNotice(
       modifyFields(model, {
         review: () => ({
           ...review,
+          cards,
           index,
           revealed: false,
           pending: [...review.pending, entry],
           graded: review.graded + 1,
+          requeue,
+          lastGrade: Option.some(entry),
+          undone: false,
           phase: done ? 'done' : 'reviewing',
           error: Option.none(),
         }),
@@ -235,17 +273,32 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       return { model, commands: [NavigateToPath({ path: routeToUrl(path) })] }
     },
 
-    GotReviewQueue: ({ cards }) => ({
-      model: clearNotice(
-        modifyFields(model, {
-          review: () => ({
-            ...idleReview,
-            phase: cards.length === 0 ? 'done' : 'reviewing',
-            cards: [...cards],
+    GotReviewQueue: ({ cards, dayStartUtc, lapseMinutes }) => {
+      const route = model.route
+      const deckId = route._tag === 'ReviewDeck' ? Option.some(route.deckId) : Option.none()
+      return {
+        model: clearNotice(
+          modifyFields(model, {
+            // A cached queue answers first; the network answer replaces it
+            // only when it carries Cards, so offline Cards never flash away.
+            review: () =>
+              cards.length === 0 && model.review.cards.length > 0
+                ? model.review
+                : {
+                    ...idleReview,
+                    phase: cards.length === 0 ? 'done' : 'reviewing',
+                    cards: [...cards],
+                    dayStartUtc: Option.some(dayStartUtc),
+                    lapseMinutes,
+                  },
           }),
-        }),
-      ),
-    }),
+        ),
+        commands:
+          cards.length === 0
+            ? []
+            : [PersistReviewQueue({ deckId, cards: [...cards], dayStartUtc, lapseMinutes })],
+      }
+    },
 
     RevealedAnswer: () => ({
       model: modifyFields(model, { review: () => ({ ...model.review, revealed: true }) }),
@@ -270,22 +323,121 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         review: () => ({
           ...model.review,
           pending: model.review.pending.filter((entry) => entry.id !== id),
+          offline: model.review.offline.filter((entry) => entry.id !== id),
         }),
       }),
     }),
 
-    GradeFailed: ({ error }) => ({
+    FlushedOfflineGrade: ({ id }) => ({
+      model: modifyFields(model, {
+        review: () => ({
+          ...model.review,
+          pending: model.review.pending.filter((entry) => entry.id !== id),
+          offline: model.review.offline.filter((entry) => entry.id !== id),
+        }),
+      }),
+    }),
+
+    ClickedUndoGrade: () => {
+      const last = model.review.lastGrade
+      if (Option.isNone(last)) return { model }
+      return { model, commands: [UndoGrade({ cardId: last.value.cardId })] }
+    },
+
+    UndoneGrade: ({ cardId }) => {
+      const review = model.review
+      const last = review.lastGrade
+      if (Option.isNone(last) || last.value.cardId !== cardId) return { model }
+      // The undone Card steps back to the front: drop its re-queued copy
+      // when `Again` appended one, and show it again unrevealed.
+      const cards =
+        last.value.grade === 'Again'
+          ? review.cards.filter((card, index) => index !== review.cards.length - 1)
+          : review.cards
+      return {
+        model: modifyFields(model, {
+          review: () => ({
+            ...review,
+            cards,
+            index: Math.max(0, review.index - 1),
+            revealed: false,
+            requeue: review.requeue.filter((card) => card.cardId !== cardId),
+            pending: review.pending.filter((entry) => entry.cardId !== cardId),
+            graded: Math.max(0, review.graded - 1),
+            lastGrade: Option.none(),
+            undone: true,
+            phase: 'reviewing' as const,
+            error: Option.none(),
+          }),
+        }),
+      }
+    },
+
+    UndoFailed: ({ error }) => ({
       model: modifyFields(model, {
         review: () => ({ ...model.review, error: Option.some(error) }),
       }),
     }),
 
+    ClickedRetryUndo: () => {
+      const last = model.review.lastGrade
+      if (Option.isNone(last)) return { model }
+      return { model, commands: [UndoGrade({ cardId: last.value.cardId })] }
+    },
+
+    ClickedExport: () => ({ model, commands: [FetchExport()] }),
+
+    GotExport: ({ filename, json }) => ({
+      model,
+      commands: [DownloadFile({ filename, json })],
+    }),
+
+    ExportFailed: ({ error }) => ({
+      model: modifyFields(model, {
+        notice: () => Option.some({ message: error, retry: 'collectionExport' as const }),
+      }),
+    }),
+
+    DownloadedExport: () => ({ model }),
+
+    PersistedReviewQueue: () => ({ model }),
+
+    GradeFailed: ({ error }) => {
+      // Offline or dropped: the grade stays applied on screen and waits in
+      // `offline` for the network, leaving `pending` so Retry sends it once.
+      // Its id is stable, so the flush cannot double-apply it (ADR 0002).
+      const waiting = model.review.pending.slice(-1)
+      return {
+        model: modifyFields(model, {
+          review: () => ({
+            ...model.review,
+            pending: model.review.pending.slice(0, -1),
+            offline: [...model.review.offline, ...waiting],
+            error: Option.some(error),
+          }),
+        }),
+      }
+    },
+
     ClickedRetryGrades: () => ({
       model: modifyFields(model, {
         review: () => ({ ...model.review, error: Option.none() }),
       }),
-      commands: model.review.pending.map((entry) => SubmitGrade(entry)),
+      commands: [...model.review.pending, ...model.review.offline].map((entry) =>
+        SubmitGrade(entry),
+      ),
     }),
+
+    RegainedNetwork: () => {
+      const queued = model.review.offline
+      if (queued.length === 0) return { model }
+      return {
+        model: modifyFields(model, {
+          review: () => ({ ...model.review, error: Option.none() }),
+        }),
+        commands: queued.map((entry) => SubmitGrade(entry)),
+      }
+    },
 
     // Clear the last Import and show "preparing" while the picker is open and
     // the archive is hashed. `active` stays false, so no worker starts yet.
@@ -475,24 +627,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       },
     }),
 
-    ToggledReviewSounds: ({ isChecked }) => ({
-      model: {
-        ...model,
-        settingsDraft: { ...model.settingsDraft, reviewSounds: isChecked, saved: false },
-      },
-    }),
-
     ToggledTapToReveal: ({ isChecked }) => ({
       model: {
         ...model,
         settingsDraft: { ...model.settingsDraft, tapToReveal: isChecked, saved: false },
-      },
-    }),
-
-    ToggledKeepAwake: ({ isChecked }) => ({
-      model: {
-        ...model,
-        settingsDraft: { ...model.settingsDraft, keepAwake: isChecked, saved: false },
       },
     }),
 

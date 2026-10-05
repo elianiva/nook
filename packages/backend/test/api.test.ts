@@ -49,7 +49,7 @@ layer(TestLayers)('backend over sqlite', (it) => {
       )
       assert.strictEqual(exit._tag, 'Failure')
 
-      const overview = yield* client.home.overview()
+      const overview = yield* client.home.overview({ query: {} })
       expect(overview.dueNow).toBe(4)
       expect(overview.activity14d.length).toBe(14)
 
@@ -59,13 +59,12 @@ layer(TestLayers)('backend over sqlite', (it) => {
         payload: {
           ...settings,
           fsrs: { ...settings.fsrs, desiredRetention: 0.85 },
-          behaviour: { ...settings.behaviour, keepAwake: !settings.behaviour.keepAwake },
         },
       })
       expect(saved.fsrs.desiredRetention).toBe(0.85)
       const reread = yield* client.settings.get()
       expect(reread.fsrs.desiredRetention).toBe(0.85)
-      expect(reread.behaviour.keepAwake).toBe(!settings.behaviour.keepAwake)
+      expect(reread.behaviour.tapToReveal).toBe(settings.behaviour.tapToReveal)
     }),
   )
 })

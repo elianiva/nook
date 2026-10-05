@@ -42,6 +42,8 @@ export type CardState = typeof CardState.Type
 export const Card = S.Struct({
   id: CardId,
   deckId: DeckId,
+  /** ISO 8601 UTC instant this Card comes back. Absent for new Cards. */
+  dueAt: S.Option(S.String),
   /** Days until this Card comes back. 0 means due now. Negative means overdue. */
   dueInDays: S.Number,
   /** Current FSRS stability in days. Owned by FSRS; shown on the deck page for transparency, never edited directly. */
@@ -63,8 +65,6 @@ export const DeckSummary = S.Struct({
   dueCount: S.Number,
   /** All Cards in the Deck, including new and due. */
   totalCount: S.Number,
-  /** Day-over-day change in due Reviews, for the trend marker. */
-  dueDelta: S.Number,
   /** ISO date of the most recent Review session. Absent when never studied. */
   lastStudiedAt: S.Option(S.String),
   /** Share reviewed in the last 7 days, 0–100. Drives the progress bar. */
@@ -111,16 +111,12 @@ export const FsrsSettings = S.Struct({
 })
 export type FsrsSettings = typeof FsrsSettings.Type
 
-/** Behaviour knobs: what the learner hears and when the day rolls over. */
+/** Behaviour knobs: what the review session feels like. */
 export const BehaviourSettings = S.Struct({
-  /** Sound/haptic feedback on grading. */
-  reviewSounds: S.Boolean,
   /** Show the answer with a tap anywhere, not just the button. */
   tapToReveal: S.Boolean,
   /** Hour (0–23) at which the next day's Reviews become due. */
   dayRolloverHour: S.Number,
-  /** Keep the screen awake during a review session. */
-  keepAwake: S.Boolean,
 })
 export type BehaviourSettings = typeof BehaviourSettings.Type
 
@@ -221,7 +217,7 @@ export const ImportManifest = S.Struct({
   decks: S.Array(ImportDeck),
   noteCount: S.Number,
   cardCount: S.Number,
-  /** How many Media files the archive carries. nook counts them but does not store them yet. */
+  /** How many Media files the archive carries. They stream into R2 during the Import. */
   mediaCount: S.Number,
 })
 export type ImportManifest = typeof ImportManifest.Type
@@ -243,7 +239,7 @@ export const ImportStatus = S.Struct({
   cardsImported: S.Number,
   noteCount: S.Number,
   cardCount: S.Number,
-  /** Media the archive carries, which nook does not store yet. The screen says so. */
+  /** Media the archive carries, streamed into R2 during the Import. */
   mediaCount: S.Number,
   /** Why the last run failed, for the screen to show. `None` while it runs or after it finishes. */
   error: S.Option(S.String),
@@ -311,6 +307,7 @@ export const ReviewCard = S.Struct({
   /** The Note Type's stylesheet, scoped to the card container. */
   css: S.String,
   state: CardState,
+  dueAt: S.Option(S.String),
   dueInDays: S.Number,
   stability: S.Number,
   difficulty: S.Number,
@@ -320,6 +317,8 @@ export type ReviewCard = typeof ReviewCard.Type
 /** The Cards waiting to be reviewed, due first, then new. */
 export const ReviewQueue = S.Struct({
   cards: S.Array(ReviewCard),
+  /** ISO 8601 UTC instant the learner-day boundary sits at, for the client's clock display. */
+  dayStartUtc: S.String,
 })
 export type ReviewQueue = typeof ReviewQueue.Type
 
@@ -334,6 +333,8 @@ export const ReviewSubmission = S.Struct({
   id: S.String,
   cardId: CardId,
   grade: Grade,
+  /** IANA timezone the learner reviews in, e.g. `Asia/Jakarta`. Picks the day boundary. */
+  timezone: S.optional(S.String),
 })
 export type ReviewSubmission = typeof ReviewSubmission.Type
 
@@ -346,8 +347,88 @@ export const ReviewAccepted = S.Struct({
   stability: S.Number,
   difficulty: S.Number,
   intervalDays: S.Number,
+  /** ISO 8601 UTC instant the Card comes back, for the client's countdown. */
+  dueAt: S.String,
+  /** Whether the Card returns later this session, after `lapseMinutes`. Only on `Again`. */
+  requeueInSession: S.Boolean,
 })
 export type ReviewAccepted = typeof ReviewAccepted.Type
+
+/**
+ * The last graded Review, undone.
+ *
+ * Undo deletes the Review log row and restores the Card's scheduling state
+ * from before the grade. Only the most recent grade of the session can be
+ * undone, and only before another grade lands on the same Card.
+ */
+export const UndoReview = S.Struct({
+  cardId: CardId,
+})
+export type UndoReview = typeof UndoReview.Type
+
+export const UndoAccepted = S.Struct({
+  cardId: CardId,
+  state: CardState,
+  dueInDays: S.Number,
+  stability: S.Number,
+  difficulty: S.Number,
+})
+export type UndoAccepted = typeof UndoAccepted.Type
+
+/** One row of the exported collection: the Note content a Card renders. */
+export const ExportNote = S.Struct({
+  id: S.String,
+  noteTypeId: S.String,
+  guid: S.String,
+  fields: S.Array(S.String),
+  tags: S.Array(S.String),
+  modified: S.Number,
+})
+export type ExportNote = typeof ExportNote.Type
+
+/** One row of the exported collection: a Card and its scheduling state. */
+export const ExportCard = S.Struct({
+  id: S.String,
+  deckId: S.String,
+  noteId: S.NullOr(S.String),
+  templateOrd: S.Number,
+  suspended: S.Boolean,
+  state: CardState,
+  stability: S.Number,
+  difficulty: S.Number,
+  dueAt: S.NullOr(S.String),
+  reps: S.Number,
+  lapses: S.Number,
+  lastReviewedAt: S.NullOr(S.String),
+})
+export type ExportCard = typeof ExportCard.Type
+
+/** One row of the exported collection: a Deck's identity. */
+export const ExportDeck = S.Struct({
+  id: S.String,
+  name: S.String,
+  description: S.String,
+})
+export type ExportDeck = typeof ExportDeck.Type
+
+/** One row of the exported collection: a Review log entry. */
+export const ExportReview = S.Struct({
+  id: S.String,
+  cardId: S.String,
+  grade: Grade,
+  reviewedAt: S.String,
+})
+export type ExportReview = typeof ExportReview.Type
+
+/** The whole collection, as the export endpoint serves it. Re-import is out of scope for v1. */
+export const CollectionExport = S.Struct({
+  exportedAt: S.String,
+  decks: S.Array(ExportDeck),
+  notes: S.Array(ExportNote),
+  cards: S.Array(ExportCard),
+  reviews: S.Array(ExportReview),
+})
+export type CollectionExport = typeof CollectionExport.Type
 
 /** The Card a Review names does not exist. Returned as a 404. */
 export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', {
@@ -374,6 +455,7 @@ export class DecksGroup extends HttpApiGroup.make('decks')
 export class HomeGroup extends HttpApiGroup.make('home')
   .add(
     HttpApiEndpoint.get('overview', '/', {
+      query: { timezone: S.optional(S.String) },
       success: Overview,
       error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
     }),
@@ -450,7 +532,7 @@ export class ImportsGroup extends HttpApiGroup.make('imports')
 export class ReviewsGroup extends HttpApiGroup.make('reviews')
   .add(
     HttpApiEndpoint.get('queue', '/queue', {
-      query: { deckId: S.optional(DeckId) },
+      query: { deckId: S.optional(DeckId), timezone: S.optional(S.String) },
       success: ReviewQueue,
       error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
     }),
@@ -461,6 +543,18 @@ export class ReviewsGroup extends HttpApiGroup.make('reviews')
         CardNotFound.pipe(HttpApiSchema.status(404)),
         StorageUnavailable.pipe(HttpApiSchema.status(503)),
       ],
+    }),
+    HttpApiEndpoint.post('undo', '/undo', {
+      payload: UndoReview,
+      success: UndoAccepted,
+      error: [
+        CardNotFound.pipe(HttpApiSchema.status(404)),
+        StorageUnavailable.pipe(HttpApiSchema.status(503)),
+      ],
+    }),
+    HttpApiEndpoint.get('export', '/export', {
+      success: CollectionExport,
+      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
     }),
   )
   .prefix('/reviews') {}
@@ -490,9 +584,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     lapseMinutes: 10,
   },
   behaviour: {
-    reviewSounds: true,
     tapToReveal: true,
     dayRolloverHour: 4,
-    keepAwake: false,
   },
 }

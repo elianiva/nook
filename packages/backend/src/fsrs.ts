@@ -11,8 +11,9 @@
  * forgetting curve so that retrievability equals `0.9` when elapsed time equals
  * Stability.
  *
- * nook schedules in whole days, because the schema stores a day interval. A
- * Card graded `Again` comes back the next day at the earliest.
+ * nook schedules in whole days anchored at the learner-day boundary. A Card
+ * graded `Again` returns later this session (`intervalDays` 0, re-queued after
+ * `lapseMinutes`); every other grade waits at least until the next boundary.
  */
 
 /** The Grade a Learner gives a Review. The integer order is FSRS's rating. */
@@ -197,6 +198,11 @@ const elapsedDays = (lastReviewedAt: string | null, now: Date): number => {
  * forgotten: `Again` is a lapse, and the rest grow Stability. A Review on the
  * same day uses the short-term formula, which grows Stability without the
  * forgetting curve.
+ *
+ * `Again` always returns `intervalDays` 0: the Card re-queues later this
+ * session (after `lapseMinutes`) instead of tomorrow. New Cards graded `Again`
+ * stay in `learning`. Only one lapse path exists here, so the short-term and
+ * forgetting-curve cases cannot drift apart.
  */
 export const scheduleReview = (
   card: SchedulerCard,
@@ -210,13 +216,23 @@ export const scheduleReview = (
 
   if (card.state === 'new' || card.reps === 0) {
     const stability = initialStability(weights, grade)
+    if (grade === 'Again') {
+      return {
+        stability,
+        difficulty: initialDifficulty(weights, grade),
+        state: 'learning',
+        intervalDays: 0,
+        reps: 1,
+        lapses: 1,
+      }
+    }
     return {
       stability,
       difficulty: initialDifficulty(weights, grade),
-      state: grade === 'Again' ? 'learning' : 'review',
+      state: 'review',
       intervalDays: intervalFor(stability),
       reps: 1,
-      lapses: grade === 'Again' ? 1 : 0,
+      lapses: 0,
     }
   }
 
@@ -237,7 +253,7 @@ export const scheduleReview = (
       stability,
       difficulty,
       state: 'relearning',
-      intervalDays: intervalFor(stability),
+      intervalDays: 0,
       reps: card.reps + 1,
       lapses: card.lapses + 1,
     }

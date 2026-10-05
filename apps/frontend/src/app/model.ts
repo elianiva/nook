@@ -41,10 +41,8 @@ export const SettingsDraft = S.Struct({
   newPerDay: S.Number,
   reviewsPerDay: S.Number,
   lapseMinutes: S.Number,
-  reviewSounds: S.Boolean,
   tapToReveal: S.Boolean,
   dayRolloverHour: S.Number,
-  keepAwake: S.Boolean,
   saved: S.Boolean,
 })
 export type SettingsDraft = typeof SettingsDraft.Type
@@ -57,10 +55,8 @@ export const draftFromSettings = (settings: AppSettings): SettingsDraft => ({
   newPerDay: settings.fsrs.newPerDay,
   reviewsPerDay: settings.fsrs.reviewsPerDay,
   lapseMinutes: settings.fsrs.lapseMinutes,
-  reviewSounds: settings.behaviour.reviewSounds,
   tapToReveal: settings.behaviour.tapToReveal,
   dayRolloverHour: settings.behaviour.dayRolloverHour,
-  keepAwake: settings.behaviour.keepAwake,
   saved: false,
 })
 
@@ -123,6 +119,8 @@ export type ReviewPending = typeof ReviewPending.Type
  * and `graded` counts what this session has landed. A Grade advances `index`
  * immediately and rides in `pending` until the server confirms it, so grading
  * never waits for the network; a failed Grade stays in `pending` for Retry.
+ * An `Again` grade re-queues its Card later this session (`requeue`), unless
+ * the learner has seen it enough times (`maxRequeue`).
  */
 export const ReviewState = S.Struct({
   phase: ReviewPhase,
@@ -131,6 +129,18 @@ export const ReviewState = S.Struct({
   revealed: S.Boolean,
   pending: S.Array(ReviewPending),
   graded: S.Number,
+  /** Cards graded `Again` that return later this session, with their lapse counts. */
+  requeue: S.Array(ReviewCard),
+  /** ISO 8601 UTC instant the learner-day boundary sits at, for the countdown. */
+  dayStartUtc: S.Option(S.String),
+  /** Minutes after which a lapsed Card returns. Mirrors the saved settings. */
+  lapseMinutes: S.Number,
+  /** The last landed grade, for Undo. Cleared by the next grade. */
+  lastGrade: S.Option(ReviewPending),
+  /** Whether the last grade was just undone, for the confirmation. */
+  undone: S.Boolean,
+  /** Cards queued to grade while offline, flushed when the network returns. */
+  offline: S.Array(ReviewPending),
   /** Why the last grade failed, as one sentence for the Learner. */
   error: S.Option(S.String),
 })
@@ -143,11 +153,23 @@ export const idleReview: ReviewState = {
   revealed: false,
   pending: [],
   graded: 0,
+  requeue: [],
+  dayStartUtc: Option.none(),
+  lapseMinutes: 10,
+  lastGrade: Option.none(),
+  undone: false,
+  offline: [],
   error: Option.none(),
 }
 
 /** Which fetch or save a notice retry runs. The list and detail reads are Queries now, so they carry their own Retry. */
-export const LoadRetry = S.Literals(['reviewQueue', 'settings', 'saveSettings'])
+export const LoadRetry = S.Literals([
+  'reviewQueue',
+  'settings',
+  'saveSettings',
+  'undoReview',
+  'collectionExport',
+])
 export type LoadRetry = typeof LoadRetry.Type
 
 /** A failed fetch or save, as the banner shows it: what failed, and what retry runs. */
@@ -274,7 +296,7 @@ export const Message = defineMessageUnion({
   /** The Learner pressed a Start action: one Deck's queue, or every Deck's. */
   StartedReview: { deckId: S.Option(DeckId) },
   /** The backend answered with the Cards to review, already rendered. */
-  GotReviewQueue: { cards: S.Array(ReviewCard) },
+  GotReviewQueue: { cards: S.Array(ReviewCard), dayStartUtc: S.String, lapseMinutes: S.Number },
   /** The Learner revealed the answer side. */
   RevealedAnswer: {},
   /** The Learner graded the shown Card. */
@@ -285,6 +307,28 @@ export const Message = defineMessageUnion({
   PressedSpace: {},
   /** The server accepted the grade and rescheduled the Card. */
   GradeAccepted: { id: S.String, accepted: ReviewAccepted },
+  /** The Learner pressed Undo on the last grade. */
+  ClickedUndoGrade: {},
+  /** The server undid the last grade and restored the Card. */
+  UndoneGrade: { cardId: CardId },
+  /** Undo did not land. It waits for Retry. */
+  UndoFailed: { error: S.String },
+  /** The Learner pressed Retry on a failed undo. */
+  ClickedRetryUndo: {},
+  /** The browser regained its network. Offline grades flush. */
+  RegainedNetwork: {},
+  /** The Learner asked for the collection file. */
+  ClickedExport: {},
+  /** The collection arrived, ready to download. */
+  GotExport: { filename: S.String, json: S.String },
+  /** The collection file downloaded. */
+  DownloadedExport: {},
+  /** The review queue was cached on this device. */
+  PersistedReviewQueue: {},
+  /** The export did not land. */
+  ExportFailed: { error: S.String },
+  /** A queued offline grade flushed when the network returned. */
+  FlushedOfflineGrade: { id: S.String, accepted: ReviewAccepted },
   /** The grade did not land. It waits in `pending` for Retry. */
   GradeFailed: { error: S.String },
   /** The Learner pressed Retry on a grade that did not land. */
@@ -321,9 +365,7 @@ export const Message = defineMessageUnion({
   EditedReviewsPerDay: { value: S.String },
   EditedLapseMinutes: { value: S.String },
   EditedRolloverHour: { value: S.String },
-  ToggledReviewSounds: { isChecked: S.Boolean },
   ToggledTapToReveal: { isChecked: S.Boolean },
-  ToggledKeepAwake: { isChecked: S.Boolean },
   ClickedSaveSettings: {},
   ClickedResetSettings: {},
 })

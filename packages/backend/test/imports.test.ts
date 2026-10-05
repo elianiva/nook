@@ -144,7 +144,9 @@ layer(TestLayers)('imports over sqlite', (it) => {
       expect(finished.status).toBe('done')
 
       // The imported Deck shows through the screens that already read `cards`.
-      const detail = yield* client.decks.getById({ params: { deckId: DeckId.make('7') } })
+      const detail = yield* client.decks.getById({
+        params: { deckId: DeckId.make('7') },
+      })
       expect(detail.summary.totalCount).toBe(2)
       expect(detail.summary.newCount).toBe(2)
       expect(detail.cards.length).toBe(2)

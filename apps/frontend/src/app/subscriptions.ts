@@ -89,6 +89,19 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
     },
   ),
 
+  networkOnline: entry(
+    { listening: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ listening: true }),
+      dependenciesToStream: () =>
+        Subscription.fromEvent({
+          target: () => window,
+          type: 'online',
+          mapEvent: () => Message.RegainedNetwork(),
+        }),
+    },
+  ),
+
   /**
    * Review shortcuts: Space or Enter reveals, then grades Good; 1–4 grade
    * directly. Grading is one tap on a phone, but a keyboard makes it faster.

@@ -12,7 +12,6 @@ import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { ChevronRight, Flame, Inbox, Play } from 'lucide'
-import { badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
@@ -30,16 +29,6 @@ type Child = Html | string
 
 const dueTone = (due: number): string =>
   due === 0 ? 'text-muted-foreground' : due >= 100 ? 'text-destructive' : 'text-foreground'
-
-const deltaBadge = (delta: number, h: HtmlBuilder<Message>): Html | null => {
-  if (delta === 0) return null
-  const up = delta > 0
-  return badge<Message>(
-    { variant: up ? 'destructive' : 'secondary' },
-    [`${up ? '+' : ''}${delta} vs yesterday`],
-    h,
-  )
-}
 
 const lastStudied = (deck: DeckSummary): string =>
   Option.match(deck.lastStudiedAt, {
@@ -66,10 +55,7 @@ export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html =>
                 [
                   h.div(
                     [h.Class('flex items-center gap-2')],
-                    [
-                      h.span([h.Class('truncate text-sm font-semibold')], [deck.name]),
-                      deltaBadge(deck.dueDelta, h) ?? h.empty,
-                    ],
+                    [h.span([h.Class('truncate text-sm font-semibold')], [deck.name])],
                   ),
                   h.div(
                     [h.Class('text-xs text-muted-foreground')],

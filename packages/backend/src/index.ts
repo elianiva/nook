@@ -11,6 +11,7 @@
  */
 
 export { Decks, DecksHandlers } from './decks'
+export { dayStartUtc, dueInstantUtc, reviewDayKey } from './day-boundary'
 export { Home, HomeHandlers } from './home'
 export { Imports, ImportsHandlers } from './imports'
 export { Reviews, ReviewsHandlers } from './reviews'

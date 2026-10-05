@@ -13,7 +13,6 @@ const DeckRow = Schema.Struct({
   newCount: Schema.Number,
   dueCount: Schema.Number,
   totalCount: Schema.Number,
-  dueDelta: Schema.Number,
   lastStudiedAt: Schema.NullOr(Schema.String),
   retention7d: Schema.Number,
 })
@@ -22,6 +21,7 @@ const DeckRow = Schema.Struct({
 const CardRow = Schema.Struct({
   id: Schema.String,
   deckId: Schema.String,
+  dueAt: Schema.NullOr(Schema.String),
   dueInDays: Schema.Number,
   stability: Schema.Number,
   difficulty: Schema.Number,
@@ -35,7 +35,6 @@ const toSummary = (row: typeof DeckRow.Type): DeckSummary => ({
   newCount: row.newCount,
   dueCount: row.dueCount,
   totalCount: row.totalCount,
-  dueDelta: row.dueDelta,
   lastStudiedAt: row.lastStudiedAt === null ? Option.none() : Option.some(row.lastStudiedAt),
   retention7d: row.retention7d,
 })
@@ -43,6 +42,7 @@ const toSummary = (row: typeof DeckRow.Type): DeckSummary => ({
 const toCard = (row: typeof CardRow.Type): Card => ({
   id: CardId.make(row.id),
   deckId: DeckId.make(row.deckId),
+  dueAt: row.dueAt === null ? Option.none() : Option.some(row.dueAt),
   dueInDays: row.dueInDays,
   stability: row.stability,
   difficulty: row.difficulty,
@@ -71,16 +71,17 @@ export class Decks extends Context.Service<
 
       const list = Effect.gen(function* () {
         const rows = yield* sql`SELECT id, name, description,
-          (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
-          (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
-            AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS "dueCount",
-          (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
-          due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt",
-          (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
-            FROM reviews r JOIN cards c ON c.id = r.card_id
-            WHERE c.deck_id = decks.id
-              AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
-          FROM decks ORDER BY name`
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
+            last_studied_at AS "lastStudiedAt",
+            (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
+              FROM reviews r JOIN cards c ON c.id = r.card_id
+              WHERE c.deck_id = decks.id
+                AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
+            FROM decks ORDER BY name`
         const decoded = yield* decodeRows(DeckRow, rows)
         return decoded.map(toSummary)
       }).pipe(Effect.withSpan('Decks.list'), (self) =>
@@ -92,9 +93,10 @@ export class Decks extends Context.Service<
           const summaryRows = yield* sql`SELECT id, name, description,
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
-              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) AS "dueCount",
+              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
-            due_delta AS "dueDelta", last_studied_at AS "lastStudiedAt",
+            last_studied_at AS "lastStudiedAt",
             (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
               FROM reviews r JOIN cards c ON c.id = r.card_id
               WHERE c.deck_id = decks.id
@@ -103,7 +105,7 @@ export class Decks extends Context.Service<
           const summaries = yield* decodeRows(DeckRow, summaryRows)
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
-          const cardRows = yield* sql`SELECT id, deck_id AS "deckId",
+          const cardRows = yield* sql`SELECT id, deck_id AS "deckId", due_at AS "dueAt",
             COALESCE(CAST(julianday(due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`
           const cards = yield* decodeRows(CardRow, cardRows)
