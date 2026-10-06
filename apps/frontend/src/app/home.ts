@@ -146,7 +146,6 @@ const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
               ),
             ],
           ),
-          h.p([h.Class('text-[11px]')], ['Every Deck that is due, newest Cards last.']),
         ],
       ),
     ],

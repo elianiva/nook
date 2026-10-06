@@ -143,7 +143,7 @@ const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
             h.span(
               [
                 h.Class(
-                  'shrink-0 rounded-full bg-[var(--theme-hero)] px-2.5 py-1.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums',
+                  'shrink-0 rounded-lg bg-[var(--theme-hero)] px-2.5 py-1.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums',
                 ),
               ],
               [chip],
