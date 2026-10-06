@@ -14,12 +14,13 @@
  * swatch sends `PickedTheme`, which writes `data-theme` and localStorage at
  * once, so the dashboard and settings re-tint without a save.
  *
- * Mobile layout: each row is a stacked label-over-control pair, never a
- * side-by-side label/input pair. A 390px phone gives ~340px of card content
- * width, and a 96px-wide number input next to its label squeezes the label
- * into a tall wrapped column with a clipped input. Chrome on Android also
- * zooms the page when a sub-16px input takes focus, which breaks the narrow
- * shell frame — every text control here sets 16px text so focus never zooms.
+ * Mobile layout: each section is one grouped card; every row inside is a
+ * side-by-side label-left/control-right pair. Controls keep a fixed narrow
+ * width (number inputs `w-24`, select `w-28`) so the label keeps most of the
+ * ~340px card content width on a 390px phone. Chrome on Android zooms the
+ * page when a sub-16px input takes focus, which breaks the narrow shell
+ * frame — every text control here sets 16px text so focus never zooms. Only
+ * the weights textarea spans full width, stacked under its label.
  */
 
 import { Option } from 'effect'
@@ -37,54 +38,61 @@ import { hint } from './hints'
 
 type Child = Html | string
 
-const section = (title: string, children: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
+const section = (title: string, rows: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
   h.div(
-    [h.Class('flex flex-col gap-2.5')],
+    [h.Class('flex flex-col gap-2')],
     [
       h.span(
         [h.Class('text-[11px] font-bold tracking-[2.2px] text-[var(--theme-sub)] uppercase')],
         [title],
       ),
-      ...children,
+      groupCard(rows, h),
     ],
   )
 
 /**
- * One settings row: a borderless `--theme-block` field with an ink label and
- * a white control. The mockups render every number input, select, and toggle
- * as its own block; the weights textarea keeps the same treatment so the
- * form reads as one rhythm.
+ * One settings section is one grouped `--theme-block` card; every row inside
+ * is a side-by-side label-left/control-right pair, so each field costs one
+ * line instead of two. Rows divide with a hairline; only the weights
+ * textarea stacks full width under its label.
  */
-const fieldBlockClass = 'flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3.5'
+const groupCard = (children: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [
+      h.Class(
+        'flex flex-col divide-y divide-black/5 rounded-[14px] border-0 bg-[var(--theme-block)] px-3.5',
+      ),
+    ],
+    [...children],
+  )
 
-const fieldLabelClass = 'text-[13px] font-semibold leading-none'
+/** One side-by-side row: the label keeps the width, the control hugs the right. */
+const rowClass = 'flex items-center gap-3 py-2.5'
 
-/** White control inside a field block: no outline, ink text, 16px text. */
-const fieldControlClass =
-  'rounded-[10px] border-0 bg-white font-semibold text-[var(--theme-ink)] shadow-none tabular-nums outline-none'
-
-const fieldHeader = (
+const rowLabel = (
   id: string,
   labelText: string,
   h: HtmlBuilder<Message>,
   hinted?: Readonly<{ slot: HintSlot; text: string; model: Model }>,
 ): Html =>
-  h.div(
-    [h.Class('flex flex-col gap-1')],
+  h.label(
+    [h.For(id), h.Class('min-w-0 flex-1 text-[13px] font-semibold leading-snug')],
     [
-      h.label(
-        [h.For(id), h.Class(fieldLabelClass)],
-        [
-          labelText,
-          ...(hinted === undefined ? [] : [' ', hint(hinted.slot, hinted.text, hinted.model, h)]),
-        ],
-      ),
+      labelText,
+      ...(hinted === undefined ? [] : [' ', hint(hinted.slot, hinted.text, hinted.model, h)]),
     ],
   )
 
-/** Shared number-input classes: full width, 16px text so mobile focus never zooms. */
+/** White control inside a row: no outline, ink text, 16px text. */
+const fieldControlClass =
+  'rounded-[10px] border-0 bg-white font-semibold text-[var(--theme-ink)] shadow-none tabular-nums outline-none'
+
+/**
+ * Shared number-input classes: fixed narrow width, right aligned, 16px text
+ * so mobile focus never zooms.
+ */
 const numberInputClass =
-  'h-10 w-full px-3 py-2 text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
+  'h-9 w-24 shrink-0 px-2.5 py-1.5 text-right text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
   fieldControlClass
 
 const numberField = (
@@ -102,9 +110,9 @@ const numberField = (
   hinted?: Readonly<{ slot: HintSlot; text: string; model: Model }>,
 ): Html =>
   h.div(
-    [h.Class(fieldBlockClass)],
+    [h.Class(rowClass)],
     [
-      fieldHeader(id, labelText, h, hinted),
+      rowLabel(id, labelText, h, hinted),
       h.input([
         h.Id(id),
         h.Type('number'),
@@ -116,6 +124,31 @@ const numberField = (
         ...(extra.inputMode === undefined ? [] : [h.InputMode(extra.inputMode)]),
         h.Class(numberInputClass),
       ]),
+    ],
+  )
+
+const weightsRow = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-2 py-2.5')],
+    [
+      rowLabel('fsrs-weights', 'FSRS weights (advanced)', h, {
+        slot: 'fsrs-weights',
+        text: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
+        model,
+      }),
+      textarea<Message>(
+        {
+          id: 'fsrs-weights',
+          label: 'FSRS weights (advanced)',
+          value: draft.weightsText,
+          onInput: (value) => Message.EditedWeights({ value }),
+          rows: 2,
+          wrapperClass: 'gap-0',
+          labelClass: 'sr-only',
+          className: 'border-0 bg-white font-mono shadow-none outline-none',
+        },
+        h,
+      ),
     ],
   )
 
@@ -133,29 +166,7 @@ const fsrsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>
         h,
         { slot: 'desired-retention', text: 'Target recall rate, 0.70–0.95.', model },
       ),
-      h.div(
-        [h.Class(fieldBlockClass)],
-        [
-          fieldHeader('fsrs-weights', 'FSRS weights (advanced)', h, {
-            slot: 'fsrs-weights',
-            text: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
-            model,
-          }),
-          textarea<Message>(
-            {
-              id: 'fsrs-weights',
-              label: 'FSRS weights (advanced)',
-              value: draft.weightsText,
-              onInput: (value) => Message.EditedWeights({ value }),
-              rows: 3,
-              wrapperClass: 'gap-0',
-              labelClass: 'sr-only',
-              className: 'border-0 bg-white font-semibold shadow-none outline-none md:text-sm',
-            },
-            h,
-          ),
-        ],
-      ),
+      weightsRow(draft, model, h),
       numberField(
         'maximum-interval',
         'Maximum interval',
@@ -212,33 +223,26 @@ const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mes
     'Behaviour',
     [
       h.div(
-        [h.Class(fieldBlockClass)],
+        [h.Class('py-2.5')],
         [
-          h.div(
-            [h.Class('flex items-center gap-1.5')],
-            [
-              switch_<Message>(
-                {
-                  id: 'tap-to-reveal',
-                  label: 'Tap anywhere to reveal',
-                  isChecked: draft.tapToReveal,
-                  onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
-                  className: 'border-0 data-checked:bg-[var(--theme-tint)]',
-                  labelClass: 'text-[13px] font-semibold leading-none',
-                },
-                h,
-              ),
-            ],
+          switch_<Message>(
+            {
+              id: 'tap-to-reveal',
+              label: 'Tap anywhere to reveal',
+              isChecked: draft.tapToReveal,
+              onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
+              className: 'shrink-0 border-0 data-checked:bg-[var(--theme-tint)]',
+              labelClass: 'flex-1 text-[13px] font-semibold',
+              wrapperClass: 'w-full flex-row-reverse justify-between gap-3',
+            },
+            h,
           ),
         ],
       ),
       h.div(
-        [h.Class(fieldBlockClass)],
+        [h.Class(rowClass)],
         [
-          h.div(
-            [h.Class('flex flex-col gap-1')],
-            [h.label([h.For('rollover-hour'), h.Class(fieldLabelClass)], ['Day rollover'])],
-          ),
+          rowLabel('rollover-hour', 'Day rollover', h),
           nativeSelect<Message>(
             {
               id: 'rollover-hour',
@@ -250,7 +254,9 @@ const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mes
                 nativeSelectOption<Message>({ value: option, label: option }, h),
               ),
               labelClass: 'sr-only',
-              className: 'h-10 border-0 bg-white font-semibold shadow-none outline-none',
+              wrapperClass: 'w-auto shrink-0',
+              className:
+                'h-9 w-28 border-0 bg-white text-right font-semibold shadow-none outline-none',
             },
             h,
           ),
@@ -313,7 +319,7 @@ const appearanceSection = (h: HtmlBuilder<Message>): Html => {
     'Appearance',
     [
       h.div(
-        [h.Class('flex items-center gap-2.5')],
+        [h.Class('flex items-center gap-2 py-2.5')],
         themeKeys.map((key) => {
           const meta = themeMeta[key]
           const active = key === current
@@ -322,8 +328,8 @@ const appearanceSection = (h: HtmlBuilder<Message>): Html => {
               h.OnClick(Message.PickedTheme({ theme: key })),
               h.Class(
                 active
-                  ? 'size-11 shrink-0 rounded-xl border-0 outline-none ring-2 ring-[var(--theme-strong)] ring-offset-2 ring-offset-white'
-                  : 'size-11 shrink-0 rounded-xl border-0 outline-none',
+                  ? 'size-9 shrink-0 rounded-xl border-0 outline-none ring-2 ring-[var(--theme-strong)] ring-offset-2 ring-offset-white'
+                  : 'size-9 shrink-0 rounded-xl border-0 outline-none',
               ),
               h.Style({ backgroundColor: meta.tint }),
               h.AriaPressed(active ? 'true' : 'false'),
@@ -363,14 +369,14 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
       'Collection',
       [
         h.div(
-          [h.Class(fieldBlockClass)],
+          [h.Class('py-2.5')],
           [
             button<Message>(
               {
                 onClick: Message.ClickedExport(),
                 variant: 'outline',
                 size: 'lg',
-                className: 'h-11 w-full border-0 bg-white text-base shadow-none',
+                className: 'h-9 w-full border-0 bg-white text-sm shadow-none',
               },
               [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
               h,

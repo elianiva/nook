@@ -195,29 +195,37 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Href(routeToUrl(tabToRoute(tab))),
       h.Class(
         cn(
-          'flex flex-1 flex-col items-center gap-1 py-2.5 text-[10px] font-extrabold tracking-[1.6px] uppercase',
-          active ? 'text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
+          'flex flex-1 items-center justify-center gap-2 rounded-full py-3.5 text-xs font-extrabold tracking-[1.6px] uppercase',
+          active ? 'bg-white text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
         ),
       ),
       ...(active ? [h.AriaCurrent('page')] : []),
     ],
-    [
-      icon(h, tabIcon[tab], 'size-[22px]'),
-      tabLabel[tab].toUpperCase(),
-      h.span(
-        [h.Class(cn('h-1 w-4 rounded-full', active ? 'bg-[var(--theme-hero)]' : 'bg-transparent'))],
-        [],
-      ),
-    ],
+    [icon(h, tabIcon[tab], 'size-6'), tabLabel[tab].toUpperCase()],
   )
 }
 
+/**
+ * Floating segmented tab bar: a solid `--theme-block` track with a white
+ * active pill, floating over a soft bottom fade so content melts underneath
+ * instead of ending at a block. Tabs use inline icon-plus-label rows, and
+ * the active state is the pill itself — no separate indicator dot.
+ */
 const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.nav(
-    [h.AriaLabel('Sections')],
+    [
+      h.AriaLabel('Sections'),
+      h.Class(
+        'pointer-events-none absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-background via-background/85 to-transparent px-4 pt-8 pb-safe',
+      ),
+    ],
     [
       h.div(
-        [h.Class('mx-auto flex w-full max-w-md items-stretch px-3 pt-1 pb-nav')],
+        [
+          h.Class(
+            'pointer-events-auto mx-auto flex w-full max-w-md items-center rounded-[28px] bg-[var(--theme-block)] p-2',
+          ),
+        ],
         NAV_TABS.map((tab) => tabLink(model, tab, h)),
       ),
     ],
@@ -269,8 +277,10 @@ export const shell = (
   return h.div(
     // A fixed viewport height, so the bars stay put and only the content
     // between them scrolls. On a phone that keeps the actions under the thumb
-    // instead of below a long page.
-    [h.Class('flex h-dvh flex-col bg-background text-foreground')],
+    // instead of below a long page. The bottom tab bar floats over the
+    // content, so the main column carries extra bottom padding and the last
+    // card can scroll clear of the pill.
+    [h.Class('relative flex h-dvh flex-col bg-background text-foreground')],
     [
       topChrome(model, h),
       h.main(
@@ -284,7 +294,9 @@ export const shell = (
               // with `overflow-hidden` slice their text mid-line instead of
               // scrolling. (Review manages its own flex children, so it is
               // exempt.)
-              focused ? 'gap-0 overflow-hidden' : 'gap-4 overflow-y-auto px-3 py-4 [&>*]:shrink-0',
+              focused
+                ? 'gap-0 overflow-hidden'
+                : 'gap-4 overflow-y-auto px-3 pt-4 pb-28 [&>*]:shrink-0',
             ),
           ),
         ],
