@@ -1,0 +1,12 @@
+# Supervised orb services. `amp orb services ensure` starts everything here.
+services:
+  dev:
+    # `alchemy dev` serves the Worker and the Foldkit client on one port.
+    # The port is pinned in alchemy.run.ts (`dev.port: 5273`, strict), so the
+    # service declares the same fixed port instead of using $PORT.
+    # Requires NOOK_ALLOWED_EMAIL (see .agents/resume); without it the
+    # command exits and the service keeps retrying.
+    command: pnpm dev
+    port: 5273
+    health: /api/health
+    portal: true

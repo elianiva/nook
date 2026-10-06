@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+step() {
+  echo "--- $1 ---"
+  shift
+  time "$@"
+}
+
+# pnpm comes from a standalone install, not corepack: corepack 0.20.0 (the
+# version orbs ship) resolves pnpm >= 6 to `bin/pnpm.cjs`, but pnpm >= 11
+# ships only `bin/pnpm.mjs`, so every corepack-routed `pnpm` invocation fails
+# with MODULE_NOT_FOUND. The standalone install runs `pnpm.mjs` directly.
+if ! pnpm --version >/dev/null 2>&1; then
+  echo "installing standalone pnpm 12.2.1"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  (cd "$tmp" && npm pack pnpm@12.2.1 >/dev/null 2>&1)
+  mkdir -p "$HOME/.local/lib-pnpm-12"
+  tar xzf "$tmp"/pnpm-12.2.1.tgz -C "$tmp"
+  rm -rf "$HOME/.local/lib-pnpm-12"
+  mv "$tmp/package" "$HOME/.local/lib-pnpm-12"
+  mkdir -p "$HOME/.local/bin"
+  printf '#!/usr/bin/env bash\nexec node "$HOME/.local/lib-pnpm-12/bin/pnpm.mjs" "$@"\n' > "$HOME/.local/bin/pnpm"
+  printf '#!/usr/bin/env bash\nexec node "$HOME/.local/lib-pnpm-12/bin/pnpx.mjs" "$@"\n' > "$HOME/.local/bin/pnpx"
+  chmod +x "$HOME/.local/bin/pnpm" "$HOME/.local/bin/pnpx"
+  # Persist for future login shells (Amp, supervised services): .bash_profile
+  # sources ~/.env but nothing here adds ~/.local/bin yet.
+  marker="# nook: standalone pnpm"
+  if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+    printf '\n%s\ncase "$PATH" in\n\t"$HOME/.local/bin"|"$HOME/.local/bin":*) ;;\n\t*) export PATH="$HOME/.local/bin:$PATH" ;;\nesac\n' "$marker" >> "$HOME/.bash_profile"
+  fi
+  trap - EXIT
+  rm -rf "$tmp"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+
+# This repo pins pnpm through the `packageManager` field and Node >= 24
+# through `engines`. Orbs already ship a new-enough Node.
+step "pnpm version" pnpm --version
+
+# `pnpm install --frozen-lockfile` matches CI and is cheap on a warm
+# snapshot: pnpm verifies the store against pnpm-lock.yaml instead of
+# re-downloading. Postinstall (workerd, lefthook) reruns but converges.
+step "install dependencies" pnpm install --frozen-lockfile
+
+# Backend tests apply Drizzle migrations from packages/backend/migrations to
+# a local SQLite file; no database server is needed.
+echo "setup complete: toolchain and workspace dependencies ready"

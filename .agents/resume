@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Fast resume hook: Amp runs this after orb activation and after every wake,
+# with at most ~10s before the agent continues. Nothing here installs or
+# starts anything; the dev service is supervised through .amp/services.yaml.
+
+# `alchemy dev` refuses to load without this: there is no sign-up, so the one
+# Cloudflare Access email is the whole identity system. Fail early with the
+# fix instead of letting the first `pnpm dev` die mid-thread.
+if [[ -z "${NOOK_ALLOWED_EMAIL:-}" ]]; then
+  echo "resume: NOOK_ALLOWED_EMAIL is unset." >&2
+  echo "resume: export NOOK_ALLOWED_EMAIL=you@example.com (the one email Access admits)," >&2
+  echo "resume: or configure it in Amp project Secrets & Env Vars, then run: amp orb services ensure" >&2
+  exit 1
+fi
+
+echo "resume ok: NOOK_ALLOWED_EMAIL is set"
