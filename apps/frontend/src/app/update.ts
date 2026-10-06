@@ -12,8 +12,9 @@
  * into `settings`.
  */
 
-import { Option } from 'effect'
+import { HashMap, Option } from 'effect'
 import { Navigation, Update } from 'foldkit'
+import { AsyncData } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
 import type { Grade } from '@nook/api'
@@ -25,14 +26,17 @@ import {
   FetchSettings,
   LoadCachedQueue,
   PersistReviewQueue,
+  ReloadApp,
   SaveSettings,
   SubmitGrade,
   UndoGrade,
 } from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
+import { RestoreQueries } from './query-commands'
 import { ApplyTheme } from './theme-commands'
 import { foldHintMessage } from './hints'
 import type { LoadRetry } from './model'
+import type { RestoredAnswer } from './model'
 import {
   Message,
   draftFromSettings,
@@ -102,10 +106,27 @@ export const init = (url: Url): Update.Return<Model, Message> => {
   return {
     model: loads.model,
     // An Import interrupted by a reload is still in IndexedDB; restore it so the
-    // worker can pick it up again.
-    commands: [...(loads.commands ?? []), RestoreImportJob()],
+    // worker can pick it up again. Cached list answers reseed the Queries, so
+    // a cold boot offline still shows the last data while the route loads run.
+    commands: [...(loads.commands ?? []), RestoreImportJob(), RestoreQueries()],
   }
 }
+
+/**
+ * The queries the current route shows, refreshed. Review and settings own
+ * their reads, so only the list and detail Queries revalidate here; the
+ * grade flush in `RegainedNetwork` is untouched.
+ */
+const revalidateVisible = (model: Model): Update.Return<Model, Message> =>
+  AppRoute.match<Update.Return<Model, Message>>(model.route, {
+    Home: () => Update.combine<Model, Message>(model, [overview.revalidate, decks.revalidate]),
+    Decks: () => decks.revalidate(model),
+    DeckDetail: ({ deckId }) => deckDetail.revalidate(model, { deckId }),
+    Review: () => ({ model }),
+    ReviewDeck: () => ({ model }),
+    Settings: () => ({ model }),
+    NotFound: () => ({ model }),
+  })
 
 /** The fetch or save the notice retry runs, rebuilt from the current route and draft. */
 const retryCommandsFor = (model: Model, retry: LoadRetry) => {
@@ -166,6 +187,48 @@ const settingsFromDraft = (model: Model) => {
 }
 
 const clearNotice = (model: Model): Model => ({ ...model, notice: Option.none() })
+
+/**
+ * Folds restored answers into their Query Models as `Success`.
+ *
+ * Only `Idle` Queries take the seed: a fetch that already completed holds
+ * fresher data, and a request in flight keeps its `Loading`/`Refreshing`
+ * state so the generation guard still matches its answer. Deck-detail
+ * entries key on the encoded args, the same key `read` resolves.
+ */
+const seedCachedQueries = (model: Model, answers: ReadonlyArray<RestoredAnswer>): Model => {
+  let next = model
+  for (const answer of answers) {
+    if (answer.kind === 'overview') {
+      if (AsyncData.isIdle(overviewQuery.read(next.overview))) {
+        next = { ...next, overview: { ...next.overview, data: AsyncData.succeed(answer.value) } }
+      }
+    } else if (answer.kind === 'decks') {
+      if (AsyncData.isIdle(decksQuery.read(next.decks))) {
+        next = { ...next, decks: { ...next.decks, data: AsyncData.succeed(answer.value) } }
+      }
+    } else {
+      if (!AsyncData.isIdle(deckDetailQuery.read(next.deckDetail, { deckId: answer.deckId }))) {
+        continue
+      }
+      // Single-field args encode to one JSON object with sorted keys, which
+      // `JSON.stringify` matches: no key ordering to canonicalize.
+      const key = JSON.stringify({ deckId: answer.deckId })
+      next = {
+        ...next,
+        deckDetail: {
+          ...next.deckDetail,
+          entries: HashMap.set(next.deckDetail.entries, key, {
+            args: { deckId: answer.deckId },
+            data: AsyncData.succeed(answer.value),
+            generation: next.deckDetail.generation,
+          }),
+        },
+      }
+    }
+  }
+  return next
+}
 
 /**
  * Applies a Grade on screen and sends it.
@@ -237,6 +300,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ClickedRetryDecks: () => decks.revalidateOrLoad(model),
 
     ClickedRetryDeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
+
+    // Hover or focus on a deck link: warm the detail Query while it is still
+    // missing. `loadIfMissing` starts nothing when data or a request is there.
+    PrefetchedDeckDetail: ({ deckId }) => deckDetail.loadIfMissing(model, { deckId }),
 
     GotSettings: ({ settings }) => ({
       model: clearNotice({
@@ -402,6 +469,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     DownloadedExport: () => ({ model }),
 
+    AppliedSwUpdate: () => ({ model }),
+
+    ClickedReloadApp: () => ({ model, commands: [ReloadApp()] }),
+
     PersistedReviewQueue: () => ({ model }),
 
     GradeFailed: ({ error }) => {
@@ -432,14 +503,20 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     RegainedNetwork: () => {
       const queued = model.review.offline
-      if (queued.length === 0) return { model }
-      return {
-        model: modifyFields(model, {
+      const refreshed = revalidateVisible(
+        modifyFields(model, {
           review: () => ({ ...model.review, error: Option.none() }),
         }),
-        commands: queued.map((entry) => SubmitGrade(entry)),
+      )
+      if (queued.length === 0) return refreshed
+      return {
+        model: refreshed.model,
+        commands: [...(refreshed.commands ?? []), ...queued.map((entry) => SubmitGrade(entry))],
       }
     },
+
+    // The tab became visible, or the entry above fired: refresh what is shown.
+    RevalidateVisible: () => revalidateVisible(model),
 
     // Clear the last Import and show "preparing" while the picker is open and
     // the archive is hashed. `active` stays false, so no worker starts yet.
@@ -483,6 +560,17 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           },
         }),
       }),
+
+    // Cached list answers reseed their Queries as `Success`, so a cold boot
+    // offline shows the last data at once. The route loads already started
+    // move each Query to `Refreshing` when they run; a seed that arrives
+    // after a fetch completed only fills Queries still `Idle`, so a fresh
+    // answer never loses to an older cache.
+    RestoredCachedQueries: ({ answers }) => ({ model: seedCachedQueries(model, answers) }),
+
+    // A newer shell waits in the worker. The banner offers the reload; the
+    // learner takes it when no review is in flight — never forced.
+    ServiceWorkerAvailable: () => ({ model: { ...model, swUpdateReady: true } }),
 
     ImportWorkerPhase: ({ phase }) => ({
       model: { ...model, importState: { ...model.importState, phase } },

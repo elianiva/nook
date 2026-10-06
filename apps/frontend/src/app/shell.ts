@@ -279,6 +279,34 @@ const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
   })
 
 /**
+ * A newer shell waits in the worker. The banner offers the reload outside
+ * review; during review the screen stays quiet so a session is never
+ * interrupted mid-grade. The reload is an anchor navigation, not a message:
+ * the new shell takes over on the next load either way.
+ */
+const updateBanner = (model: Model, h: HtmlBuilder<Message>): Child => {
+  if (!model.swUpdateReady) return h.empty
+  if (model.route._tag === 'Review' || model.route._tag === 'ReviewDeck') return h.empty
+  return h.div(
+    [
+      h.Class(
+        'flex items-center gap-2 rounded-lg border border-[var(--theme-ink)]/20 bg-[var(--theme-block)] px-3 py-2',
+      ),
+      h.Role('status'),
+    ],
+    [
+      icon(h, RotateCcw, 'size-4 shrink-0'),
+      h.span([h.Class('min-w-0 flex-1 text-xs')], ['A newer version is ready.']),
+      button<Message>(
+        { onClick: Message.ClickedReloadApp(), variant: 'outline', size: 'sm' },
+        ['Reload'],
+        h,
+      ),
+    ],
+  )
+}
+
+/**
  * Review owns the whole screen: the tab bar and the page padding step aside so
  * the grade bar sits under the thumb, and the Card fills the space between.
  */
@@ -322,7 +350,7 @@ export const shell = (
           ? Option.isSome(model.notice)
             ? [h.div([h.Class('px-3 pt-3')], [noticeBanner(model, h)]), ...content]
             : [...content]
-          : [noticeBanner(model, h), ...content],
+          : [noticeBanner(model, h), updateBanner(model, h), ...content],
       ),
       ...(focused ? [] : [bottomNav(model, h)]),
     ],

@@ -97,7 +97,46 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         Subscription.fromEvent({
           target: () => window,
           type: 'online',
+          // Grades flush through the existing handler, which also refreshes the
+          // shown queries behind them.
           mapEvent: () => Message.RegainedNetwork(),
+        }),
+    },
+  ),
+
+  /**
+   * A tab left open goes stale: returning to it refreshes the shown queries.
+   * Only the visible transition emits — hiding the tab starts nothing.
+   */
+  tabVisible: entry(
+    { listening: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ listening: true }),
+      dependenciesToStream: () =>
+        Subscription.fromEventFilterMap({
+          target: () => document,
+          type: 'visibilitychange',
+          filterMapEvent: () =>
+            document.visibilityState === 'visible'
+              ? Option.some(Message.RevalidateVisible())
+              : Option.none(),
+        }),
+    },
+  ),
+
+  /**
+   * The worker posts `nook:sw-update` when a newer shell waits. The update
+   * banner offers the reload; the learner takes it outside review.
+   */
+  swUpdate: entry(
+    { listening: Schema.Boolean },
+    {
+      modelToDependencies: () => ({ listening: true }),
+      dependenciesToStream: () =>
+        Subscription.fromEvent({
+          target: () => window as Subscription.TypedEventTarget<{ 'nook:sw-update': CustomEvent }>,
+          type: 'nook:sw-update',
+          mapEvent: () => Message.ServiceWorkerAvailable(),
         }),
     },
   ),

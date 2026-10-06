@@ -13,13 +13,13 @@
  * is due.
  */
 
-import { Effect, Option } from 'effect'
-import { CardId, DeckId, ReviewCard } from '@nook/api'
+import { Effect, Option, Schema as S } from 'effect'
+import { CardId, DeckId } from '@nook/api'
 import type { Grade } from '@nook/api'
 
 const DB_NAME = 'nook'
 const STORE_NAME = 'reviewQueues'
-const DB_VERSION = 2
+const DB_VERSION = 4
 
 /** A grade made while offline, waiting for the network. */
 export interface OfflineGrade {
@@ -30,7 +30,12 @@ export interface OfflineGrade {
 
 /** One cached queue: the rendered Cards plus the offline grades against them. */
 export interface CachedQueue {
-  readonly cards: ReadonlyArray<ReviewCard>
+  /**
+   * The queued cards as plain JSON (the `ReviewCard` wire shape), not domain
+   * `ReviewCard` values: `dueAt` is an `Option`, which does not survive the
+   * structured clone. `LoadCachedQueue` decodes these back on the way out.
+   */
+  readonly cards: S.Json
   readonly dayStartUtc: string
   readonly lapseMinutes: number
   readonly cachedAt: number
@@ -60,13 +65,49 @@ const request = <A>(
         const open = indexedDB.open(DB_NAME, DB_VERSION)
         open.onupgradeneeded = () => {
           const db = open.result
-          if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME)
+          // The database is shared: the query cache (v3) may have created it
+          // first, so every store this app owns is created here, not only
+          // this module's own. A missing store after an upgrade reads as
+          // absent rather than failing the open.
+          for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
+            if (!db.objectStoreNames.contains(name)) {
+              db.createObjectStore(name)
+            }
           }
         }
         open.onerror = () => reject(open.error ?? new Error('Could not open the review store.'))
         open.onsuccess = () => {
           const db = open.result
+          const close = (): void => db.close()
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            // The database predates this store (an older version created it
+            // without `reviewQueues`): widen the schema, then retry the open
+            // so the upgrade that creates the store can run.
+            const version = db.version + 1
+            close()
+            const retry = indexedDB.open(DB_NAME, version)
+            retry.onupgradeneeded = () => {
+              const upgraded = retry.result
+              for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
+                if (!upgraded.objectStoreNames.contains(name)) {
+                  upgraded.createObjectStore(name)
+                }
+              }
+            }
+            retry.onerror = () =>
+              reject(retry.error ?? new Error('Could not open the review store.'))
+            retry.onsuccess = () => {
+              const retried = retry.result
+              const transaction = retried.transaction(STORE_NAME, mode)
+              transaction.oncomplete = () => retried.close()
+              transaction.onabort = () => retried.close()
+              const result = run(transaction.objectStore(STORE_NAME))
+              result.onsuccess = () => resolve(result.result)
+              result.onerror = () =>
+                reject(result.error ?? new Error('The review store did not answer.'))
+            }
+            return
+          }
           const transaction = db.transaction(STORE_NAME, mode)
           const result = run(transaction.objectStore(STORE_NAME))
           result.onsuccess = () => resolve(result.result)

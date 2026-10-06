@@ -32,6 +32,27 @@ import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { Message as MessageConstructors } from './model'
 import type { LoadRetry } from './model'
 
+/**
+ * Encodes queue cards to plain JSON before they reach IndexedDB. `ReviewCard`
+ * carries `dueAt` as an `Option`, whose tag fields are non-enumerable and do
+ * not survive the structured clone — a stored `None` reads back as `{}`, so
+ * the list-cache fix in `app/queries` applies here too. An unencodable card
+ * drops the whole persist: a partial queue would review the wrong cards.
+ */
+const toCachedCards = (cards: ReadonlyArray<ReviewCard>): Option.Option<S.Json> => {
+  const json = S.toCodecJson(S.Array(ReviewCard))
+  return S.encodeUnknownOption(json)([...cards])
+}
+
+/**
+ * Decodes stored queue JSON back into domain cards. Anything misshapen reads
+ * as absent, so a stale shape boots empty instead of reviewing wrong cards.
+ */
+const fromCachedCards = (cards: unknown): Option.Option<ReadonlyArray<ReviewCard>> => {
+  const json = S.toCodecJson(S.Array(ReviewCard))
+  return S.decodeUnknownOption(json)(cards)
+}
+
 const loadFailed = (error: string, retry: LoadRetry) =>
   MessageConstructors.LoadFailed({ error, retry })
 
@@ -209,6 +230,18 @@ export const DownloadFile = Command.define('DownloadFile', {
     }),
 })
 
+/**
+ * Reloads into the waiting shell. The banner offers this outside review
+ * only; the command itself never fires unprompted.
+ */
+export const ReloadApp = Command.define('ReloadApp', {
+  messages: [MessageConstructors.AppliedSwUpdate],
+  execute: Effect.sync(() => {
+    window.location.reload()
+    return MessageConstructors.AppliedSwUpdate()
+  }),
+})
+
 export const PersistReviewQueue = Command.define('PersistReviewQueue', {
   args: {
     deckId: S.Option(DeckId),
@@ -218,17 +251,60 @@ export const PersistReviewQueue = Command.define('PersistReviewQueue', {
   },
   messages: [MessageConstructors.PersistedReviewQueue],
   execute: ({ deckId, cards, dayStartUtc, lapseMinutes }) =>
-    saveReviewQueue(deckId, {
-      cards: [...cards],
-      dayStartUtc,
-      lapseMinutes,
-      cachedAt: Date.now(),
-      grades: [],
-    }).pipe(
-      Effect.map(() => MessageConstructors.PersistedReviewQueue()),
-      Effect.catch(() => Effect.succeed(MessageConstructors.PersistedReviewQueue())),
-    ),
+    Option.match(toCachedCards(cards), {
+      onNone: () => Effect.succeed(MessageConstructors.PersistedReviewQueue()),
+      onSome: (cachedCards) =>
+        saveReviewQueue(deckId, {
+          cards: cachedCards,
+          dayStartUtc,
+          lapseMinutes,
+          cachedAt: Date.now(),
+          grades: [],
+        }).pipe(
+          // Warm the media cache with the queued cards' images and audio, so a
+          // reload mid-queue offline still renders them. Best-effort: a missing
+          // Cache API or a failed add leaves the queue itself intact.
+          Effect.tap(() => warmMediaCache(cards).pipe(Effect.ignore)),
+          Effect.map(() => MessageConstructors.PersistedReviewQueue()),
+          Effect.catch(() => Effect.succeed(MessageConstructors.PersistedReviewQueue())),
+        ),
+    }),
 })
+
+/** Media URLs named in the queued cards' rendered HTML. */
+export const mediaUrlsIn = (cards: ReadonlyArray<ReviewCard>): ReadonlyArray<string> => {
+  const found = new Set<string>()
+  const pattern = /\/api\/media\/[^\s"'<>)]+/g
+  for (const card of cards) {
+    for (const html of [card.question, card.answer]) {
+      for (const match of html.matchAll(pattern)) {
+        try {
+          found.add(decodeURIComponent(match[0]))
+        } catch {
+          found.add(match[0])
+        }
+      }
+    }
+  }
+  return [...found]
+}
+
+/**
+ * Adds the queued cards' media to the worker's media cache. `Cache.addAll`
+ * fetches through the worker's own routes, so the entries land under the
+ * cache-first strategy `src/sw.ts` serves offline.
+ */
+const warmMediaCache = (cards: ReadonlyArray<ReviewCard>): Effect.Effect<void, unknown> =>
+  Effect.tryPromise({
+    try: async () => {
+      if (typeof caches === 'undefined') return
+      const urls = mediaUrlsIn(cards)
+      if (urls.length === 0) return
+      const cache = await caches.open('nook-media')
+      await cache.addAll(urls)
+    },
+    catch: (error) => error,
+  })
 
 export const LoadCachedQueue = Command.define('LoadCachedQueue', {
   args: { deckId: S.Option(DeckId) },
@@ -236,18 +312,24 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
   execute: ({ deckId }) =>
     loadReviewQueue(deckId).pipe(
       Effect.map((cached) =>
-        Option.match(cached, {
+        Option.flatMap(cached, (queue) =>
+          Option.map(fromCachedCards(queue.cards), (cards) =>
+            MessageConstructors.GotReviewQueue({
+              cards: [...cards],
+              dayStartUtc: queue.dayStartUtc,
+              lapseMinutes: queue.lapseMinutes,
+            }),
+          ),
+        ),
+      ),
+      Effect.map((restored) =>
+        Option.match(restored, {
           onNone: () =>
             loadFailed(
               'Could not load the review queue. Check the connection and try again.',
               'reviewQueue',
             ),
-          onSome: (queue) =>
-            MessageConstructors.GotReviewQueue({
-              cards: [...queue.cards],
-              dayStartUtc: queue.dayStartUtc,
-              lapseMinutes: queue.lapseMinutes,
-            }),
+          onSome: (message) => message,
         }),
       ),
       Effect.catch(() =>

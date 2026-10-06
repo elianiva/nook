@@ -42,7 +42,13 @@ const lastStudied = (deck: DeckSummary): string =>
 export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html => {
   const initial = deck.name.trim().charAt(0) || '?'
   return h.a(
-    [h.Href(routeToUrl({ _tag: 'DeckDetail', deckId: deck.id }))],
+    [
+      h.Href(routeToUrl({ _tag: 'DeckDetail', deckId: deck.id })),
+      // Hover and keyboard focus warm the detail Query, so the deck page
+      // opens with data while its refresh runs.
+      h.OnMouseEnter(Message.PrefetchedDeckDetail({ deckId: deck.id })),
+      h.OnFocus(Message.PrefetchedDeckDetail({ deckId: deck.id })),
+    ],
     [
       h.div(
         [h.Class('flex items-center gap-3 rounded-[14px] border-0 bg-[var(--theme-block)] p-3')],
