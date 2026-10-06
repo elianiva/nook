@@ -7,11 +7,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
+import { Option, Schema as S } from 'effect'
 import type { Url } from 'foldkit/url'
-import { CardId, DeckId, type ReviewCard } from '@nook/api'
+import { CardId, DeckId, ReviewCard } from '@nook/api'
+import type { ReviewCard as ReviewCardData } from '@nook/api'
 import { Message, seedModel } from '../src/app/model'
 import type { Model } from '../src/app/model'
+import { mediaUrlsIn } from '../src/app/api-commands'
 import { init, update } from '../src/app/update'
 
 const url = (pathname: string): Url => ({
@@ -23,7 +25,7 @@ const url = (pathname: string): Url => ({
   hash: Option.none(),
 })
 
-const card = (id: string, state: ReviewCard['state'] = 'review'): ReviewCard => ({
+const card = (id: string, state: ReviewCardData['state'] = 'review'): ReviewCardData => ({
   cardId: CardId.make(id),
   deckId: DeckId.make('deck-a'),
   noteId: `note-${id}`,
@@ -37,7 +39,7 @@ const card = (id: string, state: ReviewCard['state'] = 'review'): ReviewCard => 
   difficulty: 5,
 })
 
-const reviewing = (cards: ReadonlyArray<ReviewCard>): Model => {
+const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
   const started = seedModel(url('/review'))
   const queued = update(
     started,
@@ -119,5 +121,46 @@ describe('review session', () => {
     const loaded = init(url('/review'))
     const fetch = (loaded.commands ?? []).find((command) => command.name === 'FetchReviewQueue')
     expect(fetch).toBeDefined()
+  })
+
+  it('finds the queued cards media for the offline cache warm', () => {
+    const withMedia: ReviewCardData = {
+      ...card('c1'),
+      question: '<img src="/api/media/cat.jpg">',
+      answer: 'FrontSide<hr><audio src="/api/media/hello%20world.mp3" controls>',
+    }
+    const plain = card('c2')
+    expect(mediaUrlsIn([withMedia, plain])).toEqual([
+      '/api/media/cat.jpg',
+      '/api/media/hello world.mp3',
+    ])
+    expect(mediaUrlsIn([plain])).toEqual([])
+    // One entry per URL no matter how many cards name it.
+    expect(mediaUrlsIn([withMedia, withMedia])).toEqual([
+      '/api/media/cat.jpg',
+      '/api/media/hello world.mp3',
+    ])
+  })
+
+  it('keeps an Option-carrying card through a clone-shaped trip', () => {
+    // `ReviewCard.dueAt` is an `Option`, whose tag fields do not survive the
+    // structured clone — the same fault that emptied every cached deck. The
+    // queue persist encodes to plain JSON first, so a clone in between must
+    // not lose the card.
+    const withDue: ReviewCardData = {
+      ...card('c1'),
+      dueAt: Option.some('2026-10-06T00:00:00Z'),
+    }
+    const json = S.toCodecJson(S.Array(ReviewCard))
+    const stored = S.encodeUnknownOption(json)([withDue, card('c2')])
+    expect(Option.isSome(stored)).toBe(true)
+    if (Option.isSome(stored)) {
+      const cloned = JSON.parse(JSON.stringify(stored.value)) as unknown
+      const decoded = S.decodeUnknownOption(json)(cloned)
+      expect(Option.isSome(decoded)).toBe(true)
+      if (Option.isSome(decoded)) {
+        expect(decoded.value).toEqual([withDue, card('c2')])
+      }
+    }
   })
 })

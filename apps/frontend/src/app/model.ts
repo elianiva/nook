@@ -22,9 +22,12 @@ import {
   AppSettings,
   CardId,
   DEFAULT_SETTINGS,
+  DeckDetail,
   DeckId,
+  DeckSummary,
   Grade,
   ImportId,
+  Overview,
   ReviewAccepted,
   ReviewCard,
 } from '@nook/api'
@@ -221,6 +224,18 @@ export const ImportJobMeta = S.Struct({
 })
 export type ImportJobMeta = typeof ImportJobMeta.Type
 
+/**
+ * One restored query answer, decoded and ready to seed its Query. `update`
+ * folds each answer into the matching Query Model as `Success`, so a cold
+ * boot offline shows the last cached data before the route loads run.
+ */
+export const RestoredAnswer = S.Union([
+  S.Struct({ kind: S.Literal('overview'), value: Overview }),
+  S.Struct({ kind: S.Literal('decks'), value: S.Array(DeckSummary) }),
+  S.Struct({ kind: S.Literal('deckDetail'), deckId: DeckId, value: DeckDetail }),
+])
+export type RestoredAnswer = typeof RestoredAnswer.Type
+
 /** Where an Import is, for the panel to name. `running` means the worker should be up. */
 export const ImportPhase = S.Literals([
   'idle',
@@ -289,6 +304,8 @@ export const Model = S.Struct({
   hints: Hints,
   /** The last fetch or save that failed, with a retry for its route. `None` when everything answers. */
   notice: S.Option(LoadNotice),
+  /** A newer shell waits in the worker. The banner offers the reload; never forced during review. */
+  swUpdateReady: S.Boolean,
 })
 export type Model = typeof Model.Type
 
@@ -305,6 +322,7 @@ export const seedModel = (url: Url.Url): Model => ({
   theme: readTheme(),
   hints: initHints(),
   notice: Option.none(),
+  swUpdateReady: false,
 })
 
 export const Message = defineMessageUnion({
@@ -323,6 +341,8 @@ export const Message = defineMessageUnion({
   ClickedRetryOverview: {},
   ClickedRetryDecks: {},
   ClickedRetryDeckDetail: { deckId: DeckId },
+  /** Hover or focus warmed a deck link: load its detail while it is still missing. */
+  PrefetchedDeckDetail: { deckId: DeckId },
   /** A fetch or save failed. The notice carries the retry. */
   LoadFailed: { error: S.String, retry: LoadRetry },
   /** The Learner pressed retry on the notice banner. */
@@ -353,6 +373,8 @@ export const Message = defineMessageUnion({
   ClickedRetryUndo: {},
   /** The browser regained its network. Offline grades flush. */
   RegainedNetwork: {},
+  /** The network returned or the tab became visible: refresh the shown queries. */
+  RevalidateVisible: {},
   /** The Learner asked for the collection file. */
   ClickedExport: {},
   /** The collection arrived, ready to download. */
@@ -377,6 +399,14 @@ export const Message = defineMessageUnion({
   CancelledImportSelect: {},
   /** Boot found a stored Import to resume, or none. */
   RestoredImportJob: { job: S.Option(ImportJobMeta) },
+  /** Boot found cached list answers to seed the Queries, possibly none. */
+  RestoredCachedQueries: { answers: S.Array(RestoredAnswer) },
+  /** A newer shell is cached and waits for the next load. Never force-reloads. */
+  ServiceWorkerAvailable: {},
+  /** The Learner accepted the waiting shell: reload into it. */
+  ClickedReloadApp: {},
+  /** The reload was requested. The page unloads; nothing reads this. */
+  AppliedSwUpdate: {},
   /** The Import worker opened the archive, or moved on to writing its rows. */
   ImportWorkerPhase: { phase: S.Literals(['reading', 'writing']) },
   /** The worker answered with how far the running Import has come. */
