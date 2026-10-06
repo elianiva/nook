@@ -30,14 +30,14 @@ export type RenderInfo = FoldkitTooltip.RenderInfo
 
 export type InitConfig = FoldkitTooltip.InitConfig
 
-/** Hover-to-show delay in milliseconds. Matches the shadcn reference
- *  `TooltipProvider` default (`delay = 0`): tooltips appear immediately on
- *  hover/focus. Pass `showDelay` (e.g. `Duration.millis(400)` or `'400 millis'`)
- *  to wait before revealing. */
-export const DEFAULT_SHOW_DELAY = 0
+/** Hover-to-show delay: 250ms, so a passing pointer does not flash every hint
+ *  on the way by. Only hover waits — the foldkit Tooltip shows focus at once,
+ *  and a touch tap arrives as focus (never as hover), so mobile stays
+ *  tap-to-show with no delay and no hover involved. */
+export const DEFAULT_SHOW_DELAY = 250
 
-/** Create an initial tooltip model. Defaults the delay to `0` (immediate),
- *  matching the shadcn base tooltip. Any caller-supplied `showDelay` wins. */
+/** Create an initial tooltip model. Defaults the hover delay to
+ *  `DEFAULT_SHOW_DELAY` (250ms). Any caller-supplied `showDelay` wins. */
 export const init = (config: InitConfig): Model =>
   FoldkitTooltip.init({ showDelay: DEFAULT_SHOW_DELAY, ...config })
 
