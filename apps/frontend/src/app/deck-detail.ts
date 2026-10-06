@@ -16,7 +16,6 @@ import { badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
-import { separator } from '@/components/ui/separator'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
@@ -94,7 +93,7 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
         [
           h.span([], [`stability ${card.stability.toFixed(1)}d`]),
           h.span([], ['·']),
-          h.span([], [`difficulty ${card.difficulty}/10`]),
+          h.span([], [`difficulty ${card.difficulty.toFixed(1)}/10`]),
         ],
       ),
     ],
@@ -201,29 +200,11 @@ const deckNotFound = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
 
 const deckBody = (detail: DeckDetail, h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
   header(detail, h),
-  h.div(
-    [h.Class('flex items-center justify-between')],
-    [
-      h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
-      h.span([h.Class('text-[11px] text-muted-foreground')], ['scheduling state only']),
-    ],
-  ),
+  h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
   Card<Message>(
     { className: 'py-0' },
     detail.cards.map((card, index) => cardRow(card, index, h)),
     h,
-  ),
-  h.div(
-    [h.Class('px-1')],
-    [
-      separator<Message>({}, h),
-      h.p(
-        [h.Class('py-2 text-[11px] leading-relaxed text-muted-foreground')],
-        [
-          'Stability is the days a Card survives at your desired recall rate; difficulty runs 1–10. Both belong to FSRS — tune them through Settings, not here.',
-        ],
-      ),
-    ],
   ),
 ]
 

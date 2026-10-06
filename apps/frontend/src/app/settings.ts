@@ -23,26 +23,21 @@
  */
 
 import { Option } from 'effect'
-import type { Attribute, Html, HtmlBuilder } from 'foldkit/html'
+import type { Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Download, RotateCcw, Save } from 'lucide'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
-import { separator } from '@/components/ui/separator'
 import { switch_ } from '@/components/ui/switch'
 import { textarea } from '@/components/ui/textarea'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { readTheme, themeKeys, themeMeta } from '@/lib/theme'
 import { Message } from './model'
-import type { Model, SettingsDraft } from './model'
+import type { HintSlot, Model, SettingsDraft } from './model'
+import { hint } from './hints'
 
 type Child = Html | string
 
-const section = (
-  title: string,
-  description: string,
-  children: ReadonlyArray<Child>,
-  h: HtmlBuilder<Message>,
-): Html =>
+const section = (title: string, children: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
   h.div(
     [h.Class('flex flex-col gap-2.5')],
     [
@@ -50,21 +45,19 @@ const section = (
         [h.Class('text-[11px] font-bold tracking-[2.2px] text-[var(--theme-sub)] uppercase')],
         [title],
       ),
-      h.p([h.Class('text-xs leading-relaxed text-[var(--theme-sub)]')], [description]),
       ...children,
     ],
   )
 
 /**
- * One settings row: a borderless `--theme-block` field with an ink label, a
- * muted hint, and a white control. The mockups render every number input,
- * select, and toggle as its own block; the weights textarea keeps the same
- * treatment so the form reads as one rhythm.
+ * One settings row: a borderless `--theme-block` field with an ink label and
+ * a white control. The mockups render every number input, select, and toggle
+ * as its own block; the weights textarea keeps the same treatment so the
+ * form reads as one rhythm.
  */
 const fieldBlockClass = 'flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3.5'
 
 const fieldLabelClass = 'text-[13px] font-semibold leading-none'
-const fieldHintClass = 'text-xs leading-relaxed text-[var(--theme-sub)]'
 
 /** White control inside a field block: no outline, ink text, 16px text. */
 const fieldControlClass =
@@ -73,14 +66,19 @@ const fieldControlClass =
 const fieldHeader = (
   id: string,
   labelText: string,
-  description: string | undefined,
   h: HtmlBuilder<Message>,
+  hinted?: Readonly<{ slot: HintSlot; text: string; model: Model }>,
 ): Html =>
   h.div(
     [h.Class('flex flex-col gap-1')],
     [
-      h.label([h.For(id), h.Class(fieldLabelClass)], [labelText]),
-      ...(description === undefined ? [] : [h.p([h.Class(fieldHintClass)], [description])]),
+      h.label(
+        [h.For(id), h.Class(fieldLabelClass)],
+        [
+          labelText,
+          ...(hinted === undefined ? [] : [' ', hint(hinted.slot, hinted.text, hinted.model, h)]),
+        ],
+      ),
     ],
   )
 
@@ -94,22 +92,19 @@ const numberField = (
   labelText: string,
   value: number,
   toMessage: (value: string) => Message,
-  description: string | undefined,
   step: string,
   extra: Readonly<{
     min?: string
     max?: string
     inputMode?: string
-    hintId?: string
   }>,
   h: HtmlBuilder<Message>,
-): Html => {
-  const describedBy: ReadonlyArray<Attribute<Message>> =
-    extra.hintId === undefined ? [] : [h.AriaDescribedBy(extra.hintId)]
-  return h.div(
+  hinted?: Readonly<{ slot: HintSlot; text: string; model: Model }>,
+): Html =>
+  h.div(
     [h.Class(fieldBlockClass)],
     [
-      fieldHeader(id, labelText, description, h),
+      fieldHeader(id, labelText, h, hinted),
       h.input([
         h.Id(id),
         h.Type('number'),
@@ -119,68 +114,71 @@ const numberField = (
         ...(extra.min === undefined ? [] : [h.Min(extra.min)]),
         ...(extra.max === undefined ? [] : [h.Max(extra.max)]),
         ...(extra.inputMode === undefined ? [] : [h.InputMode(extra.inputMode)]),
-        ...describedBy,
         h.Class(numberInputClass),
       ]),
     ],
   )
-}
 
-const fsrsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
+const fsrsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
   section(
     'FSRS scheduling',
-    'How the scheduler spaces Reviews. Stability and difficulty stay with FSRS — these are the only dials.',
     [
       numberField(
         'desired-retention',
         'Desired retention',
         draft.desiredRetention,
         (value) => Message.EditedRetention({ value }),
-        'Target recall rate, 0.70–0.95',
         '0.01',
-        { min: '0.7', max: '0.95', inputMode: 'decimal', hintId: 'desired-retention-hint' },
+        { min: '0.7', max: '0.95', inputMode: 'decimal' },
         h,
+        { slot: 'desired-retention', text: 'Target recall rate, 0.70–0.95.', model },
       ),
-      textarea<Message>(
-        {
-          id: 'fsrs-weights',
-          label: 'FSRS weights (advanced)',
-          description: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
-          value: draft.weightsText,
-          onInput: (value) => Message.EditedWeights({ value }),
-          rows: 3,
-          wrapperClass: fieldBlockClass,
-          labelClass: 'text-[13px] font-semibold leading-none',
-          descriptionClass: 'text-xs text-[var(--theme-sub)]',
-          className: 'border-0 bg-white font-semibold shadow-none outline-none md:text-sm',
-        },
-        h,
+      h.div(
+        [h.Class(fieldBlockClass)],
+        [
+          fieldHeader('fsrs-weights', 'FSRS weights (advanced)', h, {
+            slot: 'fsrs-weights',
+            text: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
+            model,
+          }),
+          textarea<Message>(
+            {
+              id: 'fsrs-weights',
+              label: 'FSRS weights (advanced)',
+              value: draft.weightsText,
+              onInput: (value) => Message.EditedWeights({ value }),
+              rows: 3,
+              wrapperClass: 'gap-0',
+              labelClass: 'sr-only',
+              className: 'border-0 bg-white font-semibold shadow-none outline-none md:text-sm',
+            },
+            h,
+          ),
+        ],
       ),
       numberField(
         'maximum-interval',
         'Maximum interval',
         draft.maximumInterval,
         (value) => Message.EditedMaximumInterval({ value }),
-        'Cap on any interval, in days',
         '1',
         { min: '1', inputMode: 'numeric' },
         h,
+        { slot: 'maximum-interval', text: 'Cap on any interval, in days.', model },
       ),
     ],
     h,
   )
 
-const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
+const defaultsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
   section(
     'Deck defaults',
-    'Daily limits for every deck unless a deck overrides them later.',
     [
       numberField(
         'new-per-day',
         'New Cards per day',
         draft.newPerDay,
         (value) => Message.EditedNewPerDay({ value }),
-        undefined,
         '1',
         { min: '0', inputMode: 'numeric' },
         h,
@@ -190,7 +188,6 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         'Reviews per day',
         draft.reviewsPerDay,
         (value) => Message.EditedReviewsPerDay({ value }),
-        undefined,
         '1',
         { min: '0', inputMode: 'numeric' },
         h,
@@ -200,7 +197,6 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
         'Lapse minutes',
         draft.lapseMinutes,
         (value) => Message.EditedLapseMinutes({ value }),
-        'Minutes before an Again Card returns this session',
         '1',
         { min: '1', inputMode: 'numeric' },
         h,
@@ -211,26 +207,28 @@ const defaultsSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
 
 const rolloverOptions = Array.from({ length: 24 }, (_, hour) => `${hour}:00`)
 
-const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
+const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
   section(
     'Behaviour',
-    'What review sessions feel like and when the day rolls over.',
     [
       h.div(
         [h.Class(fieldBlockClass)],
         [
-          switch_<Message>(
-            {
-              id: 'tap-to-reveal',
-              label: 'Tap anywhere to reveal',
-              description: 'Reveal the answer with a tap, not just the button',
-              isChecked: draft.tapToReveal,
-              onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
-              className: 'border-0 data-checked:bg-[var(--theme-tint)]',
-              labelClass: 'text-[13px] font-semibold leading-none',
-              descriptionClass: 'text-xs text-[var(--theme-sub)]',
-            },
-            h,
+          h.div(
+            [h.Class('flex items-center gap-1.5')],
+            [
+              switch_<Message>(
+                {
+                  id: 'tap-to-reveal',
+                  label: 'Tap anywhere to reveal',
+                  isChecked: draft.tapToReveal,
+                  onToggle: (isChecked) => Message.ToggledTapToReveal({ isChecked }),
+                  className: 'border-0 data-checked:bg-[var(--theme-tint)]',
+                  labelClass: 'text-[13px] font-semibold leading-none',
+                },
+                h,
+              ),
+            ],
           ),
         ],
       ),
@@ -239,13 +237,7 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
         [
           h.div(
             [h.Class('flex flex-col gap-1')],
-            [
-              h.label([h.For('rollover-hour'), h.Class(fieldLabelClass)], ['Day rollover']),
-              h.p(
-                [h.Class(fieldHintClass)],
-                ['When today ends: reviews before this hour count toward yesterday'],
-              ),
-            ],
+            [h.label([h.For('rollover-hour'), h.Class(fieldLabelClass)], ['Day rollover'])],
           ),
           nativeSelect<Message>(
             {
@@ -259,7 +251,6 @@ const behaviourSection = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =
               ),
               labelClass: 'sr-only',
               className: 'h-10 border-0 bg-white font-semibold shadow-none outline-none',
-              descriptionClass: 'text-xs text-[var(--theme-sub)]',
             },
             h,
           ),
@@ -320,7 +311,6 @@ const appearanceSection = (h: HtmlBuilder<Message>): Html => {
   const current = readTheme()
   return section(
     'Appearance',
-    'A pastel tint for the dashboard hero and today\u2019s activity bar. Applies at once.',
     [
       h.div(
         [h.Class('flex items-center gap-2.5')],
@@ -365,13 +355,12 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
         ]
       : []),
     appearanceSection(h),
-    fsrsSection(draft, h),
-    defaultsSection(draft, h),
-    behaviourSection(draft, h),
+    fsrsSection(draft, model, h),
+    defaultsSection(draft, model, h),
+    behaviourSection(draft, model, h),
     saveBar(h),
     section(
       'Collection',
-      'Your data, out. One JSON file with Decks, Notes, Cards, Schedules, and the Review log.',
       [
         h.div(
           [h.Class(fieldBlockClass)],
@@ -390,18 +379,6 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
         ),
       ],
       h,
-    ),
-    h.div(
-      [h.Class('px-1')],
-      [
-        separator<Message>({}, h),
-        h.p(
-          [h.Class('py-2 text-[11px] leading-relaxed text-[var(--theme-sub)]')],
-          [
-            'FSRS-6 with 21 weights. Saved settings apply to future Reviews only — existing Schedules keep their intervals.',
-          ],
-        ),
-      ],
     ),
   ]
 }

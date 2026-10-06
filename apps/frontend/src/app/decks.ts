@@ -228,7 +228,7 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
             h.div(
               [
                 h.Class(
-                  'pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground',
+                  'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground',
                 ),
               ],
               [icon(h, Search, 'size-4')],
@@ -242,7 +242,8 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
                 placeholder: 'Search decks…',
                 value: model.decksQuery,
                 onInput: (value) => Message.TypedDecksQuery({ value }),
-                className: 'pl-8',
+                className:
+                  'h-11 rounded-[14px] border-0 bg-[var(--theme-block)] pl-9 text-base shadow-none',
               },
               h,
             ),
@@ -254,6 +255,7 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
             isDisabled: model.importState.active,
             variant: 'outline',
             size: 'icon-lg',
+            className: 'h-11 w-11 rounded-[14px] border-0 bg-[var(--theme-block)] shadow-none',
             attributes: [h.AriaLabel('Import deck')],
           },
           [icon(h, Upload, 'size-4')],

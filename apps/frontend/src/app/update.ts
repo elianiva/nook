@@ -31,6 +31,7 @@ import {
 } from './api-commands'
 import { ClearImportJob, PrepareImport, RestoreImportJob } from './import-commands'
 import { ApplyTheme } from './theme-commands'
+import { foldHintMessage } from './hints'
 import type { LoadRetry } from './model'
 import {
   Message,
@@ -669,4 +670,6 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ClickedResetSettings: () => ({
       model: { ...model, settingsDraft: draftFromSettings(model.settings) },
     }),
+
+    GotHintMessage: ({ slot, message }) => foldHintMessage(model, slot, message),
   })

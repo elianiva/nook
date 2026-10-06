@@ -31,6 +31,33 @@ import {
 import { ImportProgress } from '@/lib/import-worker-protocol'
 import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
+import * as Tooltip from '@/components/ui/tooltip'
+
+/** Hint slot ids for the settings page tooltips. */
+export const hintSlots = [
+  'desired-retention',
+  'fsrs-weights',
+  'maximum-interval',
+  'new-per-day',
+  'reviews-per-day',
+  'lapse-minutes',
+  'tap-to-reveal',
+  'day-rollover',
+  'section-fsrs',
+  'section-defaults',
+  'section-behaviour',
+  'section-appearance',
+  'section-collection',
+] as const
+export type HintSlot = (typeof hintSlots)[number]
+
+/** One Foldkit Tooltip Model per hint slot, keyed by slot id. */
+export const Hints = S.Record(S.String, Tooltip.Model)
+export type Hints = typeof Hints.Type
+
+/** Every hint starts hidden. */
+export const initHints = (): Hints =>
+  Object.fromEntries(hintSlots.map((slot) => [slot, Tooltip.init({ id: `hint-${slot}` })])) as Hints
 
 /** Editable copy of the settings form. The text field for FSRS weights stays a string so half-typed input never corrupts the numeric model. */
 export const SettingsDraft = S.Struct({
@@ -253,6 +280,8 @@ export const Model = S.Struct({
   settingsDraft: SettingsDraft,
   /** The Import the Decks page is showing: what is running, or what last ran. */
   importState: ImportState,
+  /** One hint tooltip Model per settings slot. Local-only; never saved. */
+  hints: Hints,
   /** The last fetch or save that failed, with a retry for its route. `None` when everything answers. */
   notice: S.Option(LoadNotice),
 })
@@ -268,6 +297,7 @@ export const seedModel = (url: Url.Url): Model => ({
   settings: DEFAULT_SETTINGS,
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
+  hints: initHints(),
   notice: Option.none(),
 })
 
@@ -372,5 +402,7 @@ export const Message = defineMessageUnion({
   AppliedTheme: {},
   ClickedSaveSettings: {},
   ClickedResetSettings: {},
+  /** A settings hint tooltip moved (hover, focus, leave, Escape). */
+  GotHintMessage: { slot: S.String, message: Tooltip.Message },
 })
 export type Message = typeof Message.Type
