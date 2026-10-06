@@ -195,24 +195,26 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Href(routeToUrl(tabToRoute(tab))),
       h.Class(
         cn(
-          'flex flex-1 items-center justify-center gap-2 rounded-full py-3.5 text-xs font-extrabold tracking-[1.6px] uppercase',
-          active ? 'bg-white text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
+          'relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold tracking-[1.2px] uppercase transition-colors duration-200',
+          active ? 'text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
         ),
       ),
       ...(active ? [h.AriaCurrent('page')] : []),
     ],
-    [icon(h, tabIcon[tab], 'size-6'), tabLabel[tab].toUpperCase()],
+    [icon(h, tabIcon[tab], 'size-5'), tabLabel[tab].toUpperCase()],
   )
 }
 
 /**
- * Floating segmented tab bar: a solid `--theme-block` track with a white
- * active pill, floating over a soft bottom fade so content melts underneath
- * instead of ending at a block. Tabs use inline icon-plus-label rows, and
- * the active state is the pill itself — no separate indicator dot.
+ * Floating segmented tab bar: a solid `--theme-block` track with one shared
+ * white pill that slides under the active tab (`transition-[left]`), floating
+ * over a soft bottom fade so content melts underneath instead of ending at a
+ * block. Tabs are transparent icon-plus-label rows above the pill; only their
+ * colour marks the active one.
  */
-const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.nav(
+const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const activeIndex = NAV_TABS.indexOf(routeToTab(model.route))
+  return h.nav(
     [
       h.AriaLabel('Sections'),
       h.Class(
@@ -223,13 +225,29 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html =>
       h.div(
         [
           h.Class(
-            'pointer-events-auto mx-auto flex w-full max-w-md items-center rounded-[28px] bg-[var(--theme-block)] p-2',
+            'pointer-events-auto relative mx-auto flex w-full max-w-md items-center rounded-[24px] bg-[var(--theme-block)] p-1.5',
           ),
         ],
-        NAV_TABS.map((tab) => tabLink(model, tab, h)),
+        [
+          h.span(
+            [
+              h.Class(
+                'absolute top-1.5 bottom-1.5 rounded-full bg-white transition-[left] duration-300 ease-out motion-reduce:transition-none',
+              ),
+              h.Style({
+                left: `calc(6px + ${activeIndex} * (100% - 12px) / 3)`,
+                width: 'calc((100% - 12px) / 3)',
+              }),
+              h.AriaHidden(true),
+            ],
+            [],
+          ),
+          ...NAV_TABS.map((tab) => tabLink(model, tab, h)),
+        ],
       ),
     ],
   )
+}
 
 /** The last failed fetch or save, with a retry that runs it again. Clears on the next answer. */
 const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
