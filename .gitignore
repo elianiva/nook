@@ -7,3 +7,4 @@ dist/
 *.tgz
 .DS_Store
 .amp/in/
+.amp/portals/
