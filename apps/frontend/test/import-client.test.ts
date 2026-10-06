@@ -61,6 +61,12 @@ describe('worker events as Messages', () => {
     ])
   })
 
+  it('maps a read stage event', () => {
+    expect(toMessages({ type: 'readStage', stage: 'collection' })).toEqual([
+      Message.ReportedImportReadStage({ stage: 'collection' }),
+    ])
+  })
+
   it('maps a progress event', () => {
     const progress = {
       notesImported: 2,

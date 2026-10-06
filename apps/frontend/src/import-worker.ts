@@ -27,6 +27,7 @@ import type {
 } from '@nook/api'
 import type {
   ImportProgress,
+  ImportReadStage,
   ImportWorkerCommand,
   ImportWorkerEvent,
 } from './lib/import-worker-protocol'
@@ -108,6 +109,9 @@ const toSentence = (error: unknown): string => {
   return 'Could not import that archive. Check the connection and try again.'
 }
 
+/** Forwards the reader's open steps to the app as they happen. */
+const reportStage = (stage: ImportReadStage): void => post({ type: 'readStage', stage })
+
 /** Reads the archive and writes it, reporting every step to the app. */
 const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
   Effect.scoped(
@@ -117,7 +121,7 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
       const rpc = yield* NookRpc
       const client = yield* HttpClient.HttpClient
 
-      const opened = yield* archive.open(command.blob)
+      const opened = yield* archive.open(command.blob, reportStage)
       const manifest = yield* opened.manifest
       const startPayload: ImportStartPayload = {
         id: command.id,

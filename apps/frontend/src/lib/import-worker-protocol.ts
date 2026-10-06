@@ -26,6 +26,23 @@ export type ImportWorkerCommand = {
 /** The two steps the worker reports while it runs. */
 export type ImportWorkerPhase = 'reading' | 'writing'
 
+/**
+ * Where the read of an archive has reached. The worker forwards the reader's
+ * own open steps (`AnkiArchive` names them the same way), so the panel names
+ * what the run is doing while a large archive opens instead of holding on one
+ * line. `database` is the step a damaged collection fails at; `manifest`
+ * counts the Notes and Cards.
+ */
+export const ImportReadStage = Schema.Literals([
+  'opening',
+  'listing',
+  'collection',
+  'mediaIndex',
+  'database',
+  'manifest',
+])
+export type ImportReadStage = typeof ImportReadStage.Type
+
 /** The numbers the Import panel shows, as the Worker reports them. */
 export const ImportProgress = Schema.Struct({
   notesImported: Schema.Number,
@@ -40,6 +57,7 @@ export type ImportProgress = typeof ImportProgress.Type
 /** What the worker tells the app. `progress` arrives once per written batch. */
 export type ImportWorkerEvent =
   | { readonly type: 'phase'; readonly phase: ImportWorkerPhase }
+  | { readonly type: 'readStage'; readonly stage: ImportReadStage }
   | { readonly type: 'progress'; readonly progress: ImportProgress }
   | { readonly type: 'done'; readonly progress: ImportProgress }
   | { readonly type: 'failed'; readonly error: string }

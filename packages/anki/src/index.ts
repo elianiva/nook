@@ -27,7 +27,7 @@
  */
 
 export { AnkiArchive, layer } from './AnkiArchive'
-export type { OpenedArchive, OpenedMedia } from './AnkiArchive'
+export type { ArchiveReadStage, OpenedArchive, OpenedMedia } from './AnkiArchive'
 export { AnkiSqliteMemory, sourceMemory } from './SqliteArchive'
 export type { AnkiSqliteSource } from './SqliteArchive'
 export { AnkiArchiveTooLarge, AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'

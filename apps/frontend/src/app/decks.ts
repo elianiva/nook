@@ -17,7 +17,7 @@ import { button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { icon } from '@/lib/icons'
 import type { DeckSummary } from '@nook/api'
-import type { ImportProgress } from '@/lib/import-worker-protocol'
+import type { ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
 import { deckRow } from './home'
 import { errorPanel, loadingPanel } from './load-state'
 import { Message } from './model'
@@ -49,6 +49,26 @@ const percentWritten = (progress: ImportProgress): number => {
   )
 }
 
+/** What the panel names while the archive opens, per step the worker reported. */
+const readStageText = (stage: ImportReadStage | undefined, filename: string): string => {
+  switch (stage) {
+    case 'opening':
+      return `Opening ${filename}…`
+    case 'listing':
+      return `Listing ${filename}…`
+    case 'collection':
+      return `Reading the collection in ${filename}…`
+    case 'mediaIndex':
+      return `Reading the media index in ${filename}…`
+    case 'database':
+      return `Opening the collection in ${filename}…`
+    case 'manifest':
+      return `Counting notes and cards in ${filename}…`
+    default:
+      return `Reading ${filename}…`
+  }
+}
+
 /**
  * The Import the Decks page is watching, or the last one it watched.
  *
@@ -61,13 +81,18 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   const state = model.importState
   if (state.phase === 'idle') return h.empty
 
+  const stage = Option.match(state.readStage, {
+    onNone: () => undefined,
+    onSome: (value) => value,
+  })
+
   const header = (() => {
     switch (state.phase) {
       case 'preparing':
-        return { tone: 'text-muted-foreground', text: 'Preparing the archive…' }
+        return { tone: 'text-muted-foreground', text: 'Choose an archive to import…' }
       case 'running':
       case 'reading':
-        return { tone: 'text-muted-foreground', text: `Reading ${state.filename}…` }
+        return { tone: 'text-muted-foreground', text: readStageText(stage, state.filename) }
       case 'writing':
         return { tone: 'text-muted-foreground', text: `Importing ${state.filename}…` }
       case 'done':

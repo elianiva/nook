@@ -31,7 +31,7 @@ import {
   ReviewAccepted,
   ReviewCard,
 } from '@nook/api'
-import { ImportProgress } from '@/lib/import-worker-protocol'
+import { ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
 import { readTheme } from '@/lib/theme'
 import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
@@ -301,6 +301,12 @@ export const ImportState = S.Struct({
   active: S.Boolean,
   /** Where the run is: preparing the file, reading it, writing rows, or an end. */
   phase: ImportPhase,
+  /**
+   * Where the read of the archive has reached, while the phase is `reading`.
+   * The worker reports each open step as it happens, so the panel names what
+   * the run is doing. `None` before the first step arrives and after reading.
+   */
+  readStage: S.Option(ImportReadStage),
   /** The last counts the worker reported, for the progress bar. */
   status: S.Option(ImportProgress),
   /** Why the last run failed, as one sentence for the Learner. */
@@ -313,6 +319,7 @@ export const idleImport: ImportState = {
   filename: '',
   active: false,
   phase: 'idle',
+  readStage: Option.none(),
   status: Option.none(),
   error: Option.none(),
 }
@@ -449,6 +456,8 @@ export const Message = defineMessageUnion({
   AppliedSwUpdate: {},
   /** The Import worker opened the archive, or moved on to writing its rows. */
   ImportWorkerPhase: { phase: S.Literals(['reading', 'writing']) },
+  /** The worker reached another step of opening the archive. */
+  ReportedImportReadStage: { stage: ImportReadStage },
   /** The worker answered with how far the running Import has come. */
   ReportedImport: { progress: ImportProgress },
   /** The Import wrote every Note and Card it found. */

@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import type * as Scope from 'effect/Scope'
 import { BlobReader, Uint8ArrayWriter, ZipReader } from '@zip.js/zip.js'
+import type { Entry } from '@zip.js/zip.js'
 import { decompress } from 'fzstd'
 import { AnkiCorruptArchive } from './AnkiErrors'
 
@@ -56,6 +57,26 @@ const notAnArchive = new AnkiCorruptArchive({
 })
 
 /**
+ * The SQLite journal mode the collection database asks for.
+ *
+ * Byte 18 of a SQLite header names the file format's journal mode: `1` means
+ * rollback, `2` means WAL. Anki writes WAL, which is fine on disk next to its
+ * `-wal` file and fine under `node:sqlite`, which opens a copy of the file.
+ * But the browser path imports the bytes into wa-sqlite's `MemoryVFS`, where
+ * there is no `-wal` file, so SQLite opens the database and then fails every
+ * query with `unable to open database file`. Downgrading a WAL-mode header to
+ * rollback is safe exactly because there is no `-wal` file: the image is
+ * already self-consistent, and the byte only says where SQLite should look
+ * for frames that do not exist.
+ */
+const rollbackJournalMode = (bytes: Uint8Array): void => {
+  if (bytes.length > 19 && bytes[18] === 2 && bytes[19] === 2) {
+    bytes[18] = 1
+    bytes[19] = 1
+  }
+}
+
+/**
  * The collection database inside an archive, ready to hand to SQLite.
  *
  * The entry is a bare zstd frame around a SQLite file. Decompression throws on
@@ -68,6 +89,7 @@ export const readCollectionBytes = (
     try: () => {
       const bytes = decompress(entry)
       blankUnicase(bytes)
+      rollbackJournalMode(bytes)
       return bytes
     },
     catch: () =>
@@ -112,19 +134,32 @@ export const readMediaFileBytes = (
   })
 
 /**
+ * An `.apkg` archive, opened for entry reads, with its entries listed once.
+ *
+ * Listing the central directory parses every entry, so doing it once per read
+ * stalls a large archive: each of Kaishi's 4354 Media files would otherwise
+ * re-list all 4358 entries before its own bytes can stream. The entries list
+ * reads eagerly, so a file that is not a zip fails here, before the caller
+ * asks for anything by name.
+ */
+export interface OpenedZip {
+  readonly reader: ZipReader<Blob>
+  readonly entries: ReadonlyArray<Entry>
+}
+
+/**
  * One named entry of an `.apkg` archive, as bytes.
  *
  * A missing name is not an error here: `meta` is absent in a legacy archive,
  * and that absence is what names the legacy format.
  */
 export const readZipEntry = (
-  reader: ZipReader<Blob>,
+  zip: OpenedZip,
   filename: string,
 ): Effect.Effect<Uint8Array | undefined, AnkiCorruptArchive> =>
   Effect.tryPromise({
     try: async () => {
-      const entries = await reader.getEntries()
-      const entry = entries.find((candidate) => candidate.filename === filename)
+      const entry = zip.entries.find((candidate) => candidate.filename === filename)
       if (entry === undefined || entry.directory) {
         return undefined
       }
@@ -140,16 +175,15 @@ export const readZipEntry = (
  * The entries list reads eagerly, so a file that is not a zip fails here,
  * before the caller asks for anything by name.
  */
-export const openZip = (
-  archive: Blob,
-): Effect.Effect<ZipReader<Blob>, AnkiCorruptArchive, Scope.Scope> =>
+export const openZip = (archive: Blob): Effect.Effect<OpenedZip, AnkiCorruptArchive, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.tryPromise({
-      try: () => {
+      try: async () => {
         const reader = new ZipReader(new BlobReader(archive))
-        return reader.getEntries().then(() => reader)
+        const entries = await reader.getEntries()
+        return { reader, entries }
       },
       catch: () => notAnArchive,
     }),
-    (reader) => Effect.promise(() => reader.close()),
+    (zip) => Effect.promise(() => zip.reader.close()),
   )

@@ -80,6 +80,15 @@ describe('Import state', () => {
     expect(writing.importState.active).toBe(true)
   })
 
+  it('names each step of the read while the archive opens', () => {
+    const reading = update(running(), Message.ImportWorkerPhase({ phase: 'reading' })).model
+    expect(Option.isNone(reading.importState.readStage)).toBe(true)
+    const listing = update(reading, Message.ReportedImportReadStage({ stage: 'listing' })).model
+    expect(some(listing.importState.readStage)).toBe('listing')
+    const writing = update(listing, Message.ImportWorkerPhase({ phase: 'writing' })).model
+    expect(Option.isNone(writing.importState.readStage)).toBe(true)
+  })
+
   it('records the counts the worker reports', () => {
     const { model } = update(running(), Message.ReportedImport({ progress }))
     expect(some(model.importState.status).notesImported).toBe(2)

@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { assert, describe, it } from '@effect/vitest'
 import { BlobWriter, Uint8ArrayReader, ZipWriter } from '@zip.js/zip.js'
 import { Effect, Stream } from 'effect'
 import { AnkiArchive, layer } from '../src/AnkiArchive'
+import type { ArchiveReadStage } from '../src/AnkiArchive'
+import { AnkiSqliteMemory } from '../src/SqliteArchive'
 import { AnkiSqliteNode } from '../src/SqliteArchiveNode'
 import { COLLECTION_ENTRY, META_ENTRY } from '../src/PackageFormat'
 import { uint32Field } from './Protobuf'
@@ -15,17 +20,73 @@ const openArchive = (archive: Blob) =>
     Effect.provide(layer(AnkiSqliteNode.source)),
   )
 
+const openArchiveMemory = (archive: Blob, onStage?: (stage: ArchiveReadStage) => void) =>
+  Effect.flatMap(AnkiArchive, (service) => service.open(archive, onStage)).pipe(
+    Effect.provide(layer(AnkiSqliteMemory.source)),
+  )
+
+/**
+ * wa-sqlite loads its engine with `fetch`, which cannot read the `.wasm` file
+ * under node. The shim serves it from disk, so the browser's memory source
+ * runs in these tests. Production bundles are unaffected: they serve the file
+ * over HTTP, where `fetch` works.
+ */
+const withWasmFetch = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> => {
+  // The package exposes no export for the `.wasm` file, so resolve it beside
+  // the module the memory source imports.
+  const require = createRequire(import.meta.url)
+  const wasm = join(
+    dirname(require.resolve('@effect/wa-sqlite/dist/wa-sqlite.mjs')),
+    'wa-sqlite.wasm',
+  )
+  const bytes = readFileSync(wasm)
+  const realFetch = globalThis.fetch
+  const shim = (input: unknown, init?: RequestInit): Promise<Response> =>
+    typeof input === 'string' && input.endsWith('.wasm')
+      ? Promise.resolve(
+          new Response(new Uint8Array(bytes), {
+            status: 200,
+            headers: { 'content-type': 'application/wasm' },
+          }),
+        )
+      : realFetch(input as URL, init)
+  return Effect.acquireUseRelease(
+    Effect.sync(() => {
+      globalThis.fetch = shim as typeof fetch
+    }),
+    () => effect,
+    () =>
+      Effect.sync(() => {
+        globalThis.fetch = realFetch
+      }),
+  )
+}
+
 /**
  * Builds the archives the real fixture cannot provide: a damaged one, or one
  * that names a format or schema nook refuses. The collection is a real SQLite
  * file, compressed and zipped the way Anki writes one, so the only difference
  * from a real archive is the thing each test is about.
  */
-const archiveOf = async (spec: CollectionSpec): Promise<Blob> => {
+const archiveOf = async (spec: CollectionSpec, wal = false): Promise<Blob> => {
   const zlib = await import('node:zlib')
   const fs = await import('node:fs')
   const filename = writeCollection(spec)
   try {
+    if (wal) {
+      // Anki writes its collection in WAL mode: the header names WAL, and the
+      // frames live in a `-wal` file Anki never ships inside the archive. The
+      // checkpoint folds every frame back into the image, so the file the
+      // archive carries is self-consistent under a WAL header, as Anki writes.
+      const { DatabaseSync } = await import('node:sqlite')
+      const db = new DatabaseSync(filename)
+      try {
+        db.exec('PRAGMA journal_mode=WAL')
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      } finally {
+        db.close()
+      }
+    }
     const collection = zlib.zstdCompressSync(fs.readFileSync(filename))
     const writer = new ZipWriter(new BlobWriter('application/zip'))
     await writer.add(META_ENTRY, new Uint8ArrayReader(uint32Field(1, 3)))
@@ -141,6 +202,69 @@ describe('AnkiArchive', () => {
         const failure = yield* openArchive(archive).pipe(Effect.flip)
         assert.strictEqual(failure._tag, 'AnkiUnsupportedArchive')
         assert.strictEqual((failure as { readonly reason: string }).reason, 'schemaTooOld')
+      }),
+    ),
+  )
+
+  it.effect('opens a WAL-mode collection through the browser source', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Anki writes its collection in WAL mode, which the browser's
+        // in-memory SQLite cannot open without its `-wal` file. The reader
+        // downgrades the header to rollback, which is safe because the archive
+        // never carries the `-wal` file.
+        const archive = yield* Effect.promise(() =>
+          archiveOf(
+            {
+              decks: [{ id: 1, name: 'Default' }],
+              noteTypes: [
+                {
+                  id: 1,
+                  name: 'Basic',
+                  fields: [{ name: 'Front' }, { name: 'Back', ord: 1 }],
+                  templates: [{ name: 'Card 1' }],
+                },
+              ],
+              notes: [{ id: 1, noteTypeId: 1, fields: ['front', 'back'] }],
+              cards: [{ id: 1, noteId: 1, deckId: 1 }],
+            },
+            true,
+          ),
+        )
+        const opened = yield* withWasmFetch(openArchiveMemory(archive))
+        const manifest = yield* opened.manifest
+        assert.strictEqual(manifest.noteCount, 1)
+        assert.strictEqual(manifest.cardCount, 1)
+      }),
+    ),
+  )
+
+  it.effect('reports each step of opening an archive', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* Effect.promise(() => archiveOf({}))
+        const stages: Array<ArchiveReadStage> = []
+        const opened = yield* withWasmFetch(
+          openArchiveMemory(archive, (stage) => {
+            stages.push(stage)
+          }),
+        )
+        assert.deepStrictEqual(stages, [
+          'opening',
+          'listing',
+          'collection',
+          'mediaIndex',
+          'database',
+        ])
+        yield* opened.manifest
+        assert.deepStrictEqual(stages, [
+          'opening',
+          'listing',
+          'collection',
+          'mediaIndex',
+          'database',
+          'manifest',
+        ])
       }),
     ),
   )

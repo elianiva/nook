@@ -40,6 +40,21 @@ export interface OpenedMedia {
 }
 
 /**
+ * Where the open of an archive has reached.
+ *
+ * The worker forwards each step to the app as it happens, so the panel names
+ * what the run is doing instead of holding on one line. `database` is the
+ * step a damaged collection fails at; `manifest` counts the Notes and Cards.
+ */
+export type ArchiveReadStage =
+  | 'opening'
+  | 'listing'
+  | 'collection'
+  | 'mediaIndex'
+  | 'database'
+  | 'manifest'
+
+/**
  * An opened archive, ready to read.
  *
  * The manifest answers how big the archive is without reading it. Notes, Cards,
@@ -60,8 +75,15 @@ export interface OpenedArchive {
 export class AnkiArchive extends Context.Service<
   AnkiArchive,
   {
-    /** Reads `archive` and returns a handle over its Notes, Cards, and Media. */
-    readonly open: (archive: Blob) => Effect.Effect<OpenedArchive, AnkiOpenError, Scope.Scope>
+    /**
+     * Reads `archive` and returns a handle over its Notes, Cards, and Media.
+     * `onStage` runs after each open step, so the caller can name what the
+     * run is doing while a large archive opens.
+     */
+    readonly open: (
+      archive: Blob,
+      onStage?: (stage: ArchiveReadStage) => void,
+    ) => Effect.Effect<OpenedArchive, AnkiOpenError, Scope.Scope>
   }
 >()('nook/anki/AnkiArchive') {}
 
@@ -141,21 +163,29 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
   Layer.effect(
     AnkiArchive,
     Effect.sync(() => {
-      const open = (archive: Blob): Effect.Effect<OpenedArchive, AnkiOpenError, Scope.Scope> =>
+      const open = (
+        archive: Blob,
+        onStage?: (stage: ArchiveReadStage) => void,
+      ): Effect.Effect<OpenedArchive, AnkiOpenError, Scope.Scope> =>
         Effect.gen(function* () {
+          onStage?.('opening')
           const zip = yield* openZip(archive)
+          onStage?.('listing')
           yield* requireFormat(yield* readZipEntry(zip, META_ENTRY))
           const collectionEntry = yield* readZipEntry(zip, COLLECTION_ENTRY)
           if (collectionEntry === undefined) {
             return yield* Effect.fail(missingCollection)
           }
+          onStage?.('collection')
           const collectionBytes = yield* readCollectionBytes(collectionEntry)
           const mediaEntry = yield* readZipEntry(zip, MEDIA_ENTRY)
+          onStage?.('mediaIndex')
           const mediaIndex =
             mediaEntry === undefined
               ? []
               : yield* requireMediaIndex(yield* readMediaBytes(mediaEntry))
 
+          onStage?.('database')
           const sql = yield* source(collectionBytes)
 
           const schemaVersion = yield* readSchemaVersion(sql).pipe(
@@ -164,6 +194,7 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
           )
 
           const manifest: Effect.Effect<AnkiManifest, AnkiReadError> = Effect.gen(function* () {
+            onStage?.('manifest')
             const [noteTypes, decks, noteCount, cardCount] = yield* Effect.all(
               [readNoteTypes(sql), readDecks(sql), countNotes(sql), countCards(sql)],
               { concurrency: 'unbounded' },

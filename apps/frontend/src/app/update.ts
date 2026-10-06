@@ -545,6 +545,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           filename,
           active: true,
           phase: 'running',
+          readStage: Option.none(),
           status: Option.none(),
           error: Option.none(),
         },
@@ -564,6 +565,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
               filename: restored.filename,
               active: true,
               phase: 'running',
+              readStage: Option.none(),
               status: Option.none(),
               error: Option.none(),
             },
@@ -583,7 +585,22 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ServiceWorkerAvailable: () => ({ model: { ...model, swUpdateReady: true } }),
 
     ImportWorkerPhase: ({ phase }) => ({
-      model: { ...model, importState: { ...model.importState, phase } },
+      model: {
+        ...model,
+        importState: {
+          ...model.importState,
+          phase,
+          // The read is over once the worker moves on; a retry starts it anew.
+          readStage: phase === 'reading' ? model.importState.readStage : Option.none(),
+        },
+      },
+    }),
+
+    ReportedImportReadStage: ({ stage }) => ({
+      model: {
+        ...model,
+        importState: { ...model.importState, readStage: Option.some(stage) },
+      },
     }),
 
     ReportedImport: ({ progress }) => ({
@@ -598,6 +615,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           filename: model.importState.filename,
           active: false,
           phase: 'done',
+          readStage: Option.none(),
           status: Option.some(progress),
           error: Option.none(),
         },

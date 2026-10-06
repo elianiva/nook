@@ -26,6 +26,8 @@ export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => 
   switch (event.type) {
     case 'phase':
       return [Message.ImportWorkerPhase({ phase: event.phase })]
+    case 'readStage':
+      return [Message.ReportedImportReadStage({ stage: event.stage })]
     case 'progress':
       return [Message.ReportedImport({ progress: event.progress })]
     case 'done':
