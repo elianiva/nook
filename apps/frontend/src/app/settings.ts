@@ -88,11 +88,12 @@ const fieldControlClass =
   'rounded-[10px] border-0 bg-white font-semibold text-[var(--theme-ink)] shadow-none tabular-nums outline-none'
 
 /**
- * Shared number-input classes: fixed narrow width, right aligned, 16px text
- * so mobile focus never zooms.
+ * Shared number-input classes: the box hugs the value, with the same padding
+ * on both sides and centred text, so the digit block sits centred. 16px text
+ * keeps mobile focus from zooming.
  */
 const numberInputClass =
-  'h-9 w-24 shrink-0 px-2.5 py-1.5 text-right text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
+  'h-9 w-20 shrink-0 px-3 py-1.5 text-center text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
   fieldControlClass
 
 const numberField = (
