@@ -106,49 +106,58 @@ const topTitle = (model: Model): string =>
 const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
   const chip = topChip(model)
   return h.div(
-    [h.Class('mx-auto flex w-full max-w-md items-center gap-2 px-3 pt-3')],
+    // Sticky within the scroll container's flow: the header stays pinned to
+    // the top of the screen while the page content slides underneath, instead
+    // of scrolling away and snapping back on direction change. `bg-background`
+    // keeps scrolled content from showing through the bar.
+    [h.Class('sticky top-0 z-30 shrink-0 bg-background')],
     [
-      showBack(model)
-        ? h.a(
-            [
-              h.Href(backHref(model)),
-              h.Class(
-                'flex size-9 items-center justify-center rounded-full bg-[var(--theme-block)] text-[var(--theme-ink)]',
-              ),
-              h.AriaLabel('Back'),
-            ],
-            [icon(h, ArrowLeft, 'size-4')],
-          )
-        : h.div(
-            [
-              h.Class(
-                'flex h-9 items-center rounded-lg bg-[var(--theme-ink)] px-2.5 text-[13px] font-extrabold tracking-tight text-white',
-              ),
-            ],
-            ['nook'],
-          ),
       h.div(
-        [h.Class('flex min-w-0 flex-1 flex-col leading-tight')],
+        [h.Class('mx-auto flex w-full max-w-md items-center gap-2 px-3 pt-3')],
         [
-          h.span(
-            [h.Class('truncate text-[17px] font-extrabold tracking-tight')],
-            [topTitle(model)],
+          showBack(model)
+            ? h.a(
+                [
+                  h.Href(backHref(model)),
+                  h.Class(
+                    'flex size-9 items-center justify-center rounded-full bg-[var(--theme-block)] text-[var(--theme-ink)]',
+                  ),
+                  h.AriaLabel('Back'),
+                ],
+                [icon(h, ArrowLeft, 'size-4')],
+              )
+            : h.div(
+                [
+                  h.Class(
+                    'flex h-9 items-center rounded-lg bg-[var(--theme-ink)] px-2.5 text-[13px] font-extrabold tracking-tight text-white',
+                  ),
+                ],
+                ['nook'],
+              ),
+          h.div(
+            [h.Class('flex min-w-0 flex-1 flex-col leading-tight')],
+            [
+              h.span(
+                [h.Class('truncate text-[17px] font-extrabold tracking-tight')],
+                [topTitle(model)],
+              ),
+              h.span([h.Class('text-[11px] font-medium text-[var(--theme-sub)]')], [topSub(model)]),
+            ],
           ),
-          h.span([h.Class('text-[11px] font-medium text-[var(--theme-sub)]')], [topSub(model)]),
+          ...(chip === undefined
+            ? []
+            : [
+                h.span(
+                  [
+                    h.Class(
+                      'shrink-0 rounded-lg bg-[var(--theme-hero)] px-2.5 py-1.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums',
+                    ),
+                  ],
+                  [chip],
+                ),
+              ]),
         ],
       ),
-      ...(chip === undefined
-        ? []
-        : [
-            h.span(
-              [
-                h.Class(
-                  'shrink-0 rounded-lg bg-[var(--theme-hero)] px-2.5 py-1.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums',
-                ),
-              ],
-              [chip],
-            ),
-          ]),
     ],
   )
 }
