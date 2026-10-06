@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
-import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api, ImportId, ImportNotFound, StorageUnavailable } from '@nook/api'
+import { ImportId, ImportNotFound, ImportsRpc, StorageUnavailable } from '@nook/api'
 import type { ImportCard, ImportManifest, ImportNote, ImportStatus } from '@nook/api'
 import { runStatements } from './batch'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
@@ -237,15 +236,15 @@ export class Imports extends Context.Service<
   )
 }
 
-export const ImportsHandlers = HttpApiBuilder.group(Api, 'imports', (handlers) =>
+export const ImportsHandlers = ImportsRpc.toLayer(
   Effect.gen(function* () {
     const imports = yield* Imports
-    return handlers.handleAll({
-      start: ({ payload }) => imports.start(payload),
-      writeBatch: ({ params, payload }) => imports.writeBatch(params.importId, payload),
-      complete: ({ params }) => imports.complete(params.importId),
-      fail: ({ params, payload }) => imports.fail(params.importId, payload.error),
-      get: ({ params }) => imports.get(params.importId),
+    return ImportsRpc.of({
+      importsStart: (payload) => imports.start(payload),
+      importsWriteBatch: ({ importId, batch }) => imports.writeBatch(importId, batch),
+      importsComplete: ({ importId }) => imports.complete(importId),
+      importsFail: ({ importId, error }) => imports.fail(importId, error),
+      importsGet: ({ importId }) => imports.get(importId),
     })
   }),
 )

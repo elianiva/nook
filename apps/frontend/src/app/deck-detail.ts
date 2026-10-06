@@ -11,18 +11,20 @@
 import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, Play } from 'lucide'
+import { CircleAlert, Pencil, Play, RotateCcw, Trash2 } from 'lucide'
 import { badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
 import { button } from '@/components/ui/button'
+import { input } from '@/components/ui/input'
+import { textarea } from '@/components/ui/textarea'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
 import { errorPanel, loadingPanel } from './load-state'
 import { Message } from './model'
-import type { Model } from './model'
+import type { DeckManage, Model } from './model'
 import { deckDetailQuery } from './queries'
 import { routeToUrl } from './routes'
 
@@ -198,7 +200,12 @@ const deckNotFound = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
   ),
 ]
 
-const deckBody = (detail: DeckDetail, h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
+const deckBody = (
+  detail: DeckDetail,
+  manage: DeckManage,
+  forDeck: boolean,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => [
   header(detail, h),
   h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
   Card<Message>(
@@ -206,7 +213,305 @@ const deckBody = (detail: DeckDetail, h: HtmlBuilder<Message>): ReadonlyArray<Ch
     detail.cards.map((card, index) => cardRow(card, index, h)),
     h,
   ),
+  h.h2([h.Class('text-sm font-semibold')], ['Manage']),
+  manageSection(detail, forDeck ? manage : null, h),
 ]
+
+/**
+ * The Manage section: rename the Deck, reset its Schedule, or remove it.
+ *
+ * Rename edits a local draft until Save; the destructive actions each open
+ * one inline confirm that names what goes away, and only the confirmed one
+ * sends its request. `manage` is `null` when the Model's draft belongs to
+ * another deck — the section then shows its resting actions only.
+ */
+const manageSection = (
+  detail: DeckDetail,
+  manage: DeckManage | null,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const state: DeckManage = manage ?? {
+    deckId: Option.none(),
+    name: detail.summary.name,
+    description: detail.summary.description,
+    editing: false,
+    confirming: Option.none(),
+    saving: false,
+    saved: false,
+    error: Option.none(),
+  }
+  const id = detail.summary.id
+  return Card<Message>(
+    { className: 'gap-2 p-3' },
+    [
+      ...(state.saved
+        ? [
+            h.div(
+              [
+                h.Class(
+                  'rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400',
+                ),
+              ],
+              ['Deck renamed.'],
+            ),
+          ]
+        : []),
+      ...Option.match(state.error, {
+        onNone: () => [] as ReadonlyArray<Child>,
+        onSome: (error) => [
+          h.div(
+            [
+              h.Class(
+                'flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive',
+              ),
+              h.Role('alert'),
+            ],
+            [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
+          ),
+        ],
+      }),
+      ...(state.editing ? renameForm(id, state, h) : [renameRow(detail, state.saving, h)]),
+      ...Option.match(state.confirming, {
+        onNone: () => destructiveRows(id, state.saving, h),
+        onSome: (confirm) =>
+          confirm === 'reset'
+            ? [resetConfirm(id, state.saving, h)]
+            : [removeConfirm(id, state.saving, detail.summary.totalCount, h)],
+      }),
+    ],
+    h,
+  )
+}
+
+const renameRow = (detail: DeckDetail, saving: boolean, h: HtmlBuilder<Message>): Child =>
+  h.div(
+    [h.Class('flex items-center gap-3 py-1')],
+    [
+      h.div(
+        [h.Class('min-w-0 flex-1')],
+        [
+          h.div([h.Class('truncate text-[13px] font-semibold')], [detail.summary.name]),
+          h.div(
+            [h.Class('truncate text-xs text-muted-foreground')],
+            [detail.summary.description === '' ? 'No description' : detail.summary.description],
+          ),
+        ],
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedEditDeck({
+            deckId: detail.summary.id,
+            name: detail.summary.name,
+            description: detail.summary.description,
+          }),
+          variant: 'outline',
+          size: 'sm',
+          isDisabled: saving,
+        },
+        [icon(h, Pencil, 'size-3.5'), 'Rename'],
+        h,
+      ),
+    ],
+  )
+
+const renameForm = (
+  id: DeckId,
+  state: DeckManage,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => [
+  input<Message>(
+    {
+      id: 'deck-name',
+      label: 'Deck name',
+      value: state.name,
+      onInput: (value) => Message.TypedDeckName({ value }),
+      isDisabled: state.saving,
+      className: 'border-0 bg-white shadow-none outline-none',
+    },
+    h,
+  ),
+  textarea<Message>(
+    {
+      id: 'deck-description',
+      label: 'Description',
+      value: state.description,
+      onInput: (value) => Message.TypedDeckDescription({ value }),
+      rows: 2,
+      isDisabled: state.saving,
+      className: 'border-0 bg-white shadow-none outline-none',
+    },
+    h,
+  ),
+  h.div(
+    [h.Class('flex gap-2')],
+    [
+      button<Message>(
+        {
+          onClick: Message.ClickedSaveDeck({ deckId: id }),
+          size: 'sm',
+          isDisabled: state.saving,
+          className: 'flex-1',
+        },
+        [state.saving ? 'Saving…' : 'Save'],
+        h,
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedCancelDeckEdit(),
+          variant: 'outline',
+          size: 'sm',
+          isDisabled: state.saving,
+        },
+        ['Cancel'],
+        h,
+      ),
+    ],
+  ),
+]
+
+const destructiveRows = (
+  id: DeckId,
+  saving: boolean,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => [
+  h.div(
+    [h.Class('flex items-center gap-3 border-t border-black/5 py-1 pt-3')],
+    [
+      h.div(
+        [h.Class('min-w-0 flex-1')],
+        [
+          h.div([h.Class('text-[13px] font-semibold')], ['Reset progress']),
+          h.div(
+            [h.Class('text-xs text-muted-foreground')],
+            ['Every Card returns to new; the Review history goes.'],
+          ),
+        ],
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedResetDeck({ deckId: id }),
+          variant: 'outline',
+          size: 'sm',
+          isDisabled: saving,
+        },
+        [icon(h, RotateCcw, 'size-3.5'), 'Reset'],
+        h,
+      ),
+    ],
+  ),
+  h.div(
+    [h.Class('flex items-center gap-3 py-1')],
+    [
+      h.div(
+        [h.Class('min-w-0 flex-1')],
+        [
+          h.div([h.Class('text-[13px] font-semibold text-destructive')], ['Remove deck']),
+          h.div(
+            [h.Class('text-xs text-muted-foreground')],
+            ['Deletes the deck, its Cards, and its history.'],
+          ),
+        ],
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedRemoveDeck({ deckId: id }),
+          variant: 'destructive',
+          size: 'sm',
+          isDisabled: saving,
+        },
+        [icon(h, Trash2, 'size-3.5'), 'Remove'],
+        h,
+      ),
+    ],
+  ),
+]
+
+const resetConfirm = (id: DeckId, saving: boolean, h: HtmlBuilder<Message>): Child =>
+  h.div(
+    [h.Class('flex flex-col gap-2 rounded-lg bg-muted/60 px-3 py-2.5')],
+    [
+      h.p(
+        [h.Class('text-xs')],
+        [
+          'Reset this deck? Every Card returns to new and its Review history is deleted. The Notes stay.',
+        ],
+      ),
+      h.div(
+        [h.Class('flex gap-2')],
+        [
+          button<Message>(
+            {
+              onClick: Message.ClickedConfirmResetDeck({ deckId: id }),
+              size: 'sm',
+              isDisabled: saving,
+              className: 'flex-1',
+            },
+            [saving ? 'Resetting…' : 'Reset progress'],
+            h,
+          ),
+          button<Message>(
+            {
+              onClick: Message.ClickedCancelDeckConfirm(),
+              variant: 'outline',
+              size: 'sm',
+              isDisabled: saving,
+            },
+            ['Keep'],
+            h,
+          ),
+        ],
+      ),
+    ],
+  )
+
+const removeConfirm = (
+  id: DeckId,
+  saving: boolean,
+  cardCount: number,
+  h: HtmlBuilder<Message>,
+): Child =>
+  h.div(
+    [
+      h.Class(
+        'flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5',
+      ),
+      h.Role('alert'),
+    ],
+    [
+      h.p(
+        [h.Class('text-xs text-destructive')],
+        [
+          `Remove this deck? Its ${cardCount} ${cardCount === 1 ? 'Card' : 'Cards'} and all Review history are deleted. There is no undo.`,
+        ],
+      ),
+      h.div(
+        [h.Class('flex gap-2')],
+        [
+          button<Message>(
+            {
+              onClick: Message.ClickedConfirmRemoveDeck({ deckId: id }),
+              variant: 'destructive',
+              size: 'sm',
+              isDisabled: saving,
+              className: 'flex-1',
+            },
+            [saving ? 'Removing…' : 'Remove deck'],
+            h,
+          ),
+          button<Message>(
+            {
+              onClick: Message.ClickedCancelDeckConfirm(),
+              variant: 'outline',
+              size: 'sm',
+              isDisabled: saving,
+            },
+            ['Keep'],
+            h,
+          ),
+        ],
+      ),
+    ],
+  )
 
 export const deckDetailView = (
   model: Model,
@@ -225,5 +530,16 @@ export const deckDetailView = (
               h,
             ),
           ],
-    onData: (detail) => deckBody(detail, h),
+    // The manage draft belongs to one deck; only hand it over when it names
+    // this page's deck, so a stale draft never renders under another deck.
+    onData: (detail) =>
+      deckBody(
+        detail,
+        model.deckManage,
+        Option.match(model.deckManage.deckId, {
+          onNone: () => false,
+          onSome: (id) => id === deckId,
+        }),
+        h,
+      ),
   })

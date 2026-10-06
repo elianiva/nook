@@ -22,10 +22,16 @@
  */
 
 import { Context, Effect, Layer, Option, Schema } from 'effect'
-import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
 import { renderCard, scopeCss } from '@nook/anki/render'
-import { Api, CardId, CardNotFound, CollectionExport, DeckId, StorageUnavailable } from '@nook/api'
+import {
+  CardId,
+  CardNotFound,
+  CollectionExport,
+  DeckId,
+  ReviewsRpc,
+  StorageUnavailable,
+} from '@nook/api'
 import type {
   ExportCard,
   ExportDeck,
@@ -586,15 +592,15 @@ export class Reviews extends Context.Service<
   )
 }
 
-export const ReviewsHandlers = HttpApiBuilder.group(Api, 'reviews', (handlers) =>
+export const ReviewsHandlers = ReviewsRpc.toLayer(
   Effect.gen(function* () {
     const reviews = yield* Reviews
-    return handlers.handleAll({
-      queue: ({ query }) =>
-        reviews.queue({ deckId: Option.fromUndefinedOr(query.deckId), timezone: query.timezone }),
-      grade: ({ payload }) => reviews.grade(payload),
-      undo: ({ payload }) => reviews.undo({ cardId: payload.cardId }),
-      export: () => reviews.exportCollection(),
+    return ReviewsRpc.of({
+      reviewsQueue: ({ deckId, timezone }) =>
+        reviews.queue({ deckId: Option.fromUndefinedOr(deckId), timezone }),
+      reviewsGrade: (payload) => reviews.grade(payload),
+      reviewsUndo: ({ cardId }) => reviews.undo({ cardId }),
+      reviewsExport: () => reviews.exportCollection(),
     })
   }),
 )

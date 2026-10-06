@@ -5,7 +5,12 @@
  *
  * - the domain Schemas that cross the network boundary (Deck, Settings, …)
  * - `DEFAULT_SETTINGS`, the settings the form starts from before the server answers
- * - the Effect HttpApi contract, one `HttpApiGroup` per feature area
+ * - the Effect RPC contract, one `RpcGroup` per feature area plus the merged `Api`
+ *
+ * The browser and the Worker share this module: the Worker implements the
+ * handlers, the browser calls them through one RPC client. The payload of each
+ * procedure carries what used to ride in the URL or query string (deck ids,
+ * timezones), so the wire is one RPC route instead of one REST path per action.
  *
  * The browser bundle imports this package, so it stays free of runtime
  * behaviour. Anything that needs a database client, a bucket, a clock, or a
@@ -22,7 +27,7 @@
  */
 
 import { Schema as S } from 'effect'
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/http-api'
+import { Rpc, RpcGroup } from 'effect/rpc'
 
 /** Stable identifiers. Branded so a Deck id cannot flow where a Card id is expected. */
 export const DeckId = S.String.pipe(S.brand('DeckId'))
@@ -78,6 +83,18 @@ export const DeckDetail = S.Struct({
   cards: S.Array(Card),
 })
 export type DeckDetail = typeof DeckDetail.Type
+
+/**
+ * A Deck's new identity, as the rename endpoint receives it.
+ *
+ * The screen validates the name is non-blank before sending; the backend
+ * trims both fields before storing.
+ */
+export const DeckRename = S.Struct({
+  name: S.String,
+  description: S.String,
+})
+export type DeckRename = typeof DeckRename.Type
 
 /** Home-screen overview numbers, derived from all Decks. */
 export const Overview = S.Struct({
@@ -435,137 +452,129 @@ export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', 
   cardId: CardId,
 }) {}
 
-export class DecksGroup extends HttpApiGroup.make('decks')
-  .add(
-    HttpApiEndpoint.get('list', '/', {
-      success: S.Array(DeckSummary),
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-    HttpApiEndpoint.get('getById', '/:deckId', {
-      params: { deckId: DeckId },
-      success: DeckDetail,
-      error: [
-        DeckNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-  )
-  .prefix('/decks') {}
+export class DecksRpc extends RpcGroup.make(
+  Rpc.make('decksList', {
+    success: S.Array(DeckSummary),
+    error: StorageUnavailable,
+  }),
+  Rpc.make('decksGetById', {
+    payload: { deckId: DeckId },
+    success: DeckDetail,
+    error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+  /**
+   * Change a Deck's name and description. A blank name is rejected before
+   * it reaches SQL; an unknown id is a `DeckNotFound`.
+   */
+  Rpc.make('decksRename', {
+    payload: { deckId: DeckId, rename: DeckRename },
+    success: DeckDetail,
+    error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+  /**
+   * Clear a Deck's scheduling: every Card returns to `new`, its Review log
+   * is removed, and its scheduling state is zeroed. The Notes and the
+   * rendered queue are untouched — only the Schedule goes.
+   */
+  Rpc.make('decksReset', {
+    payload: { deckId: DeckId },
+    success: DeckDetail,
+    error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+  /**
+   * Remove a Deck and everything that belongs to it alone: its Cards, its
+   * Review log, and Notes no other Deck's Cards reference. Shared Note Types
+   * stay. There is no undo; the screen confirms first.
+   */
+  Rpc.make('decksRemove', {
+    payload: { deckId: DeckId },
+    success: S.Void,
+    error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+) {}
 
-export class HomeGroup extends HttpApiGroup.make('home')
-  .add(
-    HttpApiEndpoint.get('overview', '/', {
-      query: { timezone: S.optional(S.String) },
-      success: Overview,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-  )
-  .prefix('/home') {}
+export class HomeRpc extends RpcGroup.make(
+  Rpc.make('homeOverview', {
+    /** The learner timezone, for the day boundary. The server defaults to UTC without it. */
+    payload: { timezone: S.optional(S.String) },
+    success: Overview,
+    error: StorageUnavailable,
+  }),
+) {}
 
-export class SettingsGroup extends HttpApiGroup.make('settings')
-  .add(
-    HttpApiEndpoint.get('get', '/', {
-      success: AppSettings,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-    HttpApiEndpoint.put('update', '/', {
-      payload: AppSettings,
-      success: AppSettings,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-  )
-  .prefix('/settings') {}
+export class SettingsRpc extends RpcGroup.make(
+  Rpc.make('settingsGet', {
+    success: AppSettings,
+    error: StorageUnavailable,
+  }),
+  Rpc.make('settingsUpdate', {
+    payload: AppSettings,
+    success: AppSettings,
+    error: StorageUnavailable,
+  }),
+) {}
 
 /**
- * The Import endpoints.
+ * The Import procedures.
  *
  * The browser reads the archive and the Worker stores what it read, one batch
- * at a time. `start` is keyed by the archive's content hash, so the same file
+ * at a time. `importsStart` is keyed by the archive's content hash, so the same file
  * imported twice lands on the same Import and the second run resumes from the
- * cursors `start` returns. `writeBatch` carries the rows for one step of each
- * stream; `complete` marks the Import finished.
+ * cursors `importsStart` returns. `importsWriteBatch` carries the rows for one step of each
+ * stream; `importsComplete` marks the Import finished.
  */
-export class ImportsGroup extends HttpApiGroup.make('imports')
-  .add(
-    HttpApiEndpoint.post('start', '/', {
-      payload: ImportStart,
-      success: ImportStatus,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-    HttpApiEndpoint.post('writeBatch', '/:importId/batch', {
-      params: { importId: ImportId },
-      payload: ImportBatchPayload,
-      success: ImportStatus,
-      error: [
-        ImportNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-    HttpApiEndpoint.post('complete', '/:importId/complete', {
-      params: { importId: ImportId },
-      success: ImportStatus,
-      error: [
-        ImportNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-    HttpApiEndpoint.post('fail', '/:importId/fail', {
-      params: { importId: ImportId },
-      payload: ImportFailure,
-      success: ImportStatus,
-      error: [
-        ImportNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-    HttpApiEndpoint.get('get', '/:importId', {
-      params: { importId: ImportId },
-      success: ImportStatus,
-      error: [
-        ImportNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-  )
-  .prefix('/imports') {}
+export class ImportsRpc extends RpcGroup.make(
+  Rpc.make('importsStart', {
+    payload: ImportStart,
+    success: ImportStatus,
+    error: StorageUnavailable,
+  }),
+  Rpc.make('importsWriteBatch', {
+    payload: { importId: ImportId, batch: ImportBatchPayload },
+    success: ImportStatus,
+    error: S.Union([ImportNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('importsComplete', {
+    payload: { importId: ImportId },
+    success: ImportStatus,
+    error: S.Union([ImportNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('importsFail', {
+    payload: { importId: ImportId, error: S.String },
+    success: ImportStatus,
+    error: S.Union([ImportNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('importsGet', {
+    payload: { importId: ImportId },
+    success: ImportStatus,
+    error: S.Union([ImportNotFound, StorageUnavailable]),
+  }),
+) {}
 
-export class ReviewsGroup extends HttpApiGroup.make('reviews')
-  .add(
-    HttpApiEndpoint.get('queue', '/queue', {
-      query: { deckId: S.optional(DeckId), timezone: S.optional(S.String) },
-      success: ReviewQueue,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-    HttpApiEndpoint.post('grade', '/grade', {
-      payload: ReviewSubmission,
-      success: ReviewAccepted,
-      error: [
-        CardNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-    HttpApiEndpoint.post('undo', '/undo', {
-      payload: UndoReview,
-      success: UndoAccepted,
-      error: [
-        CardNotFound.pipe(HttpApiSchema.status(404)),
-        StorageUnavailable.pipe(HttpApiSchema.status(503)),
-      ],
-    }),
-    HttpApiEndpoint.get('export', '/export', {
-      success: CollectionExport,
-      error: StorageUnavailable.pipe(HttpApiSchema.status(503)),
-    }),
-  )
-  .prefix('/reviews') {}
+export class ReviewsRpc extends RpcGroup.make(
+  Rpc.make('reviewsQueue', {
+    payload: { deckId: S.optional(DeckId), timezone: S.optional(S.String) },
+    success: ReviewQueue,
+    error: StorageUnavailable,
+  }),
+  Rpc.make('reviewsGrade', {
+    payload: ReviewSubmission,
+    success: ReviewAccepted,
+    error: S.Union([CardNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('reviewsUndo', {
+    payload: UndoReview,
+    success: UndoAccepted,
+    error: S.Union([CardNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('reviewsExport', {
+    success: CollectionExport,
+    error: StorageUnavailable,
+  }),
+) {}
 
-export class Api extends HttpApi.make('nook-api')
-  .add(DecksGroup)
-  .add(HomeGroup)
-  .add(SettingsGroup)
-  .add(ImportsGroup)
-  .add(ReviewsGroup)
-  .prefix('/api') {}
+/** The whole contract: every procedure the browser calls and the Worker serves. */
+export class Api extends DecksRpc.merge(SettingsRpc, HomeRpc, ImportsRpc, ReviewsRpc) {}
 
 /**
  * The settings the form starts from, before the server's own answer arrives.

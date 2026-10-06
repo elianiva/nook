@@ -212,6 +212,43 @@ export const LoadNotice = S.Struct({
 })
 export type LoadNotice = typeof LoadNotice.Type
 
+/** Which destructive deck action the Manage section is confirming, if any. Only one confirm is open at a time. */
+export const DeckConfirm = S.Literals(['reset', 'remove'])
+export type DeckConfirm = typeof DeckConfirm.Type
+
+/**
+ * The deck page's Manage section: the rename draft plus which destructive
+ * confirm is open.
+ *
+ * `deckId` names the Deck this state belongs to; opening the section for
+ * another Deck reseeds the draft from its summary, so a stale name never
+ * leaks across pages. `saving` marks a mutation in flight, `saved` the
+ * confirmation after a rename lands, and `error` the last mutation failure
+ * as one sentence for the Learner.
+ */
+export const DeckManage = S.Struct({
+  deckId: S.Option(DeckId),
+  name: S.String,
+  description: S.String,
+  editing: S.Boolean,
+  confirming: S.Option(DeckConfirm),
+  saving: S.Boolean,
+  saved: S.Boolean,
+  error: S.Option(S.String),
+})
+export type DeckManage = typeof DeckManage.Type
+
+export const idleDeckManage: DeckManage = {
+  deckId: Option.none(),
+  name: '',
+  description: '',
+  editing: false,
+  confirming: Option.none(),
+  saving: false,
+  saved: false,
+  error: Option.none(),
+}
+
 /**
  * An Import the client can resume: its id and the archive's name.
  *
@@ -296,6 +333,8 @@ export const Model = S.Struct({
   settingsDraft: SettingsDraft,
   /** The Import the Decks page is showing: what is running, or what last ran. */
   importState: ImportState,
+  /** The deck page's Manage section: rename draft and destructive confirms. */
+  deckManage: DeckManage,
   /** The picked Mochi theme, mirrored from storage so the swatch ring moves on
    *  pick. Local-only; the DOM attribute and `localStorage` stay authoritative
    *  for paint, and a reload re-reads them. */
@@ -319,6 +358,7 @@ export const seedModel = (url: Url.Url): Model => ({
   settings: DEFAULT_SETTINGS,
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
+  deckManage: idleDeckManage,
   theme: readTheme(),
   hints: initHints(),
   notice: Option.none(),
@@ -440,5 +480,30 @@ export const Message = defineMessageUnion({
   ClickedResetSettings: {},
   /** A settings hint tooltip moved (hover, focus, leave, Escape). */
   GotHintMessage: { slot: S.String, message: Tooltip.Message },
+  /** The Learner opened the rename form, seeded from the deck's summary. */
+  ClickedEditDeck: { deckId: DeckId, name: S.String, description: S.String },
+  /** The Learner typed in the rename form. */
+  TypedDeckName: { value: S.String },
+  TypedDeckDescription: { value: S.String },
+  /** The Learner closed the rename form without saving. */
+  ClickedCancelDeckEdit: {},
+  /** The Learner saved the rename form. */
+  ClickedSaveDeck: { deckId: DeckId },
+  /** The rename landed. The detail and list reads refresh after it. */
+  RenamedDeck: { deckId: DeckId },
+  /** The Learner opened a destructive confirm. Only one is open at a time. */
+  ClickedResetDeck: { deckId: DeckId },
+  ClickedRemoveDeck: { deckId: DeckId },
+  /** The Learner closed the open confirm without acting. */
+  ClickedCancelDeckConfirm: {},
+  /** The Learner confirmed a destructive action. */
+  ClickedConfirmResetDeck: { deckId: DeckId },
+  ClickedConfirmRemoveDeck: { deckId: DeckId },
+  /** The reset landed. The detail and list reads refresh after it. */
+  ResetDeckDone: { deckId: DeckId },
+  /** The removal landed. The app leaves for the deck list. */
+  RemovedDeck: {},
+  /** A deck mutation failed. The Manage section shows the reason. */
+  DeckManageFailed: { error: S.String },
 })
 export type Message = typeof Message.Type

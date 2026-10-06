@@ -1,9 +1,10 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
-import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api, CardId, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
-import type { Card, DeckDetail, DeckSummary } from '@nook/api'
+import { CardId, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
+import type { Card, DeckDetail, DeckRename, DeckSummary } from '@nook/api'
+import { runStatements } from './batch'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import type { StorageError } from './storage-error'
 
 /** One row of the `decks` table with its counts computed in SQL. */
 const DeckRow = Schema.Struct({
@@ -62,6 +63,12 @@ export class Decks extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<DeckSummary>, StorageUnavailable>
     getById(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    rename(
+      id: DeckId,
+      rename: DeckRename,
+    ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    reset(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    remove(id: DeckId): Effect.Effect<void, DeckNotFound | StorageUnavailable>
   }
 >()('nook/backend/Decks') {
   static readonly layer = Layer.effect(
@@ -88,7 +95,11 @@ export class Decks extends Context.Service<
         withStorageErrorPassThrough(self, 'list decks'),
       )
 
-      const getById = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+      // The one-deck read, shared by get, rename, and reset: unknown ids are
+      // a 404 `DeckNotFound`, never a storage problem. The caller wraps it in
+      // `withStorageErrorPassThrough` with its own operation name, so SQL and
+      // row-decode failures surface as a 503 `StorageUnavailable`.
+      const readDetail = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageError> =>
         Effect.gen(function* () {
           const summaryRows = yield* sql`SELECT id, name, description,
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
@@ -110,21 +121,96 @@ export class Decks extends Context.Service<
             stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`
           const cards = yield* decodeRows(CardRow, cardRows)
           return { summary: toSummary(summary), cards: cards.map(toCard) } satisfies DeckDetail
-        }).pipe(Effect.withSpan('Decks.getById'), (self) =>
+        })
+
+      const getById = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+        readDetail(id).pipe(Effect.withSpan('Decks.getById'), (self) =>
           withStorageErrorPassThrough(self, 'read deck'),
         )
 
-      return Decks.of({ list, getById })
+      const rename = (
+        id: DeckId,
+        rename: DeckRename,
+      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+        Effect.gen(function* () {
+          // An empty name would render as a blank row everywhere; reject it
+          // before it reaches SQL.
+          const name = rename.name.trim()
+          if (name === '') {
+            return yield* new StorageUnavailable({
+              message: 'Could not rename the deck. The name cannot be empty.',
+            })
+          }
+          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
+          yield* sql`UPDATE decks SET name = ${name}, description = ${rename.description.trim()},
+            updated_at = datetime('now') WHERE id = ${id}`
+          return yield* readDetail(id)
+        }).pipe(Effect.withSpan('Decks.rename'), (self) =>
+          withStorageErrorPassThrough(self, 'rename deck'),
+        )
+
+      /**
+       * Clear a Deck's Schedule: every Card returns to `new` with zeroed FSRS
+       * state, and the Review log (plus its undo snapshots) for those Cards
+       * is removed. Notes, Note Types, and the Deck itself stay — only the
+       * Schedule goes, so re-studying starts clean.
+       */
+      const reset = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+        Effect.gen(function* () {
+          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
+          yield* runStatements([
+            sql`DELETE FROM review_snapshots WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
+            sql`DELETE FROM reviews WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
+            sql`UPDATE cards SET state = 'new', stability = 0, difficulty = 1,
+              due_in_days = 0, due_at = NULL, reps = 0, lapses = 0,
+              introduced_day = NULL, buried_until = NULL, buried_sibling_of = NULL,
+              last_reviewed_at = NULL,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE deck_id = ${id}`,
+            sql`UPDATE decks SET last_studied_at = NULL, updated_at = datetime('now')
+              WHERE id = ${id}`,
+          ])
+          return yield* readDetail(id)
+        }).pipe(Effect.withSpan('Decks.reset'), (self) =>
+          withStorageErrorPassThrough(self, 'reset deck'),
+        )
+
+      /**
+       * Remove a Deck and everything that belongs to it alone. Cards go first
+       * (with their Reviews and snapshots), then Notes no other Deck's Cards
+       * reference, then the Deck row. Reviews reference Cards, not Decks, so
+       * deleting the Cards removes their history with them.
+       */
+      const remove = (id: DeckId): Effect.Effect<void, DeckNotFound | StorageUnavailable> =>
+        Effect.gen(function* () {
+          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
+          yield* runStatements([
+            sql`DELETE FROM review_snapshots WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
+            sql`DELETE FROM reviews WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
+            sql`DELETE FROM cards WHERE deck_id = ${id}`,
+            sql`DELETE FROM notes WHERE id NOT IN (SELECT DISTINCT note_id FROM cards WHERE note_id IS NOT NULL)`,
+            sql`DELETE FROM decks WHERE id = ${id}`,
+          ])
+        }).pipe(Effect.withSpan('Decks.remove'), (self) =>
+          withStorageErrorPassThrough(self, 'remove deck'),
+        )
+
+      return Decks.of({ list, getById, rename, reset, remove })
     }),
   )
 }
 
-export const DecksHandlers = HttpApiBuilder.group(Api, 'decks', (handlers) =>
+export const DecksHandlers = DecksRpc.toLayer(
   Effect.gen(function* () {
     const decks = yield* Decks
-    return handlers.handleAll({
-      list: () => decks.list,
-      getById: ({ params }) => decks.getById(params.deckId),
+    return DecksRpc.of({
+      decksList: () => decks.list,
+      decksGetById: ({ deckId }) => decks.getById(deckId),
+      decksRename: ({ deckId, rename }) => decks.rename(deckId, rename),
+      decksReset: ({ deckId }) => decks.reset(deckId),
+      decksRemove: ({ deckId }) => decks.remove(deckId),
     })
   }),
 )

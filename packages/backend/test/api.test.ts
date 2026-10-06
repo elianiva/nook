@@ -1,9 +1,8 @@
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
-import { HttpApiTest } from 'effect/http-api'
-import { HttpServer } from 'effect/http'
+import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
-import { Api, DeckId } from '@nook/api'
+import { DecksRpc, HomeRpc, SettingsRpc, DeckId } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Settings, SettingsHandlers } from '../src/settings'
@@ -21,17 +20,13 @@ const HandlersLive = Layer.mergeAll(DecksHandlers, HomeHandlers, SettingsHandler
   Layer.provideMerge(SqlLive),
 )
 
-const TestLayers = Layer.mergeAll(HandlersLive, HttpServer.layerServices)
-
-const makeClient = HttpApiTest.groups(Api, ['decks', 'home', 'settings'])
-
-layer(TestLayers)('backend over sqlite', (it) => {
+layer(HandlersLive)('backend over sqlite', (it) => {
   it.effect('serves the showcase deck, the overview, and the settings round-trip', () =>
     Effect.gen(function* () {
       yield* migrate
-      const client = yield* makeClient
+      const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc))
 
-      const decks = yield* client.decks.list()
+      const decks = yield* client.decksList()
       assert.isAtLeast(decks.length, 1)
       const showcase = decks.find((deck) => deck.id === 'deck-showcase-japanese')
       assert.isDefined(showcase)
@@ -39,32 +34,28 @@ layer(TestLayers)('backend over sqlite', (it) => {
       expect(showcase?.newCount).toBe(2)
       expect(showcase?.totalCount).toBe(8)
 
-      const detail = yield* client.decks.getById({
-        params: { deckId: DeckId.make('deck-showcase-japanese') },
+      const detail = yield* client.decksGetById({
+        deckId: DeckId.make('deck-showcase-japanese'),
       })
       expect(detail.cards.length).toBe(8)
 
-      const exit = yield* Effect.exit(
-        client.decks.getById({ params: { deckId: DeckId.make('deck-nope') } }),
-      )
+      const exit = yield* Effect.exit(client.decksGetById({ deckId: DeckId.make('deck-nope') }))
       assert.strictEqual(exit._tag, 'Failure')
 
-      const overview = yield* client.home.overview({ query: {} })
+      const overview = yield* client.homeOverview({})
       expect(overview.dueNow).toBe(4)
       expect(overview.activity14d.length).toBe(14)
 
-      const settings = yield* client.settings.get()
+      const settings = yield* client.settingsGet()
       expect(settings.fsrs.weights.length).toBe(21)
-      const saved = yield* client.settings.update({
-        payload: {
-          ...settings,
-          fsrs: { ...settings.fsrs, desiredRetention: 0.85 },
-        },
+      const saved = yield* client.settingsUpdate({
+        ...settings,
+        fsrs: { ...settings.fsrs, desiredRetention: 0.85 },
       })
       expect(saved.fsrs.desiredRetention).toBe(0.85)
-      const reread = yield* client.settings.get()
+      const reread = yield* client.settingsGet()
       expect(reread.fsrs.desiredRetention).toBe(0.85)
       expect(reread.behaviour.tapToReveal).toBe(settings.behaviour.tapToReveal)
-    }),
+    }).pipe(Effect.scoped),
   )
 })

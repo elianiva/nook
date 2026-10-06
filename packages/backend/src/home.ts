@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect'
-import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api, StorageUnavailable } from '@nook/api'
+import { HomeRpc, StorageUnavailable } from '@nook/api'
 import type { Overview } from '@nook/api'
 import { dayStartUtc } from './day-boundary'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
@@ -89,11 +88,11 @@ export class Home extends Context.Service<
   )
 }
 
-export const HomeHandlers = HttpApiBuilder.group(Api, 'home', (handlers) =>
+export const HomeHandlers = HomeRpc.toLayer(
   Effect.gen(function* () {
     const home = yield* Home
-    return handlers.handle('overview', ({ query }) =>
-      home.overview({ timezone: (query as { timezone?: string }).timezone }),
-    )
+    return HomeRpc.of({
+      homeOverview: ({ timezone }) => home.overview({ timezone }),
+    })
   }),
 )

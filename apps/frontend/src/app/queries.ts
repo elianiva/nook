@@ -7,32 +7,28 @@
  * load or refresh by calling `loadIfMissing`, `revalidateOrLoad`, or
  * `revalidate`. See `docs/adr/0004-queries-own-fetch-state.md`.
  *
- * Every `execute` decodes the response with the same `@nook/api` Schema the
- * backend encodes with, and maps any failure (network, 503, decode) to one
- * sentence for the Learner. Failure is a value in the error channel, never a
- * thrown error, so the Query settles into `Failure` or keeps the last good data
- * as `Stale`.
- *
- * Offline reads: each `execute` runs through `withCache`, so a network
+ * Every `execute` calls one RPC procedure through `withCache`, so a network
  * failure falls back to the query cache (`lib/query-cache`) before returning
- * unavailable, and a fresh answer saves itself on the way through. The
- * persist metadata beside each query names its cache key, its max age, and
- * its `toCache` mapping; boot hydrate and the stale fallback both read from
- * that one table. `fetchedAt` rides alongside the domain data so a cached
- * screen can name its age.
+ * unavailable, and a fresh answer saves itself on the way through. Any
+ * failure (transport, typed error) maps to one sentence for the Learner.
+ * Failure is a value in the error channel, never a thrown error, so the
+ * Query settles into `Failure` or keeps the last good data as `Stale`.
+ *
+ * The persist metadata beside each query names its cache key, its max age,
+ * and its `toCache` mapping; boot hydrate and the stale fallback both read
+ * from that one table. `fetchedAt` rides alongside the domain data so a
+ * cached screen can name its age.
  */
 
 import { Effect, Option, Schema as S } from 'effect'
-import { HttpClient, HttpClientResponse } from 'effect/http'
-import { Http } from 'foldkit'
 import { Query } from 'foldkit/experimental'
 import { DeckDetail, DeckId, DeckSummary, Overview } from '@nook/api'
-import { API_PATHS } from '@/lib/api'
 import { clearQuery, loadQuery, saveQuery } from '@/lib/query-cache'
+import { NookRpc } from '@/lib/rpc'
 
 /**
- * The decks endpoint answers 404 for an id no Deck has, which is an answer,
- * not an outage. Every other failure is retryable.
+ * The deck read answers `DeckNotFound` for an id no Deck has, which is an
+ * answer, not an outage. Every other failure is retryable.
  */
 export const DeckDetailError = S.Literals(['notFound', 'unavailable'])
 export type DeckDetailError = typeof DeckDetailError.Type
@@ -176,29 +172,25 @@ const touchDeckDetailIndex = (key: string): Effect.Effect<void, never, never> =>
   })
 
 /** The learner timezone, for the day boundary. The server defaults to UTC without it. */
-const timezoneParam = (): string => {
-  const params = new URLSearchParams({ timezone: 'UTC' })
+const timezone = (): string | undefined => {
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    if (zone !== undefined && zone !== '') params.set('timezone', zone)
+    return zone !== undefined && zone !== '' ? zone : undefined
   } catch {
     // No Intl: the server falls back to UTC.
+    return undefined
   }
-  return params.toString()
 }
 
-/** GET a JSON body, decode it, and collapse every failure to one sentence. */
-const getJson = <A, AI>(
-  path: string,
-  schema: S.Codec<A, AI, never, never>,
+/** Call one RPC procedure, collapse every failure to one sentence. */
+const call = <A, E>(
+  run: (rpc: NookRpc['Service']) => Effect.Effect<A, E>,
   message: string,
 ): Effect.Effect<A, string, never> =>
-  HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get(`${path}?${timezoneParam()}`)),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+  NookRpc.pipe(
+    Effect.flatMap(run),
     Effect.mapError(() => message),
-    Effect.provide(Http.layer),
+    Effect.provide(NookRpc.layer),
   )
 
 /** The overview: due counts, streak, and the 14-day activity strip. */
@@ -208,9 +200,8 @@ export const overviewQuery = Query.define({
   error: S.String,
   execute: withCache(
     overviewPersist,
-    getJson(
-      API_PATHS.home,
-      Overview,
+    call(
+      (rpc) => rpc.homeOverview({ timezone: timezone() }),
       'Could not load the overview. Check the connection and try again.',
     ),
     'Could not load the overview. Check the connection and try again.',
@@ -224,11 +215,7 @@ export const decksQuery = Query.define({
   error: S.String,
   execute: withCache(
     decksPersist,
-    getJson(
-      API_PATHS.decks,
-      S.Array(DeckSummary),
-      'Could not load the decks. Check the connection and try again.',
-    ),
+    call((rpc) => rpc.decksList(), 'Could not load the decks. Check the connection and try again.'),
     'Could not load the decks. Check the connection and try again.',
   ),
 })
@@ -246,19 +233,13 @@ export const deckDetailQuery = Query.define({
   execute: ({ deckId }) =>
     withCache(
       deckDetailPersistFor(deckId),
-      Effect.gen(function* () {
-        const client = yield* HttpClient.HttpClient
-        const response = yield* client.get(
-          `${API_PATHS.decks}/${encodeURIComponent(deckId)}?${timezoneParam()}`,
-        )
-        if (response.status === 404) return yield* Effect.fail('notFound' as const)
-        const ok = yield* HttpClientResponse.filterStatusOk(response)
-        return yield* HttpClientResponse.schemaBodyJson(DeckDetail)(ok)
-      }).pipe(
+      NookRpc.pipe(
+        Effect.flatMap((rpc) => rpc.decksGetById({ deckId })),
+        Effect.catchTag('DeckNotFound', () => Effect.fail('notFound' as const)),
         Effect.mapError((error): DeckDetailError =>
           error === 'notFound' ? 'notFound' : 'unavailable',
         ),
-        Effect.provide(Http.layer),
+        Effect.provide(NookRpc.layer),
       ),
       'unavailable' as const,
     ),

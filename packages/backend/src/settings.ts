@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
-import { HttpApiBuilder } from 'effect/http-api'
 import * as Sql from 'effect/sql/SqlClient'
-import { Api, StorageUnavailable } from '@nook/api'
+import { SettingsRpc, StorageUnavailable } from '@nook/api'
 import type { AppSettings } from '@nook/api'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 
@@ -95,12 +94,12 @@ export class Settings extends Context.Service<
   )
 }
 
-export const SettingsHandlers = HttpApiBuilder.group(Api, 'settings', (handlers) =>
+export const SettingsHandlers = SettingsRpc.toLayer(
   Effect.gen(function* () {
     const settings = yield* Settings
-    return handlers.handleAll({
-      get: () => settings.read,
-      update: ({ payload }) => settings.save(payload),
+    return SettingsRpc.of({
+      settingsGet: () => settings.read,
+      settingsUpdate: (payload) => settings.save(payload),
     })
   }),
 )

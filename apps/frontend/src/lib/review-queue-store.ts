@@ -4,7 +4,7 @@
  *
  * The device keeps the next ~200 Cards, already rendered, plus the grades it
  * made while offline. The queue is a cache, not the system of record: the
- * server stays authoritative, and a grade lands through the normal endpoint
+ * server stays authoritative, and a grade lands through the normal procedure
  * when the network returns. `review_snapshots` make a replayed id safe, so a
  * flush that half-lands repairs itself on retry.
  *

@@ -7,19 +7,9 @@ export const API_PREFIX = '/api'
 /** Liveness. */
 export const HEALTH_PATH = `${API_PREFIX}/health`
 
-/** OpenAPI document for the HttpApi, served by the Worker. */
-export const OPENAPI_PATH = `${API_PREFIX}/openapi.json`
+/** The one route every RPC procedure shares. The browser's RPC client posts
+ *  here; `worker.ts` serves the group beside it. */
+export const RPC_PATH = `${API_PREFIX}/rpc`
 
-/** Every path the Worker answers, kept beside the prefix they share. */
-export const API_PATHS = {
-  health: HEALTH_PATH,
-  openapi: OPENAPI_PATH,
-  decks: `${API_PREFIX}/decks`,
-  home: `${API_PREFIX}/home`,
-  imports: `${API_PREFIX}/imports`,
-  reviews: `${API_PREFIX}/reviews`,
-  settings: `${API_PREFIX}/settings`,
-} as const
-
-/** Media is served by the Worker from R2, outside the HttpApi. */
+/** Media is served by the Worker from R2, outside the RPC group. */
 export const MEDIA_PATH = `${API_PREFIX}/media`

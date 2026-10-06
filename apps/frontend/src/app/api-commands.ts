@@ -1,34 +1,22 @@
 /**
- * The writes and the session fetch: one request each, whose answer comes back
- * as a Message.
+ * The writes and the session fetch: one procedure call each, whose answer comes
+ * back as a Message.
  *
  * The list and detail reads live in `queries`, which owns their `AsyncData`
  * state. What stays here is the review session's queue — it belongs to a
  * larger transition than "retain a resource" — plus the settings Save and the
- * Grade, which are mutations.
+ * Grade, which are mutations, plus the deck mutations (rename, reset, remove).
  *
- * Every Command decodes its answer with the same `@nook/api` Schema the backend
- * encodes with, and answers with a result Message on failure too. Failure is a
- * Message, never a thrown error — Commands must stay total.
+ * Every Command calls through the shared RPC client and answers with a result
+ * Message on failure too. Failure is a Message, never a thrown error —
+ * Commands must stay total.
  */
 
 import { Effect, Option, Schema as S } from 'effect'
-import { Command, Http } from 'foldkit'
-import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
-import {
-  AppSettings,
-  CardId,
-  CollectionExport,
-  DeckId,
-  Grade,
-  ReviewAccepted,
-  ReviewCard,
-  ReviewQueue,
-  ReviewSubmission,
-  UndoAccepted,
-  UndoReview,
-} from '@nook/api'
+import { Command } from 'foldkit'
+import { AppSettings, CardId, DeckId, DeckRename, Grade, ReviewCard } from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
+import { NookRpc } from '@/lib/rpc'
 import { Message as MessageConstructors } from './model'
 import type { LoadRetry } from './model'
 
@@ -56,19 +44,28 @@ const fromCachedCards = (cards: unknown): Option.Option<ReadonlyArray<ReviewCard
 const loadFailed = (error: string, retry: LoadRetry) =>
   MessageConstructors.LoadFailed({ error, retry })
 
+/** The learner timezone, for the day boundary. The server defaults to UTC without it. */
+const timezone = (): string | undefined => {
+  try {
+    if (typeof Intl === 'undefined') return undefined
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    return zone !== undefined && zone !== '' ? zone : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export const FetchSettings = Command.define('FetchSettings', {
   messages: [MessageConstructors.GotSettings, MessageConstructors.LoadFailed],
-  execute: HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get('/api/settings')),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(AppSettings)),
+  execute: NookRpc.pipe(
+    Effect.flatMap((rpc) => rpc.settingsGet()),
     Effect.map((settings) => MessageConstructors.GotSettings({ settings })),
     Effect.catch(() =>
       Effect.succeed(
         loadFailed('Could not load the settings. Check the connection and try again.', 'settings'),
       ),
     ),
-    Effect.provide(Http.layer),
+    Effect.provide(NookRpc.layer),
   ),
 })
 
@@ -76,15 +73,8 @@ export const SaveSettings = Command.define('SaveSettings', {
   args: { settings: AppSettings },
   messages: [MessageConstructors.SavedSettings, MessageConstructors.LoadFailed],
   execute: ({ settings }) =>
-    HttpClient.HttpClient.pipe(
-      Effect.flatMap((client) =>
-        HttpClientRequest.put('/api/settings').pipe(
-          HttpClientRequest.schemaBodyJson(AppSettings)(settings),
-          Effect.flatMap(client.execute),
-        ),
-      ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(AppSettings)),
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.settingsUpdate(settings)),
       Effect.map((saved) => MessageConstructors.SavedSettings({ settings: saved })),
       Effect.catch(() =>
         Effect.succeed(
@@ -94,7 +84,7 @@ export const SaveSettings = Command.define('SaveSettings', {
           ),
         ),
       ),
-      Effect.provide(Http.layer),
+      Effect.provide(NookRpc.layer),
     ),
 })
 
@@ -102,29 +92,26 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
   args: { deckId: S.Option(DeckId) },
   messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
   execute: ({ deckId }) =>
-    Effect.gen(function* () {
-      const client = yield* HttpClient.HttpClient
-      const timezone =
-        typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'
-      const params = new URLSearchParams({ timezone })
-      const deck = Option.getOrNull(deckId)
-      if (deck !== null) params.set('deckId', deck)
-      const response = yield* client.get(`/api/reviews/queue?${params.toString()}`)
-      const ok = yield* HttpClientResponse.filterStatusOk(response)
-      const queue = yield* HttpClientResponse.schemaBodyJson(ReviewQueue)(ok)
-      return MessageConstructors.GotReviewQueue({
-        cards: queue.cards,
-        dayStartUtc: queue.dayStartUtc,
-        lapseMinutes: 10,
-      })
-    }).pipe(
-      Effect.orElseSucceed(() =>
-        loadFailed(
-          'Could not load the review queue. Check the connection and try again.',
-          'reviewQueue',
+    NookRpc.pipe(
+      Effect.flatMap((rpc) =>
+        rpc.reviewsQueue({ deckId: Option.getOrUndefined(deckId), timezone: timezone() }),
+      ),
+      Effect.map((queue) =>
+        MessageConstructors.GotReviewQueue({
+          cards: queue.cards,
+          dayStartUtc: queue.dayStartUtc,
+          lapseMinutes: 10,
+        }),
+      ),
+      Effect.catch(() =>
+        Effect.succeed(
+          loadFailed(
+            'Could not load the review queue. Check the connection and try again.',
+            'reviewQueue',
+          ),
         ),
       ),
-      Effect.provide(Http.layer),
+      Effect.provide(NookRpc.layer),
     ),
 })
 
@@ -132,23 +119,8 @@ export const SubmitGrade = Command.define('SubmitGrade', {
   args: { id: S.String, cardId: CardId, grade: Grade },
   messages: [MessageConstructors.GradeAccepted, MessageConstructors.GradeFailed],
   execute: ({ id, cardId, grade }) =>
-    HttpClient.HttpClient.pipe(
-      Effect.flatMap((client) =>
-        HttpClientRequest.post('/api/reviews/grade').pipe(
-          HttpClientRequest.schemaBodyJson(ReviewSubmission)({
-            id,
-            cardId,
-            grade,
-            timezone:
-              typeof Intl !== 'undefined'
-                ? Intl.DateTimeFormat().resolvedOptions().timeZone
-                : 'UTC',
-          }),
-          Effect.flatMap(client.execute),
-        ),
-      ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(ReviewAccepted)),
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
       Effect.map((accepted) => MessageConstructors.GradeAccepted({ id, accepted })),
       Effect.catch(() =>
         Effect.succeed(
@@ -157,7 +129,7 @@ export const SubmitGrade = Command.define('SubmitGrade', {
           }),
         ),
       ),
-      Effect.provide(Http.layer),
+      Effect.provide(NookRpc.layer),
     ),
 })
 
@@ -165,15 +137,8 @@ export const UndoGrade = Command.define('UndoGrade', {
   args: { cardId: CardId },
   messages: [MessageConstructors.UndoneGrade, MessageConstructors.UndoFailed],
   execute: ({ cardId }) =>
-    HttpClient.HttpClient.pipe(
-      Effect.flatMap((client) =>
-        HttpClientRequest.post('/api/reviews/undo').pipe(
-          HttpClientRequest.schemaBodyJson(UndoReview)({ cardId }),
-          Effect.flatMap(client.execute),
-        ),
-      ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(UndoAccepted)),
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.reviewsUndo({ cardId })),
       Effect.map(() => MessageConstructors.UndoneGrade({ cardId })),
       Effect.catch(() =>
         Effect.succeed(
@@ -182,16 +147,14 @@ export const UndoGrade = Command.define('UndoGrade', {
           }),
         ),
       ),
-      Effect.provide(Http.layer),
+      Effect.provide(NookRpc.layer),
     ),
 })
 
 export const FetchExport = Command.define('FetchExport', {
   messages: [MessageConstructors.GotExport, MessageConstructors.ExportFailed],
-  execute: HttpClient.HttpClient.pipe(
-    Effect.flatMap((client) => client.get('/api/reviews/export')),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(CollectionExport)),
+  execute: NookRpc.pipe(
+    Effect.flatMap((rpc) => rpc.reviewsExport()),
     Effect.map((collection) =>
       MessageConstructors.GotExport({
         filename: `nook-export-${collection.exportedAt.slice(0, 10)}.json`,
@@ -205,7 +168,7 @@ export const FetchExport = Command.define('FetchExport', {
         }),
       ),
     ),
-    Effect.provide(Http.layer),
+    Effect.provide(NookRpc.layer),
   ),
 })
 
@@ -340,5 +303,63 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
           ),
         ),
       ),
+    ),
+})
+
+const deckManageFailed = (error: string) => MessageConstructors.DeckManageFailed({ error })
+
+/**
+ * The deck mutations: rename, reset, remove.
+ *
+ * Each answers with a success Message the update folds into a refresh (the
+ * list and detail Queries re-read), or with `DeckManageFailed`, which the
+ * Manage section shows beside the action that failed. Failure is a Message,
+ * never a thrown error — Commands must stay total.
+ */
+export const RenameDeck = Command.define('RenameDeck', {
+  args: { deckId: DeckId, rename: DeckRename },
+  messages: [MessageConstructors.RenamedDeck, MessageConstructors.DeckManageFailed],
+  execute: ({ deckId, rename }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.decksRename({ deckId, rename })),
+      Effect.map(() => MessageConstructors.RenamedDeck({ deckId })),
+      Effect.catch(() =>
+        Effect.succeed(
+          deckManageFailed('Could not rename the deck. Check the connection and try again.'),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+export const ResetDeck = Command.define('ResetDeck', {
+  args: { deckId: DeckId },
+  messages: [MessageConstructors.ResetDeckDone, MessageConstructors.DeckManageFailed],
+  execute: ({ deckId }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.decksReset({ deckId })),
+      Effect.map(() => MessageConstructors.ResetDeckDone({ deckId })),
+      Effect.catch(() =>
+        Effect.succeed(
+          deckManageFailed('Could not reset the deck. Check the connection and try again.'),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+export const RemoveDeck = Command.define('RemoveDeck', {
+  args: { deckId: DeckId },
+  messages: [MessageConstructors.RemovedDeck, MessageConstructors.DeckManageFailed],
+  execute: ({ deckId }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.decksRemove({ deckId })),
+      Effect.map(() => MessageConstructors.RemovedDeck()),
+      Effect.catch(() =>
+        Effect.succeed(
+          deckManageFailed('Could not remove the deck. Check the connection and try again.'),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
     ),
 })

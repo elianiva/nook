@@ -27,6 +27,9 @@ import {
   LoadCachedQueue,
   PersistReviewQueue,
   ReloadApp,
+  RemoveDeck,
+  RenameDeck,
+  ResetDeck,
   SaveSettings,
   SubmitGrade,
   UndoGrade,
@@ -40,6 +43,7 @@ import type { RestoredAnswer } from './model'
 import {
   Message,
   draftFromSettings,
+  idleDeckManage,
   idleImport,
   idleReview,
   seedModel,
@@ -72,8 +76,8 @@ const deckDetail = deckDetailQuery.lift<Model, Message>({
  * The reads a route starts. A Query loads when it is missing and refreshes when
  * it has data, so returning to a screen shows its last answer while a fresh one
  * arrives; the already-pending case starts nothing. Settings and the review
- * queue stay plain fetches: the settings form and the review session own their
- * own transitions.
+ * queue stay out of the Query cache: the settings form and the review session
+ * own their own transitions.
  */
 const routeLoads = (model: Model): Update.Return<Model, Message> =>
   AppRoute.match<Update.Return<Model, Message>>(model.route, {
@@ -283,8 +287,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ChangedUrl: ({ url }) => {
       const route = urlToAppRoute(url)
       // A new screen means new loads; the old notice and the old review session
-      // belong to the old screen.
-      return routeLoads({ ...clearNotice(model), route, review: idleReview })
+      // belong to the old screen. The Manage draft belongs to one Deck, so it
+      // resets too — a stale name must never leak onto another deck's page.
+      return routeLoads({
+        ...clearNotice(model),
+        route,
+        review: idleReview,
+        deckManage: idleDeckManage,
+      })
     },
 
     CompletedNavigate: () => ({ model }),
@@ -643,6 +653,165 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     ClearedImportJob: () => ({ model }),
+
+    // The rename form opens seeded from the deck's summary, so the draft
+    // starts as what the server holds. Opening for another deck reseeds.
+    ClickedEditDeck: ({ deckId, name, description }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          deckId: Option.some(deckId),
+          name,
+          description,
+          editing: true,
+          confirming: Option.none(),
+          saving: false,
+          saved: false,
+          error: Option.none(),
+        }),
+      }),
+    }),
+
+    TypedDeckName: ({ value }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, name: value, saved: false }),
+      }),
+    }),
+
+    TypedDeckDescription: ({ value }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, description: value, saved: false }),
+      }),
+    }),
+
+    ClickedCancelDeckEdit: () => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, editing: false, error: Option.none() }),
+      }),
+    }),
+
+    // A blank name would render as an empty row everywhere, so it never
+    // leaves the device: the form keeps the error instead of sending.
+    ClickedSaveDeck: ({ deckId }) => {
+      if (model.deckManage.name.trim() === '') {
+        return {
+          model: modifyFields(model, {
+            deckManage: () => ({
+              ...model.deckManage,
+              error: Option.some('Give the deck a name first.'),
+            }),
+          }),
+        }
+      }
+      return {
+        model: modifyFields(model, {
+          deckManage: () => ({ ...model.deckManage, saving: true, error: Option.none() }),
+        }),
+        commands: [
+          RenameDeck({
+            deckId,
+            rename: {
+              name: model.deckManage.name.trim(),
+              description: model.deckManage.description.trim(),
+            },
+          }),
+        ],
+      }
+    },
+
+    // The rename landed: close the form and refresh both reads, so the deck
+    // page and every list show the new identity. The Queries keep their last
+    // data while the fresh answer arrives.
+    RenamedDeck: ({ deckId }) => {
+      const next: Model = {
+        ...model,
+        deckManage: { ...model.deckManage, editing: false, saving: false, saved: true },
+      }
+      return Update.combine<Model, Message>(next, [
+        decks.revalidateOrLoad,
+        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+      ])
+    },
+
+    // Destructive confirms: only one is open at a time, and opening one
+    // closes the rename form so the section shows a single decision.
+    ClickedResetDeck: ({ deckId }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          deckId: Option.some(deckId),
+          editing: false,
+          confirming: Option.some('reset' as const),
+          saved: false,
+          error: Option.none(),
+        }),
+      }),
+    }),
+
+    ClickedRemoveDeck: ({ deckId }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          deckId: Option.some(deckId),
+          editing: false,
+          confirming: Option.some('remove' as const),
+          saved: false,
+          error: Option.none(),
+        }),
+      }),
+    }),
+
+    ClickedCancelDeckConfirm: () => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          confirming: Option.none(),
+          error: Option.none(),
+        }),
+      }),
+    }),
+
+    ClickedConfirmResetDeck: ({ deckId }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, saving: true, error: Option.none() }),
+      }),
+      commands: [ResetDeck({ deckId })],
+    }),
+
+    ClickedConfirmRemoveDeck: ({ deckId }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, saving: true, error: Option.none() }),
+      }),
+      commands: [RemoveDeck({ deckId })],
+    }),
+
+    // The reset landed: the deck is all-new again, so both reads refresh.
+    ResetDeckDone: ({ deckId }) => {
+      const next: Model = {
+        ...model,
+        deckManage: { ...model.deckManage, confirming: Option.none(), saving: false },
+      }
+      return Update.combine<Model, Message>(next, [
+        decks.revalidateOrLoad,
+        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+      ])
+    },
+
+    // The removal landed: the deck is gone, so the app leaves for the list,
+    // whose load runs on navigation. The manage state resets with the route.
+    RemovedDeck: () => ({
+      model,
+      commands: [NavigateToPath({ path: routeToUrl({ _tag: 'Decks' }) })],
+    }),
+
+    DeckManageFailed: ({ error }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          saving: false,
+          error: Option.some(error),
+        }),
+      }),
+    }),
 
     EditedRetention: ({ value }) => ({
       model: {

@@ -1,7 +1,7 @@
 /**
  * The Worker entry `Cloudflare.Website.Foldkit` bundles and uploads.
  *
- * It owns `/api/*`: a liveness probe, the Media store, and the HttpApi the
+ * It owns `/api/*`: a liveness probe, the Media store, and the RPC group the
  * browser calls. Every other request goes to the static asset binding, which
  * serves the Foldkit client build and its `index.html` fallback for client
  * routes.
@@ -13,7 +13,7 @@
 import type { D1Database } from '@cloudflare/workers-types'
 import { Effect, Layer } from 'effect'
 import { HttpRouter, HttpServer, HttpServerResponse } from 'effect/http'
-import { HttpApiBuilder } from 'effect/http-api'
+import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { Api } from '@nook/api'
 import {
   Decks,
@@ -28,7 +28,7 @@ import {
   SettingsHandlers,
   SqlLive,
 } from '@nook/backend'
-import { API_PATHS, HEALTH_PATH, MEDIA_PATH } from './lib/api'
+import { HEALTH_PATH, MEDIA_PATH, RPC_PATH } from './lib/api'
 
 /** The static asset binding, as much of it as this Worker uses. */
 type Assets = {
@@ -65,15 +65,14 @@ type Env = {
 
 const healthRoute = HttpRouter.add('GET', HEALTH_PATH, () => HttpServerResponse.json({ ok: true }))
 
-const apiRoutes = HttpApiBuilder.layer(Api, {
-  openapiPath: API_PATHS.openapi,
-}).pipe(
+const apiRoutes = RpcServer.layerHttp({ group: Api, path: RPC_PATH, protocol: 'http' }).pipe(
   Layer.provide([DecksHandlers, HomeHandlers, ImportsHandlers, ReviewsHandlers, SettingsHandlers]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
   Layer.provideMerge(Imports.layer),
   Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(RpcSerialization.layerJson),
 )
 
 const assetRoute = (env: Env, request: Request) =>

@@ -8,6 +8,9 @@
  * the Worker's own counts, and the worker forwards that answer straight to the
  * app instead of the app polling for it.
  *
+ * Rows travel through the shared RPC client; Media files stay plain HTTP PUTs
+ * because they are binary, not procedures.
+ *
  * The app starts this worker when an Import becomes active and terminates it
  * when the Import leaves that state. Terminating mid-run is safe: the cursors
  * in D1 are the commit point, so the next run resumes from them.
@@ -17,7 +20,6 @@ import { Effect, Stream } from 'effect'
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { AnkiArchive, AnkiSqliteMemory, layer as ankiLayer } from '@nook/anki'
 import type { AnkiManifest, OpenedMedia } from '@nook/anki'
-import { ImportBatchPayload, ImportFailure, ImportId, ImportStart, ImportStatus } from '@nook/api'
 import type {
   ImportBatchPayload as ImportBatch,
   ImportManifest,
@@ -28,15 +30,14 @@ import type {
   ImportWorkerCommand,
   ImportWorkerEvent,
 } from './lib/import-worker-protocol'
+import { MEDIA_PATH } from './lib/api'
+import { NookRpc } from './lib/rpc'
 
 /** How many Notes or Cards ride in one request. Each row is one SQLite statement. */
 const ROWS_PER_REQUEST = 200
 
 /** How many Media files upload per progress tick. Media is heavier than a row. */
 const MEDIA_PER_REQUEST = 4
-
-const IMPORTS_URL = '/api/imports'
-const MEDIA_URL = '/api/media'
 
 /** As much of the worker global scope as this module uses. */
 type WorkerScope = {
@@ -65,7 +66,16 @@ const toManifest = (manifest: AnkiManifest): ImportManifest => ({
 })
 
 /** The counts the panel shows, as plain data a `postMessage` can carry. */
-const toProgress = (status: ImportStatus, mediaImported: number): ImportProgress => ({
+const toProgress = (
+  status: {
+    notesImported: number
+    cardsImported: number
+    noteCount: number
+    cardCount: number
+    mediaCount: number
+  },
+  mediaImported: number,
+): ImportProgress => ({
   notesImported: status.notesImported,
   cardsImported: status.cardsImported,
   mediaImported,
@@ -74,38 +84,11 @@ const toProgress = (status: ImportStatus, mediaImported: number): ImportProgress
   mediaCount: status.mediaCount,
 })
 
-const startRequest = (body: ImportStartPayload) =>
-  HttpClientRequest.post(IMPORTS_URL).pipe(HttpClientRequest.schemaBodyJson(ImportStart)(body))
-
-const batchRequest = (id: ImportId, body: ImportBatch) =>
-  HttpClientRequest.post(`${IMPORTS_URL}/${encodeURIComponent(id)}/batch`).pipe(
-    HttpClientRequest.schemaBodyJson(ImportBatchPayload)(body),
-  )
-
-const failRequest = (id: ImportId, body: { readonly error: string }) =>
-  HttpClientRequest.post(`${IMPORTS_URL}/${encodeURIComponent(id)}/fail`).pipe(
-    HttpClientRequest.schemaBodyJson(ImportFailure)(body),
-  )
-
-const completeRequest = (id: ImportId) =>
-  Effect.succeed(HttpClientRequest.post(`${IMPORTS_URL}/${encodeURIComponent(id)}/complete`))
-
-/** Sends a request and decodes the `ImportStatus` that comes back. */
-const send = <E, R>(
-  client: HttpClient.HttpClient,
-  request: Effect.Effect<HttpClientRequest.HttpClientRequest, E, R>,
-) =>
-  request.pipe(
-    Effect.flatMap((built) => client.execute(built)),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(HttpClientResponse.schemaBodyJson(ImportStatus)),
-  )
-
 /** Uploads one Media file. The name is the archive's own, so a re-upload overwrites. */
 const putMedia = (client: HttpClient.HttpClient, file: OpenedMedia) =>
   client
     .execute(
-      HttpClientRequest.put(`${MEDIA_URL}/${encodeURIComponent(file.name)}`).pipe(
+      HttpClientRequest.put(`${MEDIA_PATH}/${encodeURIComponent(file.name)}`).pipe(
         HttpClientRequest.bodyUint8Array(file.bytes, 'application/octet-stream'),
       ),
     )
@@ -131,18 +114,17 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
     Effect.gen(function* () {
       post({ type: 'phase', phase: 'reading' })
       const archive = yield* AnkiArchive
+      const rpc = yield* NookRpc
       const client = yield* HttpClient.HttpClient
 
       const opened = yield* archive.open(command.blob)
       const manifest = yield* opened.manifest
-      const started = yield* send(
-        client,
-        startRequest({
-          id: command.id,
-          filename: command.filename,
-          manifest: toManifest(manifest),
-        }),
-      )
+      const startPayload: ImportStartPayload = {
+        id: command.id,
+        filename: command.filename,
+        manifest: toManifest(manifest),
+      }
+      const started = yield* rpc.importsStart(startPayload)
 
       post({ type: 'phase', phase: 'writing' })
 
@@ -162,7 +144,7 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
       }
 
       const writeBatch = (batch: ImportBatch) =>
-        send(client, batchRequest(command.id, batch)).pipe(
+        rpc.importsWriteBatch({ importId: command.id, batch }).pipe(
           Effect.tap((status) =>
             Effect.sync(() => {
               last = status
@@ -204,28 +186,29 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
         }),
       )
 
-      const status = yield* send(client, completeRequest(command.id))
+      const status = yield* rpc.importsComplete({ importId: command.id })
       post({ type: 'done', progress: toProgress(status, mediaImported) })
     }),
   ).pipe(
     // The read is scoped, so the archive's zip reader and its SQLite database
     // close when the run ends, however it ends.
     Effect.provide(ankiLayer(AnkiSqliteMemory.source)),
+    Effect.provide(NookRpc.layer),
     Effect.provide(FetchHttpClient.layer),
     // Last, because providing the reader's layer is itself declared to fail:
-    // the handler needs its own HttpClient, since the one above is out of
+    // the handler needs its own client, since the one above is out of
     // scope here.
     Effect.catch((error) =>
       Effect.gen(function* () {
         const sentence = toSentence(error)
-        const client = yield* HttpClient.HttpClient
+        const rpc = yield* NookRpc
         // Record the reason in D1 so a reload still shows why the run stopped.
         // Failing to record it must not replace the failure the Learner sees.
-        yield* send(client, failRequest(command.id, { error: sentence })).pipe(
-          Effect.catch(() => Effect.void),
-        )
+        yield* rpc
+          .importsFail({ importId: command.id, error: sentence })
+          .pipe(Effect.catch(() => Effect.void))
         post({ type: 'failed', error: sentence })
-      }).pipe(Effect.provide(FetchHttpClient.layer)),
+      }).pipe(Effect.provide(NookRpc.layer), Effect.provide(FetchHttpClient.layer)),
     ),
   )
 
