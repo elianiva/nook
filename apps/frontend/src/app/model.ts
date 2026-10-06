@@ -29,6 +29,7 @@ import {
   ReviewCard,
 } from '@nook/api'
 import { ImportProgress } from '@/lib/import-worker-protocol'
+import { readTheme } from '@/lib/theme'
 import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
 import * as Tooltip from '@/components/ui/tooltip'
@@ -280,6 +281,10 @@ export const Model = S.Struct({
   settingsDraft: SettingsDraft,
   /** The Import the Decks page is showing: what is running, or what last ran. */
   importState: ImportState,
+  /** The picked Mochi theme, mirrored from storage so the swatch ring moves on
+   *  pick. Local-only; the DOM attribute and `localStorage` stay authoritative
+   *  for paint, and a reload re-reads them. */
+  theme: S.String,
   /** One hint tooltip Model per settings slot. Local-only; never saved. */
   hints: Hints,
   /** The last fetch or save that failed, with a retry for its route. `None` when everything answers. */
@@ -297,6 +302,7 @@ export const seedModel = (url: Url.Url): Model => ({
   settings: DEFAULT_SETTINGS,
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
+  theme: readTheme(),
   hints: initHints(),
   notice: Option.none(),
 })

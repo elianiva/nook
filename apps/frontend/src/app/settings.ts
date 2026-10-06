@@ -31,7 +31,7 @@ import { switch_ } from '@/components/ui/switch'
 import { textarea } from '@/components/ui/textarea'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
-import { readTheme, themeKeys, themeMeta } from '@/lib/theme'
+import { themeKeys, themeMeta } from '@/lib/theme'
 import { Message } from './model'
 import type { HintSlot, Model, SettingsDraft } from './model'
 import { hint } from './hints'
@@ -310,12 +310,13 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
 
 /**
  * Appearance: five Mochi swatches in one row. Each button is a plain square
- * of its own tint; the stored theme marks itself with a strong-tone ring.
- * Picking sends `PickedTheme`, which writes the DOM and storage at once —
- * no save gating.
+ * of its own tint; the picked theme marks itself with a strong-tone ring.
+ * Picking sends `PickedTheme`, which writes the DOM and storage at once and
+ * mirrors the pick into the Model — no save gating, and the ring moves on
+ * the same render.
  */
-const appearanceSection = (h: HtmlBuilder<Message>): Html => {
-  const current = readTheme()
+const appearanceSection = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const current = model.theme
   return section(
     'Appearance',
     [
@@ -361,7 +362,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
           ),
         ]
       : []),
-    appearanceSection(h),
+    appearanceSection(model, h),
     fsrsSection(draft, model, h),
     defaultsSection(draft, model, h),
     behaviourSection(draft, model, h),

@@ -637,10 +637,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     // The pick applies at once: the Command writes the DOM + storage, and the
-    // section re-reads the stored value so the picked swatch marks itself as
-    // current without waiting for the answer. Unknown values never reach the
-    // view — `settingsView` only sends keys from `themeKeys`.
-    PickedTheme: ({ theme }) => ({ model, commands: [ApplyTheme({ theme })] }),
+    // Model mirrors the pick so the section re-renders with the ring on the
+    // picked swatch. Unknown values never reach the view — `settingsView`
+    // only sends keys from `themeKeys`.
+    PickedTheme: ({ theme }) => ({
+      model: { ...model, theme },
+      commands: [ApplyTheme({ theme })],
+    }),
 
     AppliedTheme: () => ({ model }),
 

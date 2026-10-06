@@ -1,8 +1,7 @@
 /**
  * The Appearance pick: `PickedTheme` starts one `ApplyTheme` Command that
- * writes the DOM and storage, and `AppliedTheme` changes nothing. The Model
- * never holds the theme — it stays local-only — so these transitions assert
- * the Command the pick starts and that the Model is untouched.
+ * writes the DOM and storage, and mirrors the pick into `model.theme` so the
+ * swatch ring moves on the same render. `AppliedTheme` changes nothing.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -33,12 +32,13 @@ const themeArgs = (result: {
 }
 
 describe('Appearance pick', () => {
-  it('starts ApplyTheme with the picked swatch and keeps the model', () => {
+  it('starts ApplyTheme with the picked swatch and mirrors it into the model', () => {
     const before = seedModel(url('/settings'))
     const result = update(before, Message.PickedTheme({ theme: 'mochi-sage' }))
     expect(names(result)).toEqual(['ApplyTheme'])
     expect(themeArgs(result)).toBe('mochi-sage')
-    expect(result.model).toEqual(before)
+    expect(result.model.theme).toBe('mochi-sage')
+    expect({ ...result.model, theme: before.theme }).toEqual(before)
   })
 
   it('changes nothing when ApplyTheme answers', () => {
