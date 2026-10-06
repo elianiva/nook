@@ -93,7 +93,7 @@ const fieldControlClass =
  * keeps mobile focus from zooming.
  */
 const numberInputClass =
-  'h-9 w-20 shrink-0 px-3 py-1.5 text-center text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
+  'h-9 w-24 shrink-0 px-3 py-1.5 text-center text-base transition-colors placeholder:text-[var(--theme-sub)] ' +
   fieldControlClass
 
 const numberField = (
