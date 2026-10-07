@@ -2,47 +2,88 @@
  * The two read states a Query-backed screen shows besides data: a request in
  * flight, and a failure with its Retry.
  *
+ * Loading renders as a skeleton: solid `--theme-block` shapes that hold the
+ * shape of the content to come — no spinners, no bordered panels.
+ *
  * A failure is local to the slice that failed, so the Learner sees what did not
  * load and can retry just that read instead of the whole screen.
  */
 
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, LoaderCircle, RotateCcw } from 'lucide'
+import { CircleAlert, RotateCcw } from 'lucide'
 import { button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { icon } from '@/lib/icons'
 import type { Message } from './model'
 
-/** A panel for the `Idle` and `Loading` states: the read has not answered yet. */
-export const loadingPanel = (label: string, h: HtmlBuilder<Message>): Html =>
-  Card<Message>(
-    { className: 'items-center' },
+/** One pulsing bar: a solid `--theme-block` block with a fixed height. */
+const skeletonBar = (className: string, h: HtmlBuilder<Message>): Html =>
+  h.div([h.Class(`animate-pulse rounded-[12px] bg-[var(--theme-block)] ${className}`)], [])
+
+/**
+ * A skeleton for the `Idle` and `Loading` states: the read has not answered yet.
+ * `rows` holds how many deck-row shapes to keep below the hero shape; it
+ * defaults to 3 so a full screen holds its shape while it loads.
+ */
+export const loadingPanel = (label: string, h: HtmlBuilder<Message>, rows = 3): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-2'), h.Role('status'), h.AriaLabel(label)],
     [
-      h.div(
-        [h.Class('flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground')],
-        [icon(h, LoaderCircle, 'size-4 animate-spin'), label],
-      ),
+      h.span([h.Class('sr-only')], [label]),
+      skeletonBar('h-[168px] w-full rounded-[20px]', h),
+      ...rowShapes(rows, h),
     ],
-    h,
+  )
+
+/** A hero-only skeleton for a summary slice such as the Home overview. */
+export const loadingHero = (label: string, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-2'), h.Role('status'), h.AriaLabel(label)],
+    [h.span([h.Class('sr-only')], [label]), skeletonBar('h-[168px] w-full rounded-[20px]', h)],
+  )
+
+/** Row-only skeletons for a list slice such as the deck list. */
+export const loadingRows = (label: string, h: HtmlBuilder<Message>, rows = 3): Html =>
+  h.div(
+    [h.Class('flex flex-col gap-2'), h.Role('status'), h.AriaLabel(label)],
+    [h.span([h.Class('sr-only')], [label]), ...rowShapes(rows, h)],
+  )
+
+/** One deck-row shape: avatar block, two text lines, and a count block. */
+const rowShapes = (rows: number, h: HtmlBuilder<Message>): ReadonlyArray<Html> =>
+  Array.from({ length: rows }, () =>
+    h.div(
+      [h.Class('flex items-center gap-3 rounded-[14px] bg-[var(--theme-block)] p-3')],
+      [
+        skeletonBar('size-10 shrink-0 rounded-xl', h),
+        h.div(
+          [h.Class('flex min-w-0 flex-1 flex-col gap-1.5')],
+          [skeletonBar('h-3.5 w-2/3', h), skeletonBar('h-3 w-1/2', h)],
+        ),
+        skeletonBar('h-6 w-8 shrink-0', h),
+      ],
+    ),
   )
 
 /** A panel for the `Failure` state: the message, and the read to run again. */
 export const errorPanel = (message: string, onRetry: Message, h: HtmlBuilder<Message>): Html =>
-  Card<Message>(
-    { className: 'items-center border-destructive/40' },
+  h.div(
+    [
+      h.Class(
+        'flex flex-col items-center gap-3 rounded-[14px] border-0 bg-[var(--theme-block)] px-4 py-6 text-center',
+      ),
+    ],
     [
       h.div(
-        [h.Class('flex flex-col items-center gap-3 py-6 text-center'), h.Role('alert')],
+        [h.Class('flex flex-col items-center gap-3 text-center'), h.Role('alert')],
         [
-          icon(h, CircleAlert, 'size-5 text-destructive'),
-          h.p([h.Class('max-w-64 text-xs text-destructive')], [message]),
+          icon(h, CircleAlert, 'size-5 text-[var(--theme-strong)]'),
+          h.p([h.Class('max-w-64 text-xs text-[var(--theme-ink)]')], [message]),
           button<Message>(
-            { onClick: onRetry, variant: 'outline', size: 'sm' },
+            { onClick: onRetry, size: 'sm' },
             [icon(h, RotateCcw, 'size-3.5'), 'Retry'],
             h,
           ),
         ],
       ),
     ],
-    h,
   )

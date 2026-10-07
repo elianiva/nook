@@ -5,7 +5,7 @@ type Child = Html | string
 import { cn } from '@/lib/utils'
 
 export const emptyClass =
-  'gap-4 rounded-xl border-dashed p-6 flex w-full min-w-0 flex-1 flex-col items-center justify-center text-center text-balance'
+  'gap-4 rounded-[14px] border-0 bg-[var(--theme-block)] p-6 flex w-full min-w-0 flex-1 flex-col items-center justify-center text-center text-balance'
 
 export const emptyHeaderClass = 'gap-2 flex max-w-sm flex-col items-center'
 

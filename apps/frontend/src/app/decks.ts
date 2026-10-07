@@ -9,8 +9,7 @@
 import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, Inbox, LoaderCircle, Search, Upload } from 'lucide'
-import { Card } from '@/components/ui/card'
+import { CircleAlert, Inbox, Search, Upload } from 'lucide'
 import { Empty } from '@/components/ui/empty'
 import { input } from '@/components/ui/input'
 import { button } from '@/components/ui/button'
@@ -19,7 +18,7 @@ import { icon } from '@/lib/icons'
 import type { DeckSummary } from '@nook/api'
 import type { ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
 import { deckRow } from './home'
-import { errorPanel, loadingPanel } from './load-state'
+import { errorPanel, loadingRows } from './load-state'
 import { Message } from './model'
 import type { Model } from './model'
 import { decksQuery } from './queries'
@@ -129,46 +128,31 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   const actions: ReadonlyArray<Child> =
     state.phase === 'failed'
       ? [
-          button<Message>(
-            { onClick: Message.ClickedRetryImport(), variant: 'outline', size: 'sm' },
-            ['Retry'],
-            h,
-          ),
-          button<Message>(
-            { onClick: Message.ClickedDismissImport(), variant: 'ghost', size: 'sm' },
-            ['Dismiss'],
-            h,
-          ),
+          button<Message>({ onClick: Message.ClickedRetryImport(), size: 'sm' }, ['Retry'], h),
+          button<Message>({ onClick: Message.ClickedDismissImport(), size: 'sm' }, ['Dismiss'], h),
         ]
       : state.phase === 'done'
-        ? [
-            button<Message>(
-              { onClick: Message.ClickedDismissImport(), variant: 'ghost', size: 'sm' },
-              ['Dismiss'],
-              h,
-            ),
-          ]
+        ? [button<Message>({ onClick: Message.ClickedDismissImport(), size: 'sm' }, ['Dismiss'], h)]
         : state.active
-          ? [
-              button<Message>(
-                { onClick: Message.ClickedCancelImport(), variant: 'ghost', size: 'sm' },
-                ['Cancel'],
-                h,
-              ),
-            ]
+          ? [button<Message>({ onClick: Message.ClickedCancelImport(), size: 'sm' }, ['Cancel'], h)]
           : []
 
-  return Card<Message>(
-    { className: 'gap-2 p-3' },
+  return h.div(
+    [h.Class('flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3')],
     [
       h.div(
         [h.Class('flex items-center gap-2')],
         [
-          icon(
-            h,
-            state.phase === 'failed' ? CircleAlert : state.phase === 'done' ? Upload : LoaderCircle,
-            `size-4 shrink-0 ${header.tone}`,
-          ),
+          state.phase === 'running' || state.phase === 'reading' || state.phase === 'writing'
+            ? h.span(
+                [h.Class('size-4 shrink-0 animate-pulse rounded-[6px] bg-[var(--theme-bar-idle)]')],
+                [],
+              )
+            : icon(
+                h,
+                state.phase === 'failed' ? CircleAlert : Upload,
+                `size-4 shrink-0 ${header.tone}`,
+              ),
           h.span(
             [h.Class(`min-w-0 flex-1 truncate text-xs font-medium ${header.tone}`)],
             [header.text],
@@ -196,7 +180,6 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
           ]),
       ...(actions.length === 0 ? [] : [h.div([h.Class('flex gap-1 pt-1')], actions)]),
     ],
-    h,
   )
 }
 
@@ -278,7 +261,6 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
           {
             onClick: Message.ClickedImport(),
             isDisabled: model.importState.active,
-            variant: 'outline',
             size: 'icon-lg',
             className: 'h-11 w-11 rounded-[14px] border-0 bg-[var(--theme-block)] shadow-none',
             attributes: [h.AriaLabel('Import deck')],
@@ -290,7 +272,7 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
     ),
     importPanel(model, h),
     ...AsyncData.matchData(decksAsync, {
-      onEmpty: () => [loadingPanel('Loading decks…', h)],
+      onEmpty: () => [loadingRows('Loading decks…', h)],
       onFailure: (error) => [errorPanel(error, Message.ClickedRetryDecks(), h)],
       onData: (all) => deckList(all, model.decksQuery, h),
     }),

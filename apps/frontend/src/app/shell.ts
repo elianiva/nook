@@ -266,7 +266,7 @@ const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
       h.div(
         [
           h.Class(
-            'flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2',
+            'flex items-center gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2',
           ),
           h.Role('alert'),
         ],
@@ -276,7 +276,6 @@ const noticeBanner = (model: Model, h: HtmlBuilder<Message>): Child =>
           button<Message>(
             {
               onClick: Message.ClickedRetry(),
-              variant: 'outline',
               size: 'sm',
               attributes: [h.AriaLabel('Retry')],
             },
@@ -298,19 +297,13 @@ const updateBanner = (model: Model, h: HtmlBuilder<Message>): Child => {
   if (model.route._tag === 'Review' || model.route._tag === 'ReviewDeck') return h.empty
   return h.div(
     [
-      h.Class(
-        'flex items-center gap-2 rounded-lg border border-[var(--theme-ink)]/20 bg-[var(--theme-block)] px-3 py-2',
-      ),
+      h.Class('flex items-center gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2'),
       h.Role('status'),
     ],
     [
       icon(h, RotateCcw, 'size-4 shrink-0'),
       h.span([h.Class('min-w-0 flex-1 text-xs')], ['A newer version is ready.']),
-      button<Message>(
-        { onClick: Message.ClickedReloadApp(), variant: 'outline', size: 'sm' },
-        ['Reload'],
-        h,
-      ),
+      button<Message>({ onClick: Message.ClickedReloadApp(), size: 'sm' }, ['Reload'], h),
     ],
   )
 }

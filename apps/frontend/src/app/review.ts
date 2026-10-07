@@ -15,7 +15,7 @@
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { Check, Download, Inbox, LoaderCircle, Undo2 } from 'lucide'
+import { Check, Download, Inbox, Undo2 } from 'lucide'
 import { button } from '@/components/ui/button'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
@@ -28,20 +28,24 @@ import { routeToUrl } from './routes'
 
 type Child = Html | string
 
-/** The four Grades, in FSRS's order, each with its own tone. */
+/** The four Grades, in FSRS's order, each with its own solid colour. */
 const GRADES: ReadonlyArray<{ grade: Grade; className: string }> = [
   {
     grade: 'Again',
-    className: 'border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20',
+    className:
+      'border-0 bg-destructive text-destructive-foreground shadow-none hover:bg-destructive/90',
   },
   {
     grade: 'Hard',
-    className: 'border-orange-500/40 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20',
+    className: 'border-0 bg-orange-500 text-white shadow-none hover:bg-orange-500/90',
   },
-  { grade: 'Good', className: 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20' },
+  {
+    grade: 'Good',
+    className: 'border-0 bg-primary text-primary-foreground shadow-none hover:bg-primary/90',
+  },
   {
     grade: 'Easy',
-    className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20',
+    className: 'border-0 bg-emerald-500 text-white shadow-none hover:bg-emerald-500/90',
   },
 ]
 
@@ -56,12 +60,19 @@ const centered = (children: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html
   )
 
 const loadingView = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
-  centered(
+  h.div(
+    [h.Class('flex min-h-0 flex-1 flex-col gap-2 px-4 pt-3'), h.Role('status')],
     [
-      icon(h, LoaderCircle, 'size-6 animate-spin text-muted-foreground'),
-      h.p([h.Class('text-sm text-muted-foreground')], ['Loading Cards…']),
+      h.span([h.Class('sr-only')], ['Loading Cards…']),
+      h.div([h.Class('h-1 w-full animate-pulse rounded-full bg-[var(--theme-block)]')], []),
+      h.div(
+        [h.Class('m-auto w-full animate-pulse rounded-2xl bg-[var(--theme-block)] px-5 py-8')],
+        [
+          h.div([h.Class('mx-auto h-5 w-2/3 rounded-[10px] bg-white/80')], []),
+          h.div([h.Class('mx-auto mt-3 h-5 w-1/2 rounded-[10px] bg-white/80')], []),
+        ],
+      ),
     ],
-    h,
   ),
 ]
 
@@ -120,7 +131,6 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
                     button<Message>(
                       {
                         onClick: Message.ClickedExport(),
-                        variant: 'outline',
                         size: 'sm',
                       },
                       [icon(h, Download, 'size-3.5', 'inline-start'), 'Export collection'],
@@ -146,7 +156,7 @@ const cardBody = (card: ReviewCard, revealed: boolean, h: HtmlBuilder<Message>):
     [
       h.div(
         [
-          h.Class('card rounded-2xl border border-border bg-white px-5 py-8 shadow-sm'),
+          h.Class('card rounded-2xl border-0 bg-[var(--theme-block)] px-5 py-8 shadow-none'),
           h.InnerHTML(revealed ? card.answer : card.question),
         ],
         [],
@@ -162,7 +172,6 @@ const gradeRow = (h: HtmlBuilder<Message>): Html =>
       button<Message>(
         {
           onClick: Message.ClickedGrade({ grade }),
-          variant: 'outline',
           size: '2xl',
           className: cn(
             'flex-1 flex-col gap-0 select-none transition-transform active:scale-[0.97]',
@@ -179,17 +188,13 @@ const errorBanner = (error: string, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
       h.Class(
-        'mb-2 flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2',
+        'mb-2 flex items-center gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2',
       ),
       h.Role('alert'),
     ],
     [
       h.span([h.Class('min-w-0 flex-1 text-xs text-destructive')], [error]),
-      button<Message>(
-        { onClick: Message.ClickedRetryGrades(), variant: 'outline', size: 'sm' },
-        ['Retry'],
-        h,
-      ),
+      button<Message>({ onClick: Message.ClickedRetryGrades(), size: 'sm' }, ['Retry'], h),
     ],
   )
 
@@ -262,11 +267,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
         ),
         // The action bar, under the thumb.
         h.div(
-          [
-            h.Class(
-              'shrink-0 border-t border-border bg-background/95 px-4 pt-3 pb-safe backdrop-blur',
-            ),
-          ],
+          [h.Class('shrink-0 border-0 bg-background/95 px-4 pt-3 pb-safe backdrop-blur')],
           [
             ...(error === null ? [] : [errorBanner(error, h)]),
             ...(review.undone
@@ -310,7 +311,6 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                 button<Message>(
                   {
                     onClick: Message.ClickedUndoGrade(),
-                    variant: 'outline',
                     size: 'xl',
                     className: 'shrink-0 select-none px-3',
                     isDisabled: !canUndo,

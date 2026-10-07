@@ -14,7 +14,7 @@ export type ItemVariant = (typeof itemVariantKeys)[number]
 
 export const itemVariants: Record<ItemVariant, string> = {
   default: 'border-transparent',
-  outline: 'border-border',
+  outline: 'border-0 bg-[var(--theme-block)] shadow-none',
   muted: 'bg-muted/50 border-transparent',
 }
 

@@ -13,7 +13,6 @@ import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
 import { CircleAlert, Pencil, Play, RotateCcw, Trash2 } from 'lucide'
 import { badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
 import { button } from '@/components/ui/button'
@@ -22,7 +21,7 @@ import { textarea } from '@/components/ui/textarea'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
-import { errorPanel, loadingPanel } from './load-state'
+import { errorPanel, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
 import type { DeckManage, Model } from './model'
 import { deckDetailQuery } from './queries'
@@ -30,13 +29,12 @@ import { routeToUrl } from './routes'
 
 type Child = Html | string
 
-const stateVariant = (state: CardData['state']): 'default' | 'secondary' | 'outline' => {
+const stateVariant = (state: CardData['state']): 'default' | 'secondary' => {
   switch (state) {
     case 'new':
       return 'secondary'
     case 'learning':
     case 'relearning':
-      return 'outline'
     case 'review':
       return 'default'
   }
@@ -68,10 +66,7 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
   h.div(
     [
       h.Class(
-        cn(
-          'grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 px-3 py-2.5',
-          index > 0 && 'border-t border-border',
-        ),
+        'grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2.5',
       ),
     ],
     [
@@ -102,8 +97,8 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
   )
 
 const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
-  Card<Message>(
-    { className: 'p-4' },
+  h.div(
+    [h.Class('rounded-[20px] border-0 bg-[var(--theme-block)] p-4')],
     [
       h.div(
         [h.Class('flex flex-col gap-1')],
@@ -116,7 +111,7 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
         [h.Class('mt-3 grid grid-cols-3 gap-2 text-center')],
         [
           h.div(
-            [h.Class('rounded-lg bg-muted/60 px-2 py-2')],
+            [h.Class('rounded-[10px] border-0 bg-white px-2 py-2')],
             [
               h.div(
                 [h.Class('text-lg font-bold tabular-nums leading-none text-destructive')],
@@ -126,7 +121,7 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
             ],
           ),
           h.div(
-            [h.Class('rounded-lg bg-muted/60 px-2 py-2')],
+            [h.Class('rounded-[10px] border-0 bg-white px-2 py-2')],
             [
               h.div(
                 [h.Class('text-lg font-bold tabular-nums leading-none')],
@@ -136,7 +131,7 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
             ],
           ),
           h.div(
-            [h.Class('rounded-lg bg-muted/60 px-2 py-2')],
+            [h.Class('rounded-[10px] border-0 bg-white px-2 py-2')],
             [
               h.div(
                 [h.Class('text-lg font-bold tabular-nums leading-none')],
@@ -171,7 +166,6 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
         h,
       ),
     ],
-    h,
   )
 
 /** A deck id that names no Deck. This is an answer, not a failure to retry. */
@@ -208,10 +202,9 @@ const deckBody = (
 ): ReadonlyArray<Child> => [
   header(detail, h),
   h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
-  Card<Message>(
-    { className: 'py-0' },
+  h.div(
+    [h.Class('flex flex-col gap-1.5')],
     detail.cards.map((card, index) => cardRow(card, index, h)),
-    h,
   ),
   h.h2([h.Class('text-sm font-semibold')], ['Manage']),
   manageSection(detail, forDeck ? manage : null, h),
@@ -241,15 +234,15 @@ const manageSection = (
     error: Option.none(),
   }
   const id = detail.summary.id
-  return Card<Message>(
-    { className: 'gap-2 p-3' },
+  return h.div(
+    [h.Class('flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3')],
     [
       ...(state.saved
         ? [
             h.div(
               [
                 h.Class(
-                  'rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400',
+                  'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
                 ),
               ],
               ['Deck renamed.'],
@@ -262,7 +255,7 @@ const manageSection = (
           h.div(
             [
               h.Class(
-                'flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive',
+                'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
               ),
               h.Role('alert'),
             ],
@@ -279,7 +272,6 @@ const manageSection = (
             : [removeConfirm(id, state.saving, detail.summary.totalCount, h)],
       }),
     ],
-    h,
   )
 }
 
@@ -304,7 +296,6 @@ const renameRow = (detail: DeckDetail, saving: boolean, h: HtmlBuilder<Message>)
             name: detail.summary.name,
             description: detail.summary.description,
           }),
-          variant: 'outline',
           size: 'sm',
           isDisabled: saving,
         },
@@ -358,7 +349,6 @@ const renameForm = (
       button<Message>(
         {
           onClick: Message.ClickedCancelDeckEdit(),
-          variant: 'outline',
           size: 'sm',
           isDisabled: state.saving,
         },
@@ -375,7 +365,7 @@ const destructiveRows = (
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Child> => [
   h.div(
-    [h.Class('flex items-center gap-3 border-t border-black/5 py-1 pt-3')],
+    [h.Class('flex items-center gap-3 py-1 pt-3')],
     [
       h.div(
         [h.Class('min-w-0 flex-1')],
@@ -390,7 +380,6 @@ const destructiveRows = (
       button<Message>(
         {
           onClick: Message.ClickedResetDeck({ deckId: id }),
-          variant: 'outline',
           size: 'sm',
           isDisabled: saving,
         },
@@ -415,7 +404,6 @@ const destructiveRows = (
       button<Message>(
         {
           onClick: Message.ClickedRemoveDeck({ deckId: id }),
-          variant: 'destructive',
           size: 'sm',
           isDisabled: saving,
         },
@@ -428,7 +416,7 @@ const destructiveRows = (
 
 const resetConfirm = (id: DeckId, saving: boolean, h: HtmlBuilder<Message>): Child =>
   h.div(
-    [h.Class('flex flex-col gap-2 rounded-lg bg-muted/60 px-3 py-2.5')],
+    [h.Class('flex flex-col gap-2 rounded-[10px] border-0 bg-white px-3 py-2.5')],
     [
       h.p(
         [h.Class('text-xs')],
@@ -452,7 +440,6 @@ const resetConfirm = (id: DeckId, saving: boolean, h: HtmlBuilder<Message>): Chi
           button<Message>(
             {
               onClick: Message.ClickedCancelDeckConfirm(),
-              variant: 'outline',
               size: 'sm',
               isDisabled: saving,
             },
@@ -471,12 +458,7 @@ const removeConfirm = (
   h: HtmlBuilder<Message>,
 ): Child =>
   h.div(
-    [
-      h.Class(
-        'flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5',
-      ),
-      h.Role('alert'),
-    ],
+    [h.Class('flex flex-col gap-2 rounded-[10px] border-0 bg-white px-3 py-2.5'), h.Role('alert')],
     [
       h.p(
         [h.Class('text-xs text-destructive')],
@@ -490,7 +472,6 @@ const removeConfirm = (
           button<Message>(
             {
               onClick: Message.ClickedConfirmRemoveDeck({ deckId: id }),
-              variant: 'destructive',
               size: 'sm',
               isDisabled: saving,
               className: 'flex-1',
@@ -501,7 +482,6 @@ const removeConfirm = (
           button<Message>(
             {
               onClick: Message.ClickedCancelDeckConfirm(),
-              variant: 'outline',
               size: 'sm',
               isDisabled: saving,
             },
@@ -519,7 +499,7 @@ export const deckDetailView = (
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Child> =>
   AsyncData.matchData(deckDetailQuery.read(model.deckDetail, { deckId }), {
-    onEmpty: () => [loadingPanel('Loading this deck…', h)],
+    onEmpty: () => [loadingHero('Loading this deck…', h), loadingRows('Loading Cards…', h, 4)],
     onFailure: (error) =>
       error === 'notFound'
         ? deckNotFound(h)

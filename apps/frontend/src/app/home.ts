@@ -18,7 +18,7 @@ import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { DeckSummary, Overview } from '@nook/api'
-import { errorPanel, loadingPanel } from './load-state'
+import { errorPanel, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
 import type { Model } from './model'
 import { decksQuery, overviewQuery } from './queries'
@@ -278,7 +278,7 @@ export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<C
   const decks = AsyncData.getOrElse(() => [] as ReadonlyArray<DeckSummary>)(decksAsync)
   return [
     ...AsyncData.matchData(overviewAsync, {
-      onEmpty: () => [loadingPanel('Loading the overview…', h)],
+      onEmpty: () => [loadingHero('Loading the overview…', h)],
       onFailure: (error) => [errorPanel(error, Message.ClickedRetryOverview(), h)],
       onData: (overview) => [
         hero(overview, h),
@@ -301,7 +301,7 @@ export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<C
       ],
     ),
     ...AsyncData.matchData(decksAsync, {
-      onEmpty: () => [loadingPanel('Loading decks…', h)],
+      onEmpty: () => [loadingRows('Loading decks…', h)],
       onFailure: (error) => [errorPanel(error, Message.ClickedRetryDecks(), h)],
       onData: (list) => deckList(list, h),
     }),

@@ -274,7 +274,7 @@ const errorBanner = (draft: SettingsDraft, h: HtmlBuilder<Message>): Child =>
       h.div(
         [
           h.Class(
-            'flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive',
+            'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
           ),
         ],
         [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
@@ -297,7 +297,6 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
       button<Message>(
         {
           onClick: Message.ClickedResetSettings(),
-          variant: 'outline',
           size: 'lg',
           className: 'h-11 border-0 bg-[var(--theme-block)] px-4 shadow-none',
           attributes: [h.AriaLabel('Reset changes')],
@@ -355,7 +354,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
           h.div(
             [
               h.Class(
-                'rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400',
+                'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
               ),
             ],
             ['Settings saved on this device.'],
@@ -376,7 +375,6 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
             button<Message>(
               {
                 onClick: Message.ClickedExport(),
-                variant: 'outline',
                 size: 'lg',
                 className: 'h-9 w-full border-0 bg-white text-sm shadow-none',
               },
