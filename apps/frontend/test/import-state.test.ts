@@ -6,24 +6,20 @@
  * forgets the archive. They are pure, so they are tested without a browser.
  */
 
-import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
-import type { Url } from 'foldkit/url'
+import { describe, expect, it } from '@effect/vitest'
+import { Arbitrary, Option, Schema } from 'effect'
 import { ImportId } from '@nook/api'
 import { Message, idleImport, seedModel } from '../src/app/model'
 import type { Model } from '../src/app/model'
 import { init, update } from '../src/app/update'
+import { ImportPreview, ImportProgress } from '../src/lib/import-worker-protocol'
+import { names, some, url } from './helpers'
 
 const ID = ImportId.make('a'.repeat(64))
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
+const importId = Arbitrary.schema(ImportId)
+const text = Arbitrary.schema(Schema.String)
+const previewValue = Arbitrary.schema(ImportPreview)
+const progressValue = Arbitrary.schema(ImportProgress)
 
 const decksModel = (): Model => seedModel(url('/decks'))
 
@@ -35,16 +31,6 @@ const progress = {
   cardCount: 2,
   mediaCount: 1,
 }
-
-/** The value inside a `Some`, or a thrown error when the Option is empty. */
-const some = <A>(option: Option.Option<A>): A => {
-  if (Option.isNone(option)) throw new Error('expected Some')
-  return option.value
-}
-
-const names = (result: {
-  readonly commands?: ReadonlyArray<{ readonly name: string }>
-}): string[] => (result.commands ?? []).map((command) => command.name)
 
 /** A Model whose Import file is picked: the detail panel shows, nothing runs yet. */
 const picked = (): Model =>
@@ -67,30 +53,38 @@ const previewed = (): Model => update(picked(), Message.GotImportPreview({ previ
 const running = (): Model => update(previewed(), Message.ClickedStartImport()).model
 
 describe('Import state', () => {
-  it('opens the detail panel on pick, with no run yet', () => {
-    const { model } = update(decksModel(), Message.GotImportFile({ id: ID, filename: 'x.apkg' }))
-    expect(some(model.importState.id)).toBe(ID)
-    expect(model.importState.filename).toBe('x.apkg')
+  it.prop('opens the detail panel for any picked archive', [importId, text], ([id, filename]) => {
+    const { model } = update(decksModel(), Message.GotImportFile({ id, filename }))
+    expect(some(model.importState.id)).toBe(id)
+    expect(model.importState.filename).toBe(filename)
     expect(model.importState.phase).toBe('preview')
     expect(model.importState.active).toBe(true)
     expect(Option.isNone(model.importState.preview)).toBe(true)
     expect(model.importState.includeMedia).toBe(true)
   })
 
-  it('lands the preview without starting the run', () => {
+  it.prop('lands any preview without starting the run', [previewValue], ([preview]) => {
     const { model } = update(picked(), Message.GotImportPreview({ preview }))
     expect(model.importState.phase).toBe('preview')
     expect(model.importState.active).toBe(false)
-    expect(some(model.importState.preview).noteCount).toBe(2)
+    expect(some(model.importState.preview)).toEqual(preview)
     expect(Option.isNone(model.importState.error)).toBe(true)
   })
 
-  it('toggles the media choice on the detail panel', () => {
-    const off = update(previewed(), Message.ToggledImportMedia({ isChecked: false })).model
-    expect(off.importState.includeMedia).toBe(false)
-    expect(off.importState.phase).toBe('preview')
-    const on = update(off, Message.ToggledImportMedia({ isChecked: true })).model
-    expect(on.importState.includeMedia).toBe(true)
+  it.prop(
+    'sets the selected media choice on the detail panel',
+    [Arbitrary.schema(Schema.Boolean)],
+    ([isChecked]) => {
+      const { model } = update(previewed(), Message.ToggledImportMedia({ isChecked }))
+      expect(model.importState.includeMedia).toBe(isChecked)
+      expect(model.importState.phase).toBe('preview')
+    },
+  )
+
+  it.prop('records any progress the worker reports', [progressValue], ([progress]) => {
+    const { model } = update(running(), Message.ReportedImport({ progress }))
+    expect(some(model.importState.status)).toEqual(progress)
+    expect(model.importState.active).toBe(true)
   })
 
   it('starts the run from the detail panel', () => {
@@ -148,12 +142,6 @@ describe('Import state', () => {
     expect(some(listing.importState.readStage)).toBe('listing')
     const writing = update(listing, Message.ImportWorkerPhase({ phase: 'writing' })).model
     expect(Option.isNone(writing.importState.readStage)).toBe(true)
-  })
-
-  it('records the counts the worker reports', () => {
-    const { model } = update(running(), Message.ReportedImport({ progress }))
-    expect(some(model.importState.status).notesImported).toBe(2)
-    expect(model.importState.active).toBe(true)
   })
 
   it('finishes, forgets the archive, and refetches the decks', () => {

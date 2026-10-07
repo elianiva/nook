@@ -13,14 +13,10 @@ import { decodeImportJob } from '../src/lib/import-jobs'
 import { ImportPreview, ImportProgress } from '../src/lib/import-worker-protocol'
 import { Message } from '../src/app/model'
 import { toMessages } from '../src/app/subscriptions'
+import { some } from './helpers'
 
 const ID = 'a'.repeat(64)
 const blob = new Blob(['hello'])
-
-const some = <A>(option: Option.Option<A>): A => {
-  if (Option.isNone(option)) throw new Error('expected Some')
-  return option.value
-}
 
 describe('decodeImportJob', () => {
   it('reads a stored job', () => {

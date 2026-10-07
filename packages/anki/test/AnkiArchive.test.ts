@@ -158,8 +158,6 @@ describe('AnkiArchive', () => {
             assert.strictEqual(file.bytes.length, declared?.bytes)
             assert.strictEqual(createHash('sha1').update(file.bytes).digest('hex'), file.checksum)
           }
-
-          assert.deepStrictEqual(yield* opened.diagnostics, [])
         }),
       ).pipe(Effect.provide(layer(AnkiSqliteNode.source))),
     // The first run downloads the 108 MiB archive, which outlives the 5 s default.

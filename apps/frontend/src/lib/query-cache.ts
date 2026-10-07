@@ -9,19 +9,17 @@
  * network answers and a failed refresh can fall back to data within its max
  * age instead of failing cold.
  *
- * The open/transaction pattern mirrors `review-queue-store.ts`: one request
- * per connection, closed when it lands. Stored values are untrusted and
- * decoded at the boundary; anything misshapen reads as absent.
+ * Stored values are untrusted and decoded at the boundary; anything misshapen
+ * reads as absent.
  */
 
 import { Effect, Option } from 'effect'
+import { runIdbRequest } from './idb'
 
-const DB_NAME = 'nook'
 const STORE_NAME = 'queryCache'
-const DB_VERSION = 4
 
 /** Bump when a cached shape changes. Older records read as absent. */
-export const QUERY_CACHE_VERSION = 1
+const QUERY_CACHE_VERSION = 1
 
 /** A cached answer: the data, when it landed, and the shape version. */
 export interface CachedQuery<Data> {
@@ -41,66 +39,7 @@ const request = <A>(
   run: (store: IDBObjectStore) => IDBRequest<A>,
 ): Effect.Effect<A, QueryCacheUnavailable> =>
   Effect.tryPromise({
-    try: () =>
-      new Promise<A>((resolve, reject) => {
-        if (typeof indexedDB === 'undefined') {
-          reject(new Error('No IndexedDB in this environment.'))
-          return
-        }
-        const open = indexedDB.open(DB_NAME, DB_VERSION)
-        open.onupgradeneeded = () => {
-          const db = open.result
-          // The database is shared (see `review-queue-store.ts`): create every
-          // store the app owns, so whichever module upgrades first leaves a
-          // complete database behind.
-          for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
-            if (!db.objectStoreNames.contains(name)) {
-              db.createObjectStore(name)
-            }
-          }
-        }
-        open.onerror = () => reject(open.error ?? new Error('Could not open the query store.'))
-        open.onsuccess = () => {
-          const db = open.result
-          const close = (): void => db.close()
-          if (!db.objectStoreNames.contains(STORE_NAME)) {
-            // The database predates this store: widen the schema, then retry
-            // the open so the upgrade that creates the store can run (see
-            // `review-queue-store.ts` for the full pattern).
-            const version = db.version + 1
-            close()
-            const retry = indexedDB.open(DB_NAME, version)
-            retry.onupgradeneeded = () => {
-              const upgraded = retry.result
-              for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
-                if (!upgraded.objectStoreNames.contains(name)) {
-                  upgraded.createObjectStore(name)
-                }
-              }
-            }
-            retry.onerror = () =>
-              reject(retry.error ?? new Error('Could not open the query store.'))
-            retry.onsuccess = () => {
-              const retried = retry.result
-              const transaction = retried.transaction(STORE_NAME, mode)
-              transaction.oncomplete = () => retried.close()
-              transaction.onabort = () => retried.close()
-              const result = run(transaction.objectStore(STORE_NAME))
-              result.onsuccess = () => resolve(result.result)
-              result.onerror = () =>
-                reject(result.error ?? new Error('The query store did not answer.'))
-            }
-            return
-          }
-          const transaction = db.transaction(STORE_NAME, mode)
-          transaction.oncomplete = close
-          transaction.onabort = close
-          const result = run(transaction.objectStore(STORE_NAME))
-          result.onsuccess = () => resolve(result.result)
-          result.onerror = () =>
-            reject(result.error ?? new Error('The query store did not answer.'))
-        }
-      }),
+    try: () => runIdbRequest(STORE_NAME, mode, run),
     catch: () => new QueryCacheUnavailable(),
   })
 

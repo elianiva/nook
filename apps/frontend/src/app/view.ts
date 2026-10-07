@@ -5,7 +5,6 @@
  * identity boundaries for the differ, so one screen per function.
  */
 
-import { Option } from 'effect'
 import type { Document, HtmlBuilder } from 'foldkit/html'
 import { deckDetailView } from './deck-detail'
 import { decksView } from './decks'
@@ -35,24 +34,14 @@ const notFoundView = (model: Model, h: HtmlBuilder<Message>) =>
     h,
   )
 
-const homeShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, homeView(model, h), h)
-
-const decksShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, decksView(model, h), h)
-
-const settingsShell = (model: Model, h: HtmlBuilder<Message>) =>
-  shell(model, settingsView(model, h), h)
-
-const reviewShell = (model: Model, h: HtmlBuilder<Message>) => shell(model, reviewView(model, h), h)
-
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
-  void Option.isSome
   const body = AppRoute.match(model.route, {
-    Home: () => homeShell(model, h),
-    Decks: () => decksShell(model, h),
+    Home: () => shell(model, homeView(model, h), h),
+    Decks: () => shell(model, decksView(model, h), h),
     DeckDetail: ({ deckId }) => shell(model, deckDetailView(model, deckId, h), h),
-    Review: () => reviewShell(model, h),
-    ReviewDeck: () => reviewShell(model, h),
-    Settings: () => settingsShell(model, h),
+    Review: () => shell(model, reviewView(model, h), h),
+    ReviewDeck: () => shell(model, reviewView(model, h), h),
+    Settings: () => shell(model, settingsView(model, h), h),
     NotFound: () => notFoundView(model, h),
   })
   return { title: 'nook', body }

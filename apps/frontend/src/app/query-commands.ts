@@ -18,25 +18,14 @@ import { DeckId } from '@nook/api'
 import { loadQuery } from '@/lib/query-cache'
 import {
   DECK_DETAIL_CACHE_LIMIT,
+  DECK_DETAIL_INDEX_KEY,
+  DECK_DETAIL_INDEX_TTL_MS,
   deckDetailPersistFor,
+  decodeIndex,
   decksPersist,
   overviewPersist,
 } from './queries'
 import { Message, RestoredAnswer } from './model'
-
-/** The 20 newest deck-detail keys, oldest first. Best-effort, like the index it reads. */
-const DECK_DETAIL_INDEX_KEY = 'query:deck-detail:index'
-const YEAR_MS = 365 * 24 * 60 * 60 * 1000
-
-const decodeIndex = (value: unknown): Option.Option<ReadonlyArray<string>> => {
-  if (!Array.isArray(value)) return Option.none()
-  const entries: Array<string> = []
-  for (const entry of value) {
-    if (typeof entry !== 'string') return Option.none()
-    entries.push(entry)
-  }
-  return Option.some(entries)
-}
 
 /**
  * Reads every cached list answer: the overview, the decks, and the last 20
@@ -63,9 +52,11 @@ export const RestoreQueries = Command.define('RestoreQueries', {
     if (Option.isSome(decks)) {
       answers.push({ kind: 'decks', value: decks.value.data.data })
     }
-    const index = yield* loadQuery(DECK_DETAIL_INDEX_KEY, YEAR_MS, decodeIndex).pipe(
-      Effect.catch(() => Effect.succeed(Option.none())),
-    )
+    const index = yield* loadQuery(
+      DECK_DETAIL_INDEX_KEY,
+      DECK_DETAIL_INDEX_TTL_MS,
+      decodeIndex,
+    ).pipe(Effect.catch(() => Effect.succeed(Option.none())))
     const keys = Option.match(index, {
       onNone: () => [] as ReadonlyArray<string>,
       onSome: (answer) => answer.data,

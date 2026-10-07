@@ -9,7 +9,6 @@
 import { describe, expect, it } from 'vitest'
 import { AsyncData } from 'foldkit'
 import { Option, Result } from 'effect'
-import type { Url } from 'foldkit/url'
 import { DeckId, type DeckDetail } from '@nook/api'
 import { Message, seedModel } from '../src/app/model'
 import {
@@ -20,19 +19,7 @@ import {
   overviewQuery,
 } from '../src/app/queries'
 import { init, update } from '../src/app/update'
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
-
-const names = (result: {
-  readonly commands?: ReadonlyArray<{ readonly name: string }>
-}): string[] => (result.commands ?? []).map((command) => command.name)
+import { names, url } from './helpers'
 
 const deckId = DeckId.make('deck-a')
 

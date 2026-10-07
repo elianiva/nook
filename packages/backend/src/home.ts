@@ -2,10 +2,9 @@ import { Context, Effect, Layer, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { HomeRpc, StorageUnavailable } from '@nook/api'
 import type { Overview } from '@nook/api'
-import { dayStartUtc } from './day-boundary'
-import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { dayStartUtc, resolveTimezone } from './day-boundary'
+import { decodeRows, withStorageErrorPassThrough, CountRow } from './storage-error'
 
-const CountRow = Schema.Struct({ n: Schema.Number })
 const DayRow = Schema.Struct({ day: Schema.String, count: Schema.Number })
 const SettingsRow = Schema.Struct({ dayRolloverHour: Schema.Number })
 
@@ -40,8 +39,7 @@ export class Home extends Context.Service<
             FROM settings WHERE id = 1`
           const settings = yield* decodeRows(SettingsRow, settingsRows)
           const rolloverHour = settings[0]?.dayRolloverHour ?? 4
-          const timezone =
-            input?.timezone === undefined || input?.timezone === '' ? 'UTC' : input.timezone
+          const timezone = resolveTimezone(input?.timezone)
           const now = new Date()
           const boundary = dayStartUtc(timezone, rolloverHour, now)
 

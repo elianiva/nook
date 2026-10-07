@@ -19,21 +19,6 @@ import type { Message } from './model'
 const skeletonBar = (className: string, h: HtmlBuilder<Message>): Html =>
   h.div([h.Class(`animate-pulse rounded-[12px] bg-[var(--theme-block)] ${className}`)], [])
 
-/**
- * A skeleton for the `Idle` and `Loading` states: the read has not answered yet.
- * `rows` holds how many deck-row shapes to keep below the hero shape; it
- * defaults to 3 so a full screen holds its shape while it loads.
- */
-export const loadingPanel = (label: string, h: HtmlBuilder<Message>, rows = 3): Html =>
-  h.div(
-    [h.Class('flex flex-col gap-2'), h.Role('status'), h.AriaLabel(label)],
-    [
-      h.span([h.Class('sr-only')], [label]),
-      skeletonBar('h-[168px] w-full rounded-[20px]', h),
-      ...rowShapes(rows, h),
-    ],
-  )
-
 /** A hero-only skeleton for a summary slice such as the Home overview. */
 export const loadingHero = (label: string, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -86,4 +71,16 @@ export const errorPanel = (message: string, onRetry: Message, h: HtmlBuilder<Mes
         ],
       ),
     ],
+  )
+
+/** A form-validation banner: the message on a white card. No retry — fixing the input clears it. */
+export const fieldError = (message: string, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [
+      h.Class(
+        'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
+      ),
+      h.Role('alert'),
+    ],
+    [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [message])],
   )

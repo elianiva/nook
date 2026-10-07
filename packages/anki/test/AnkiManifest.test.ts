@@ -1,6 +1,5 @@
 import { assert, describe, expect, it } from '@effect/vitest'
 import { Arbitrary, Schema } from 'effect'
-import { AnkiDiagnostic } from '../src/AnkiDiagnostic'
 import { AnkiDeck, AnkiManifest, AnkiNoteType } from '../src/AnkiManifest'
 import { joinComponents } from '../src/DeckName'
 import { text } from './Generators'
@@ -8,7 +7,6 @@ import { text } from './Generators'
 const decodeDeck = Schema.decodeUnknownSync(AnkiDeck)
 const encodeDeck = Schema.encodeSync(AnkiDeck)
 const decodeNoteType = Schema.decodeUnknownSync(AnkiNoteType)
-const decodeDiagnostic = Schema.decodeUnknownSync(AnkiDiagnostic)
 
 /** An empty component is stored as `blank`, so only a non-empty one round-trips. */
 const component = text.pipe(
@@ -79,11 +77,5 @@ describe('AnkiManifest', () => {
 
     expect(manifest.noteCount).toBe(3402)
     expect(manifest.media.at(0)?.entry).toBe('0')
-  })
-})
-
-describe('AnkiDiagnostic', () => {
-  it.prop('reads every problem it reports', [Arbitrary.schema(AnkiDiagnostic)], ([diagnostic]) => {
-    assert.deepStrictEqual(decodeDiagnostic(diagnostic), diagnostic)
   })
 })

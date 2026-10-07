@@ -54,3 +54,6 @@ export const decodeRows = <S extends Schema.ConstraintCodec<unknown, unknown, ne
   rows: ReadonlyArray<unknown>,
 ): Effect.Effect<ReadonlyArray<S['Type']>, Schema.SchemaError> =>
   Schema.decodeUnknownEffect(Schema.Array(schema))(rows)
+
+/** One `COUNT(*)` row, as every count query aliases it. */
+export const CountRow = Schema.Struct({ n: Schema.Number })

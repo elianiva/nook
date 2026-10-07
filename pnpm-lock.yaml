@@ -182,6 +182,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^5.20261003.1
         version: 5.20261003.1
+      '@effect/vitest':
+        specifier: 4.0.0
+        version: 4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(vitest@5.0.1)
       '@foldkit/vite-plugin':
         specifier: ^0.26.1
         version: 0.26.1(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827))(foldkit@0.166.0(@effect/platform-browser@4.0.0(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(effect@4.0.0(patch_hash=df4e4a541a7ba5741838621fd973c876f14b1597d573cb3c99e30cd4dfe91827)))(redis@6.3.0)(vite@8.3.1(@types/node@26.6.4)(jiti@2.7.0)(terser@5.51.2)(yaml@2.9.1))

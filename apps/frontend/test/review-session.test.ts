@@ -6,24 +6,15 @@
  * itself lives behind an Effect the test never runs.
  */
 
-import { describe, expect, it } from 'vitest'
-import { Option, Schema as S } from 'effect'
-import type { Url } from 'foldkit/url'
+import { describe, expect, it } from '@effect/vitest'
+import { Arbitrary, Option, Schema as S } from 'effect'
 import { CardId, DeckId, ReviewCard } from '@nook/api'
 import type { ReviewCard as ReviewCardData } from '@nook/api'
 import { Message, seedModel } from '../src/app/model'
 import type { Model } from '../src/app/model'
 import { mediaUrlsIn } from '../src/app/api-commands'
 import { init, update } from '../src/app/update'
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
+import { names, url } from './helpers'
 
 const card = (id: string, state: ReviewCardData['state'] = 'review'): ReviewCardData => ({
   cardId: CardId.make(id),
@@ -39,6 +30,18 @@ const card = (id: string, state: ReviewCardData['state'] = 'review'): ReviewCard
   difficulty: 5,
 })
 
+const reviewCard = Arbitrary.schema(ReviewCard).pipe(
+  Arbitrary.filter(({ dueInDays, stability, difficulty }) =>
+    [dueInDays, stability, difficulty].every(
+      (value) => Number.isFinite(value) && !Object.is(value, -0),
+    ),
+  ),
+)
+const cardWithDueAt = Arbitrary.all({
+  card: reviewCard,
+  dueAt: Arbitrary.schema(S.String),
+}).pipe(Arbitrary.map(({ card, dueAt }) => ({ ...card, dueAt: Option.some(dueAt) })))
+
 const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
   const started = seedModel(url('/review'))
   const queued = update(
@@ -49,8 +52,6 @@ const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
       lapseMinutes: 10,
       reviewedToday: 0,
       newToday: 0,
-      newRemaining: 0,
-      dueRemaining: 0,
       totalNew: cards.filter((card) => card.state === 'new').length,
       totalDue: cards.filter((card) => card.state !== 'new').length,
       newCapped: false,
@@ -59,10 +60,6 @@ const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
   ).model
   return update(queued, Message.RevealedAnswer()).model
 }
-
-const names = (result: {
-  readonly commands?: ReadonlyArray<{ readonly name: string }>
-}): string[] => (result.commands ?? []).map((command) => command.name)
 
 describe('review session', () => {
   it('starts the cache load before the network queue', () => {
@@ -150,25 +147,26 @@ describe('review session', () => {
     ])
   })
 
-  it('keeps an Option-carrying card through a clone-shaped trip', () => {
-    // `ReviewCard.dueAt` is an `Option`, whose tag fields do not survive the
-    // structured clone — the same fault that emptied every cached deck. The
-    // queue persist encodes to plain JSON first, so a clone in between must
-    // not lose the card.
-    const withDue: ReviewCardData = {
-      ...card('c1'),
-      dueAt: Option.some('2026-10-06T00:00:00Z'),
-    }
-    const json = S.toCodecJson(S.Array(ReviewCard))
-    const stored = S.encodeUnknownOption(json)([withDue, card('c2')])
-    expect(Option.isSome(stored)).toBe(true)
-    if (Option.isSome(stored)) {
-      const cloned = JSON.parse(JSON.stringify(stored.value)) as unknown
-      const decoded = S.decodeUnknownOption(json)(cloned)
-      expect(Option.isSome(decoded)).toBe(true)
-      if (Option.isSome(decoded)) {
-        expect(decoded.value).toEqual([withDue, card('c2')])
+  it.prop(
+    'keeps any queue, including a due date, through a clone-shaped trip',
+    [cardWithDueAt, Arbitrary.array(reviewCard)],
+    ([withDue, rest]) => {
+      // `ReviewCard.dueAt` is an `Option`, whose tag fields do not survive the
+      // structured clone — the same fault that emptied every cached deck. The
+      // queue persist encodes to plain JSON first, so a clone in between must
+      // not lose the card.
+      const json = S.toCodecJson(S.Array(ReviewCard))
+      const queue = [withDue, ...rest]
+      const stored = S.encodeUnknownOption(json)(queue)
+      expect(Option.isSome(stored)).toBe(true)
+      if (Option.isSome(stored)) {
+        const cloned = JSON.parse(JSON.stringify(stored.value)) as unknown
+        const decoded = S.decodeUnknownOption(json)(cloned)
+        expect(Option.isSome(decoded)).toBe(true)
+        if (Option.isSome(decoded)) {
+          expect(decoded.value).toEqual(queue)
+        }
       }
-    }
-  })
+    },
+  )
 })

@@ -25,6 +25,7 @@ import { Query } from 'foldkit/experimental'
 import { DeckDetail, DeckId, DeckSummary, Overview } from '@nook/api'
 import { clearQuery, loadQuery, saveQuery } from '@/lib/query-cache'
 import { NookRpc } from '@/lib/rpc'
+import { learnerTimezone as timezone } from '@/lib/timezone'
 
 /**
  * The deck read answers `DeckNotFound` for an id no Deck has, which is an
@@ -32,12 +33,6 @@ import { NookRpc } from '@/lib/rpc'
  */
 export const DeckDetailError = S.Literals(['notFound', 'unavailable'])
 export type DeckDetailError = typeof DeckDetailError.Type
-
-/** A cached answer with its landing time, for the age display. */
-export interface CachedAnswer<Data> {
-  readonly data: Data
-  readonly fetchedAt: number
-}
 
 /**
  * What boot hydrate and the stale fallback need to know about one query.
@@ -99,8 +94,22 @@ export const deckDetailPersistFor = (deckId: DeckId): QueryPersist<DeckDetail, S
   makePersist(`query:deck-detail:${deckId}`, DeckDetail)
 
 /** Deck-detail cache keys, oldest first. Capped so one collection cannot claim unbounded storage. */
-const DECK_DETAIL_INDEX_KEY = 'query:deck-detail:index'
+export const DECK_DETAIL_INDEX_KEY = 'query:deck-detail:index'
 export const DECK_DETAIL_CACHE_LIMIT = 20
+
+/** How long the deck-detail index lives: a year, same budget as the entries it names. */
+export const DECK_DETAIL_INDEX_TTL_MS = DAY_MS * 365
+
+/** Decodes the deck-detail index: key strings, oldest first. */
+export const decodeIndex = (value: unknown): Option.Option<ReadonlyArray<string>> => {
+  if (!Array.isArray(value)) return Option.none()
+  const entries: Array<string> = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') return Option.none()
+    entries.push(entry)
+  }
+  return Option.some(entries)
+}
 
 /**
  * Runs `fresh`, saves a good answer, and falls back to the query cache when
@@ -145,18 +154,11 @@ const withCache = <A, Encoded, E>(
  */
 const touchDeckDetailIndex = (key: string): Effect.Effect<void, never, never> =>
   Effect.gen(function* () {
-    const decodeIndex = (value: unknown): Option.Option<ReadonlyArray<string>> => {
-      if (!Array.isArray(value)) return Option.none()
-      const entries: Array<string> = []
-      for (const entry of value) {
-        if (typeof entry !== 'string') return Option.none()
-        entries.push(entry)
-      }
-      return Option.some(entries)
-    }
-    const cached = yield* loadQuery(DECK_DETAIL_INDEX_KEY, DAY_MS * 365, decodeIndex).pipe(
-      Effect.catch(() => Effect.succeed(Option.none())),
-    )
+    const cached = yield* loadQuery(
+      DECK_DETAIL_INDEX_KEY,
+      DECK_DETAIL_INDEX_TTL_MS,
+      decodeIndex,
+    ).pipe(Effect.catch(() => Effect.succeed(Option.none())))
     const previous = Option.match(cached, {
       onNone: () => [] as ReadonlyArray<string>,
       onSome: (answer) => answer.data,
@@ -170,17 +172,6 @@ const touchDeckDetailIndex = (key: string): Effect.Effect<void, never, never> =>
       yield* clearQuery(evictedKey).pipe(Effect.catch(() => Effect.succeed(undefined)))
     }
   })
-
-/** The learner timezone, for the day boundary. The server defaults to UTC without it. */
-const timezone = (): string | undefined => {
-  try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    return zone !== undefined && zone !== '' ? zone : undefined
-  } catch {
-    // No Intl: the server falls back to UTC.
-    return undefined
-  }
-}
 
 /** Call one RPC procedure, collapse every failure to one sentence. */
 const call = <A, E>(

@@ -5,23 +5,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
-import type { Url } from 'foldkit/url'
 import { Message, seedModel } from '../src/app/model'
 import { update } from '../src/app/update'
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
-
-const names = (result: {
-  readonly commands?: ReadonlyArray<{ readonly name: string }>
-}): string[] => (result.commands ?? []).map((command) => command.name)
+import { names, url } from './helpers'
 
 const themeArgs = (result: {
   readonly commands?: ReadonlyArray<{ readonly name: string; readonly args?: unknown }>

@@ -44,9 +44,10 @@ import type {
   UndoAccepted,
 } from '@nook/api'
 import { runStatements } from './batch'
-import { dayStartUtc, dueInstantUtc, reviewDayKey } from './day-boundary'
+import { dayStartUtc, dueInstantUtc, resolveTimezone, reviewDayKey } from './day-boundary'
 import { scheduleReview } from './fsrs'
-import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { StoredField, StoredTemplate } from './note-type-rows'
+import { CountRow, decodeRows, withStorageErrorPassThrough } from './storage-error'
 import type { StorageError } from './storage-error'
 
 /** The element the scoped Note Type stylesheet is confined to. The screen uses the same id. */
@@ -59,15 +60,6 @@ const QUEUE_LIMIT = 200
 const mediaUrl = (name: string): string => `/api/media/${encodeURIComponent(name)}`
 
 const CardStateRow = Schema.Literals(['new', 'learning', 'review', 'relearning'])
-
-/** One Field or Template as the Note Type's JSON column stores it. */
-const StoredField = Schema.Struct({ ord: Schema.Number, name: Schema.String })
-const StoredTemplate = Schema.Struct({
-  ord: Schema.Number,
-  name: Schema.String,
-  questionFormat: Schema.String,
-  answerFormat: Schema.String,
-})
 
 /** One row of the queue join. */
 const QueueRow = Schema.Struct({
@@ -131,8 +123,6 @@ const LastReviewRow = Schema.Struct({
   cardId: Schema.String,
   grade: Schema.Literals(['Again', 'Hard', 'Good', 'Easy']),
 })
-
-const CountRow = Schema.Struct({ n: Schema.Number })
 
 /** Renders one queue row into a Card the browser can show. */
 const toReviewCard = (row: typeof QueueRow.Type): Effect.Effect<ReviewCard, Schema.SchemaError> =>
@@ -259,8 +249,7 @@ export class Reviews extends Context.Service<
         Effect.gen(function* () {
           const fsrs = yield* readFsrs
           const now = new Date()
-          const timezone =
-            input.timezone === undefined || input.timezone === '' ? 'UTC' : input.timezone
+          const timezone = resolveTimezone(input.timezone)
           const boundary = dayStartUtc(timezone, fsrs.dayRolloverHour, now)
           const todayKey = reviewDayKey(timezone, fsrs.dayRolloverHour, now)
           const deck = Option.getOrNull(input.deckId)
@@ -342,8 +331,6 @@ export class Reviews extends Context.Service<
             lapseMinutes,
             reviewedToday,
             newToday: introducedToday,
-            newRemaining: Math.max(0, newAllowed - fresh.length),
-            dueRemaining: Math.max(0, dueAllowed - due.length),
             totalNew,
             totalDue,
             newCapped,
@@ -380,10 +367,7 @@ export class Reviews extends Context.Service<
 
           const fsrs = yield* readFsrs
           const now = new Date()
-          const timezone =
-            submission.timezone === undefined || submission.timezone === ''
-              ? 'UTC'
-              : submission.timezone
+          const timezone = resolveTimezone(submission.timezone)
           const deckLimitsRows = yield* sql`SELECT new_per_day AS "newPerDay",
             reviews_per_day AS "reviewsPerDay", lapse_minutes AS "lapseMinutes"
             FROM decks WHERE id = ${card.deckId}`

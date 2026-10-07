@@ -18,17 +18,10 @@ export type Model = typeof Model.Type
 export const Message = FoldkitTooltip.Message
 export type Message = typeof Message.Type
 
-export const OutMessage = FoldkitTooltip.OutMessage
-export type OutMessage = typeof OutMessage.Type
-
 export const update = FoldkitTooltip.update
-export const reflectShowDelay = FoldkitTooltip.reflectShowDelay
-export const triggerId = FoldkitTooltip.triggerId
 export const view = FoldkitTooltip.view
 
-export type RenderInfo = FoldkitTooltip.RenderInfo
-
-export type InitConfig = FoldkitTooltip.InitConfig
+type InitConfig = FoldkitTooltip.InitConfig
 
 /** Hover-to-show delay: 250ms, so a passing pointer does not flash every hint
  *  on the way by. Only hover waits — the foldkit Tooltip shows focus at once,

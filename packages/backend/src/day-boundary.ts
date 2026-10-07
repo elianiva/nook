@@ -92,6 +92,10 @@ export const reviewDayKey = (timezone: string, rolloverHour: number, instant: Da
   return dayKeyInTimezone('UTC', new Date(localMs))
 }
 
+/** The learner timezone, or UTC when the browser sends none. */
+export const resolveTimezone = (timezone?: string): string =>
+  timezone === undefined || timezone === '' ? 'UTC' : timezone
+
 /**
  * The UTC instant a due Card comes back at: `intervalDays` learner-days after
  * the day that starts at `dayStart`, at the rollover hour.
