@@ -22,6 +22,7 @@ import {
   DownloadFile,
   FetchExport,
   FetchCardHistory,
+  FetchFsrsDiagnostics,
   FetchReviewQueue,
   FetchSettings,
   LoadCachedQueue,
@@ -105,7 +106,14 @@ const routeLoads = (model: Model): Update.Return<Model, Message> =>
         FetchSettings(),
       ],
     }),
-    Settings: () => ({ model, commands: [FetchSettings()] }),
+    Settings: () => ({
+      model: {
+        ...model,
+        fsrsDiagnosticsLoading: true,
+        fsrsDiagnosticsError: Option.none(),
+      },
+      commands: [FetchSettings(), FetchFsrsDiagnostics()],
+    }),
     NotFound: () => ({ model }),
   })
 
@@ -184,7 +192,7 @@ const beginSettingsSave = (model: Model): Model => {
     settingsRollback: Option.some(model.settings),
     settingsDraft: {
       ...model.settingsDraft,
-      weightsError: Option.none(),
+      validationError: Option.none(),
       saved: false,
       saving: true,
     },
@@ -210,11 +218,10 @@ const parseLimit = (value: string, min: number): number | null | undefined => {
 }
 
 const settingsFromDraft = (model: Model) => {
-  const weights = model.settingsDraft.weightsText.split(',').map((part) => Number(part.trim()))
   return {
     fsrs: {
       desiredRetention: model.settingsDraft.desiredRetention,
-      weights,
+      weights: model.settings.fsrs.weights,
       maximumInterval: model.settingsDraft.maximumInterval,
       newPerDay: model.settingsDraft.newPerDay,
       reviewsPerDay: model.settingsDraft.reviewsPerDay,
@@ -436,6 +443,28 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             ...modifyFields(model, { settings: () => settings }),
             settingsDraft: draftFromSettings(settings),
           }),
+    }),
+
+    ClickedRetryFsrsDiagnostics: () => ({
+      model: { ...model, fsrsDiagnosticsLoading: true, fsrsDiagnosticsError: Option.none() },
+      commands: [FetchFsrsDiagnostics()],
+    }),
+
+    GotFsrsDiagnostics: ({ diagnostics }) => ({
+      model: {
+        ...model,
+        fsrsDiagnostics: Option.some(diagnostics),
+        fsrsDiagnosticsLoading: false,
+        fsrsDiagnosticsError: Option.none(),
+      },
+    }),
+
+    FsrsDiagnosticsFailed: ({ error }) => ({
+      model: {
+        ...model,
+        fsrsDiagnosticsLoading: false,
+        fsrsDiagnosticsError: Option.some(error),
+      },
     }),
 
     SavedSettings: ({ settings }) => {
@@ -1486,13 +1515,6 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       },
     }),
 
-    EditedWeights: ({ value }) => ({
-      model: {
-        ...model,
-        settingsDraft: { ...model.settingsDraft, weightsText: value, saved: false, saving: false },
-      },
-    }),
-
     EditedMaximumInterval: ({ value }) => ({
       model: {
         ...model,
@@ -1585,7 +1607,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             ...model,
             settingsDraft: {
               ...model.settingsDraft,
-              weightsError: Option.some(error),
+              validationError: Option.some(error),
               saved: false,
               saving: false,
             },

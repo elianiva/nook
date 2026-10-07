@@ -1,8 +1,11 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { SettingsRpc, StorageUnavailable } from '@nook/api'
-import type { AppSettings } from '@nook/api'
+import type { AppSettings, FsrsHealthReport } from '@nook/api'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+
+/** Anki describes fewer than a few hundred reviews as low optimizer data. */
+const REVIEW_DATA_FLOOR = 200
 
 /** One row of the singleton `settings` table. Booleans ride as 0/1, weights as one CSV string. */
 const SettingsRow = Schema.Struct({
@@ -14,6 +17,15 @@ const SettingsRow = Schema.Struct({
   fsrsLapseMinutes: Schema.Number,
   behaviourTapToReveal: Schema.Number,
   behaviourDayRolloverHour: Schema.Number,
+})
+
+const FsrsHealthRow = Schema.Struct({
+  reviewCount: Schema.Number,
+  again: Schema.Number,
+  hard: Schema.Number,
+  good: Schema.Number,
+  easy: Schema.Number,
+  completeHistoryCount: Schema.Number,
 })
 
 export const toSettings = (row: typeof SettingsRow.Type): AppSettings => ({
@@ -44,6 +56,7 @@ export class Settings extends Context.Service<
   Settings,
   {
     readonly read: Effect.Effect<AppSettings, StorageUnavailable>
+    readonly fsrsHealth: Effect.Effect<FsrsHealthReport, StorageUnavailable>
     save(settings: AppSettings): Effect.Effect<AppSettings, StorageUnavailable>
   }
 >()('nook/backend/Settings') {
@@ -72,6 +85,40 @@ export class Settings extends Context.Service<
         withStorageErrorPassThrough(self, 'read settings'),
       )
 
+      const fsrsHealth = Effect.gen(function* () {
+        const rows = yield* sql`SELECT COUNT(*) AS "reviewCount",
+          COALESCE(SUM(CASE WHEN r.grade = 'Again' THEN 1 ELSE 0 END), 0) AS again,
+          COALESCE(SUM(CASE WHEN r.grade = 'Hard' THEN 1 ELSE 0 END), 0) AS hard,
+          COALESCE(SUM(CASE WHEN r.grade = 'Good' THEN 1 ELSE 0 END), 0) AS good,
+          COALESCE(SUM(CASE WHEN r.grade = 'Easy' THEN 1 ELSE 0 END), 0) AS easy,
+          COALESCE(SUM(CASE WHEN s.review_id IS NOT NULL
+            AND s.state IS NOT NULL AND s.stability IS NOT NULL AND s.difficulty IS NOT NULL
+            AND s.due_in_days IS NOT NULL AND r.state_after IS NOT NULL
+            AND r.stability_after IS NOT NULL AND r.difficulty_after IS NOT NULL
+            AND r.due_in_days_after IS NOT NULL THEN 1 ELSE 0 END), 0)
+            AS "completeHistoryCount"
+          FROM reviews r LEFT JOIN review_snapshots s ON s.review_id = r.id`
+        const decoded = yield* decodeRows(FsrsHealthRow, rows)
+        const found = Option.fromUndefinedOr(decoded[0])
+        if (found._tag === 'None') {
+          return yield* new StorageUnavailable({
+            message: 'Could not read the review history for the FSRS health check.',
+          })
+        }
+        const row = found.value
+        return {
+          reviewCount: row.reviewCount,
+          ratings: { again: row.again, hard: row.hard, good: row.good, easy: row.easy },
+          completeHistoryCount: row.completeHistoryCount,
+          incompleteHistoryCount: row.reviewCount - row.completeHistoryCount,
+          // This is a conservative warning signal, not a claim that the learner
+          // misused Hard. A rating histogram cannot distinguish that from easy material.
+          possibleHardMisuse: row.reviewCount >= REVIEW_DATA_FLOOR && row.again === 0,
+        } satisfies FsrsHealthReport
+      }).pipe(Effect.withSpan('Settings.fsrsHealth'), (self) =>
+        withStorageErrorPassThrough(self, 'read FSRS review history'),
+      )
+
       const save = (settings: AppSettings): Effect.Effect<AppSettings, StorageUnavailable> =>
         Effect.gen(function* () {
           yield* sql`UPDATE settings SET
@@ -89,7 +136,7 @@ export class Settings extends Context.Service<
           withStorageErrorPassThrough(self, 'save settings'),
         )
 
-      return Settings.of({ read, save })
+      return Settings.of({ read, fsrsHealth, save })
     }),
   )
 }
@@ -99,6 +146,7 @@ export const SettingsHandlers = SettingsRpc.toLayer(
     const settings = yield* Settings
     return SettingsRpc.of({
       settingsGet: () => settings.read,
+      settingsFsrsHealth: () => settings.fsrsHealth,
       settingsUpdate: (payload) => settings.save(payload),
     })
   }),

@@ -160,7 +160,7 @@ export type Overview = typeof Overview.Type
 export const FsrsSettings = S.Struct({
   /** Target recall probability, 0.7–0.95. */
   desiredRetention: S.Number,
-  /** FSRS-6 weight vector (21 values). Advanced; edited as text. */
+  /** FSRS-6 weight vector (21 values). Kept by the scheduler; not hand-edited in Settings. */
   weights: S.Array(S.Number),
   /** Cap on any single interval, in days. */
   maximumInterval: S.Number,
@@ -172,6 +172,24 @@ export const FsrsSettings = S.Struct({
   lapseMinutes: S.Number,
 })
 export type FsrsSettings = typeof FsrsSettings.Type
+
+/** Saved review data used by the FSRS health check; this report never changes scheduling. */
+export const FsrsHealthReport = S.Struct({
+  reviewCount: S.Number,
+  ratings: S.Struct({
+    again: S.Number,
+    hard: S.Number,
+    good: S.Number,
+    easy: S.Number,
+  }),
+  /** Events with both before- and after-grade schedule snapshots. */
+  completeHistoryCount: S.Number,
+  /** Legacy events with grade/time but no complete schedule snapshots. */
+  incompleteHistoryCount: S.Number,
+  /** No Again ratings in a large history can suggest Hard/Again misuse; it is not proof. */
+  possibleHardMisuse: S.Boolean,
+})
+export type FsrsHealthReport = typeof FsrsHealthReport.Type
 
 /** Behaviour knobs: what the review session feels like. */
 export const BehaviourSettings = S.Struct({
@@ -614,6 +632,10 @@ export class HomeRpc extends RpcGroup.make(
 export class SettingsRpc extends RpcGroup.make(
   Rpc.make('settingsGet', {
     success: AppSettings,
+    error: StorageUnavailable,
+  }),
+  Rpc.make('settingsFsrsHealth', {
+    success: FsrsHealthReport,
     error: StorageUnavailable,
   }),
   Rpc.make('settingsUpdate', {

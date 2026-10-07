@@ -2,7 +2,7 @@
  * Settings page: FSRS knobs, deck defaults, and behaviour.
  *
  * Sections, top to bottom:
- * 1. FSRS scheduling — desired retention, weights (advanced), maximum
+ * 1. FSRS scheduling — desired retention, optimizer health check, maximum
  *    interval
  * 2. Global defaults — new Cards and reviews per day, lapse minutes.
  *    Every deck follows these unless its own limits say otherwise.
@@ -20,8 +20,7 @@
  * width (number inputs `w-24`, select `w-28`) so the label keeps most of the
  * ~340px card content width on a 390px phone. Chrome on Android zooms the
  * page when a sub-16px input takes focus, which breaks the narrow shell
- * frame — every text control here sets 16px text so focus never zooms. Only
- * the weights textarea spans full width, stacked under its label.
+ * frame — every text control here sets 16px text so focus never zooms.
  */
 
 import { Option } from 'effect'
@@ -29,7 +28,6 @@ import type { Html, HtmlBuilder } from 'foldkit/html'
 import { Download, RotateCcw, Save } from 'lucide'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
 import { switch_ } from '@/components/ui/switch'
-import { textarea } from '@/components/ui/textarea'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { themeKeys, themeMeta } from '@/lib/theme'
@@ -55,8 +53,7 @@ const section = (title: string, rows: ReadonlyArray<Child>, h: HtmlBuilder<Messa
 /**
  * One settings section is one grouped `--theme-block` card; every row inside
  * is a side-by-side label-left/control-right pair, so each field costs one
- * line instead of two. Rows divide with a hairline; only the weights
- * textarea stacks full width under its label.
+ * line instead of two. Rows divide with a hairline.
  */
 const groupCard = (children: ReadonlyArray<Child>, h: HtmlBuilder<Message>): Html =>
   h.div(
@@ -130,30 +127,84 @@ const numberField = (
     ],
   )
 
-const weightsRow = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
-  h.div(
-    [h.Class('flex flex-col gap-2 py-2.5')],
+const fsrsHealthPanel = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const report = Option.getOrNull(model.fsrsDiagnostics)
+  const error = Option.getOrNull(model.fsrsDiagnosticsError)
+  return h.div(
+    [h.Class('flex flex-col gap-2 py-3')],
     [
-      rowLabel('fsrs-weights', 'FSRS weights (advanced)', h, {
-        slot: 'fsrs-weights',
-        text: '21 comma-separated values for FSRS-6. Wrong count blocks save.',
-        model,
-      }),
-      textarea<Message>(
-        {
-          id: 'fsrs-weights',
-          label: 'FSRS weights (advanced)',
-          value: draft.weightsText,
-          onInput: (value) => Message.EditedWeights({ value }),
-          rows: 2,
-          wrapperClass: 'gap-0',
-          labelClass: 'sr-only',
-          className: 'border-0 bg-white font-mono shadow-none outline-none',
-        },
-        h,
+      h.p([h.Class('text-[13px] font-semibold')], ['FSRS health check']),
+      ...(model.fsrsDiagnosticsLoading && report === null
+        ? [h.p([h.Class('text-xs text-muted-foreground'), h.Role('status')], ['Loading saved review data…'])]
+        : []),
+      ...(error === null
+        ? []
+        : [
+            h.div(
+              [h.Class('flex items-center gap-2'), h.Role('alert')],
+              [
+                h.p([h.Class('min-w-0 flex-1 text-xs text-destructive')], [error]),
+                button<Message>(
+                  {
+                    onClick: Message.ClickedRetryFsrsDiagnostics(),
+                    size: 'sm',
+                    isDisabled: model.fsrsDiagnosticsLoading,
+                  },
+                  ['Retry'],
+                  h,
+                ),
+              ],
+            ),
+          ]),
+      ...(report === null
+        ? []
+        : [
+            h.p(
+              [h.Class('text-xs text-muted-foreground')],
+              [`${report.reviewCount} saved review events · ${report.completeHistoryCount} with complete schedule history · ${report.incompleteHistoryCount} missing schedule snapshots.`],
+            ),
+            h.div(
+              [h.Class('flex flex-wrap gap-2')],
+              ([
+                ['Again', report.ratings.again],
+                ['Hard', report.ratings.hard],
+                ['Good', report.ratings.good],
+                ['Easy', report.ratings.easy],
+              ] as const).map(([grade, count]) =>
+                h.span(
+                  [h.Class('rounded-full bg-white px-2.5 py-1 text-[11px] text-[var(--theme-ink)]')],
+                  [`${grade} ${count}`],
+                ),
+            ),
+            ...(report.reviewCount < 200
+              ? [
+                  h.p(
+                    [h.Class('text-xs text-amber-800')],
+                    ['Anki notes that optimizer results are weak with fewer than a few hundred reviews. Treat this as an approximate data-volume warning, not an optimizer guarantee.'],
+                  ),
+                ]
+              : []),
+            ...(report.possibleHardMisuse
+              ? [
+                  h.p(
+                    [h.Class('text-xs text-amber-800'), h.Role('status')],
+                    ['No Again ratings appear in this 200+ review history. Check rating use: Hard means you recalled the answer; choose Again if you forgot. The counts suggest a possible issue, but cannot prove one.'],
+                  ),
+                ]
+              : [
+                  h.p(
+                    [h.Class('text-xs text-muted-foreground')],
+                    ['Use Again when you cannot recall the answer. Hard means you remembered it, but with difficulty.'],
+                  ),
+                ]),
+          ]),
+      h.p(
+        [h.Class('text-xs text-muted-foreground')],
+        ['Nook does not yet have a validated FSRS optimizer, so saved parameters are kept as-is instead of hand-edited. Saving settings does not reschedule existing cards; new grades use the saved parameters.'],
       ),
     ],
   )
+}
 
 const fsrsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
   section(
@@ -169,7 +220,7 @@ const fsrsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>
         h,
         { slot: 'desired-retention', text: 'Target recall rate, 0.70–0.95.', model },
       ),
-      weightsRow(draft, model, h),
+      fsrsHealthPanel(model, h),
       numberField(
         'maximum-interval',
         'Maximum interval',
@@ -274,7 +325,7 @@ const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mes
   )
 
 const errorBanner = (draft: SettingsDraft, h: HtmlBuilder<Message>): Child =>
-  Option.match(draft.weightsError, {
+  Option.match(draft.validationError, {
     onNone: () => h.empty,
     onSome: (error) => fieldError(error, h),
   })

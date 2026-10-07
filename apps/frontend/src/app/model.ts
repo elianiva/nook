@@ -20,6 +20,7 @@ import { Navigation } from 'foldkit'
 import { Url } from 'foldkit'
 import {
   AppSettings,
+  FsrsHealthReport,
   CardReviewEvent,
   CardReviewHistory,
   CardId,
@@ -42,7 +43,6 @@ import * as Tooltip from '@/components/ui/tooltip'
 /** Hint slot ids for the settings page tooltips. */
 export const hintSlots = [
   'desired-retention',
-  'fsrs-weights',
   'maximum-interval',
   'new-per-day',
   'reviews-per-day',
@@ -65,11 +65,10 @@ export type Hints = typeof Hints.Type
 export const initHints = (): Hints =>
   Object.fromEntries(hintSlots.map((slot) => [slot, Tooltip.init({ id: `hint-${slot}` })])) as Hints
 
-/** Editable copy of the settings form. The text field for FSRS weights stays a string so half-typed input never corrupts the numeric model. */
+/** Editable copy of the settings form. FSRS parameters stay server-owned until a safe optimizer exists. */
 export const SettingsDraft = S.Struct({
   desiredRetention: S.Number,
-  weightsText: S.String,
-  weightsError: S.Option(S.String),
+  validationError: S.Option(S.String),
   maximumInterval: S.Number,
   newPerDay: S.Number,
   reviewsPerDay: S.Number,
@@ -83,8 +82,7 @@ export type SettingsDraft = typeof SettingsDraft.Type
 
 export const draftFromSettings = (settings: AppSettings): SettingsDraft => ({
   desiredRetention: settings.fsrs.desiredRetention,
-  weightsText: settings.fsrs.weights.map((weight) => String(weight)).join(', '),
-  weightsError: Option.none(),
+  validationError: Option.none(),
   maximumInterval: settings.fsrs.maximumInterval,
   newPerDay: settings.fsrs.newPerDay,
   reviewsPerDay: settings.fsrs.reviewsPerDay,
@@ -95,24 +93,11 @@ export const draftFromSettings = (settings: AppSettings): SettingsDraft => ({
   saving: false,
 })
 
-const parseWeights = (text: string): ReadonlyArray<number> | undefined => {
-  const parts = text
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part !== '')
-  if (parts.length === 0) return undefined
-  const values = parts.map((part) => Number(part))
-  return values.every((value) => Number.isFinite(value)) ? values : undefined
-}
-
 /** Validate the draft. Returns the error message, or `undefined` when the draft is clean. */
 export const validateDraft = (draft: SettingsDraft): string | undefined => {
   if (!(draft.desiredRetention >= 0.7 && draft.desiredRetention <= 0.95)) {
     return 'Desired retention must be between 0.70 and 0.95.'
   }
-  const weights = parseWeights(draft.weightsText)
-  if (weights === undefined) return 'Weights must be a comma-separated list of numbers.'
-  if (weights.length !== 21) return `Weights need 21 values (FSRS-6), found ${weights.length}.`
   if (!Number.isInteger(draft.maximumInterval) || draft.maximumInterval < 1) {
     return 'Maximum interval must be a whole number of days, at least 1.'
   }
@@ -427,6 +412,9 @@ export const Model = S.Struct({
   review: ReviewState,
   settings: AppSettings,
   settingsDraft: SettingsDraft,
+  fsrsDiagnostics: S.Option(FsrsHealthReport),
+  fsrsDiagnosticsLoading: S.Boolean,
+  fsrsDiagnosticsError: S.Option(S.String),
   /** The Import the Decks page is showing: what is running, or what last ran. */
   importState: ImportState,
   /** The deck page's Manage section: rename draft and destructive confirms. */
@@ -467,6 +455,9 @@ export const seedModel = (url: Url.Url): Model => ({
   review: idleReview,
   settings: DEFAULT_SETTINGS,
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
+  fsrsDiagnostics: Option.none(),
+  fsrsDiagnosticsLoading: false,
+  fsrsDiagnosticsError: Option.none(),
   importState: idleImport,
   deckManage: idleDeckManage,
   deckMutationRollback: Option.none(),
@@ -496,6 +487,9 @@ export const Message = defineMessageUnion({
   GotDecksMessage: { message: decksQuery.Message },
   GotDeckDetailMessage: { message: deckDetailQuery.Message },
   GotSettings: { settings: AppSettings },
+  ClickedRetryFsrsDiagnostics: {},
+  GotFsrsDiagnostics: { diagnostics: FsrsHealthReport },
+  FsrsDiagnosticsFailed: { error: S.String },
   SavedSettings: { settings: AppSettings },
   /** The durable grade outbox was loaded at boot. */
   RestoredQueuedGrades: { grades: S.Array(ReviewPending) },
@@ -625,7 +619,6 @@ export const Message = defineMessageUnion({
   ClearedImportJob: {},
   // Settings draft edits. Each carries the raw field value; validation runs on save.
   EditedRetention: { value: S.String },
-  EditedWeights: { value: S.String },
   EditedMaximumInterval: { value: S.String },
   EditedNewPerDay: { value: S.String },
   EditedReviewsPerDay: { value: S.String },

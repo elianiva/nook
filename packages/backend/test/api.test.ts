@@ -1,5 +1,6 @@
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
+import * as Sql from 'effect/sql/SqlClient'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { DecksRpc, HomeRpc, SettingsRpc, DeckId } from '@nook/api'
@@ -48,6 +49,14 @@ layer(HandlersLive)('backend over sqlite', (it) => {
 
       const settings = yield* client.settingsGet()
       expect(settings.fsrs.weights.length).toBe(21)
+      const health = yield* client.settingsFsrsHealth()
+      expect(health).toEqual({
+        reviewCount: 4,
+        ratings: { again: 1, hard: 0, good: 2, easy: 1 },
+        completeHistoryCount: 0,
+        incompleteHistoryCount: 4,
+        possibleHardMisuse: false,
+      })
       const saved = yield* client.settingsUpdate({
         ...settings,
         fsrs: { ...settings.fsrs, desiredRetention: 0.85 },
@@ -56,6 +65,25 @@ layer(HandlersLive)('backend over sqlite', (it) => {
       const reread = yield* client.settingsGet()
       expect(reread.fsrs.desiredRetention).toBe(0.85)
       expect(reread.behaviour.tapToReveal).toBe(settings.behaviour.tapToReveal)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('flags possible Hard/Again misuse only after a few hundred reviews', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(SettingsRpc)
+      const sql = yield* Sql.SqlClient
+      yield* sql.unsafe(`DELETE FROM reviews WHERE grade = 'Again'`)
+      yield* sql.unsafe(`WITH RECURSIVE seq(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 200
+      ) INSERT INTO reviews (id, card_id, grade, reviewed_at)
+        SELECT 'health-' || n, 'card-showcase-01', 'Hard', datetime('now') FROM seq`)
+
+      const health = yield* client.settingsFsrsHealth()
+      expect(health.reviewCount).toBe(203)
+      expect(health.ratings.again).toBe(0)
+      expect(health.ratings.hard).toBe(200)
+      expect(health.possibleHardMisuse).toBe(true)
     }).pipe(Effect.scoped),
   )
 })

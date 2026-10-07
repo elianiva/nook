@@ -60,6 +60,22 @@ export const FetchSettings = Command.define('FetchSettings', {
   ),
 })
 
+export const FetchFsrsDiagnostics = Command.define('FetchFsrsDiagnostics', {
+  messages: [MessageConstructors.GotFsrsDiagnostics, MessageConstructors.FsrsDiagnosticsFailed],
+  execute: NookRpc.pipe(
+    Effect.flatMap((rpc) => rpc.settingsFsrsHealth()),
+    Effect.map((diagnostics) => MessageConstructors.GotFsrsDiagnostics({ diagnostics })),
+    Effect.catch(() =>
+      Effect.succeed(
+        MessageConstructors.FsrsDiagnosticsFailed({
+          error: 'Could not load the FSRS health check. Check the connection and retry.',
+        }),
+      ),
+    ),
+    Effect.provide(NookRpc.layer),
+  ),
+})
+
 export const SaveSettings = Command.define('SaveSettings', {
   args: { settings: AppSettings },
   messages: [MessageConstructors.SavedSettings, MessageConstructors.LoadFailed],
