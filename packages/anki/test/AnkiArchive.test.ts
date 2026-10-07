@@ -107,7 +107,10 @@ const zipOf = async (entries: ReadonlyArray<readonly [string, Uint8Array]>): Pro
 }
 
 describe('AnkiArchive', () => {
-  it.effect(
+  // The Kaishi archive is a 103.7 MiB real export that takes minutes to read,
+  // so this test runs only when `NOOK_TEST_KAISHI` is set (`pnpm test:kaishi`).
+  // The default `pnpm test` skips it.
+  it.effect.runIf(process.env['NOOK_TEST_KAISHI'] !== undefined)(
     'reads the real Kaishi 1.5k export end to end',
     () =>
       Effect.scoped(

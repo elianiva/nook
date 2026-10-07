@@ -8,7 +8,12 @@
     "typecheck": {
       "dependsOn": ["^typecheck"]
     },
-    "test": {},
+    "test": {
+      // Turbo runs in strict mode by default, which strips undeclared
+      // variables. Declaring the flag both passes it to Vitest and keeps the
+      // cache correct: runs with and without Kaishi hash differently.
+      "env": ["NOOK_TEST_KAISHI"]
+    },
     "dev": {
       "cache": false,
       "persistent": true

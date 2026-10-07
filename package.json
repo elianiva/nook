@@ -21,6 +21,7 @@
     "fmt:check": "vp fmt --check",
     "lint": "vp lint",
     "test": "turbo test",
+    "test:kaishi": "NOOK_TEST_KAISHI=1 turbo test",
     "typecheck": "turbo typecheck",
     "prepare": "lefthook install"
   },

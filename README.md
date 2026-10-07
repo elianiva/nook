@@ -116,7 +116,8 @@ load without it.
 pnpm install        # install the workspace
 pnpm dev            # alchemy dev: the Worker and the Foldkit client on one port
 pnpm check          # vp check: format, lint, and type-check
-pnpm test           # turbo test
+pnpm test           # turbo test; skips the slow Kaishi archive test
+pnpm test:kaishi    # turbo test with the Kaishi archive test included
 pnpm typecheck      # turbo typecheck
 pnpm build          # turbo build; also bundles the Worker
 pnpm fmt            # vp fmt
