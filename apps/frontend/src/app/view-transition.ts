@@ -1,6 +1,7 @@
 /**
- * Page-slide view transition: keeps the content swap in sync with the tab
- * bar's sliding pill (both 300ms).
+ * Page-slide view transition: the content column slides on a 220ms
+ * ease-out-back curve while the header and tab bar swap instantly underneath.
+ * (The pill glides on its own transform transition in the live DOM.)
  *
  * Foldkit wraps a render in `document.startViewTransition` when this
  * predicate returns `{ types }`. The direction comes from comparing the

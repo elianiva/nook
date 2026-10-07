@@ -109,7 +109,9 @@ const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
     // Sticky within the scroll container's flow: the header stays pinned to
     // the top of the screen while the page content slides underneath, instead
     // of scrolling away and snapping back on direction change. `bg-background`
-    // keeps scrolled content from showing through the bar.
+    // keeps scrolled content from showing through the bar. The header sits
+    // outside the `page-content` snapshot, so it never slides; the frozen
+    // root snapshots (see `styles.css`) swap it instantly with no crossfade.
     [h.Class('sticky top-0 z-30 shrink-0 bg-background')],
     [
       h.div(
@@ -216,10 +218,12 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
 
 /**
  * Floating segmented tab bar: a solid `--theme-block` track with one shared
- * white pill that slides under the active tab (`transition-[left]`), floating
- * over a soft bottom fade so content melts underneath instead of ending at a
- * block. Tabs are transparent icon-plus-label rows above the pill; only their
- * colour marks the active one.
+ * white pill that glides under the active tab (`transform`, same curve as
+ * the page slide), floating over a soft bottom fade so content melts
+ * underneath instead of ending at a block. Tabs are transparent
+ * icon-plus-label rows above the pill; only their colour marks the active
+ * one. The bar carries the `bottom-nav` snapshot name so it pins above the
+ * sliding page during tab switches (see `styles.css`).
  */
 const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
   const activeIndex = NAV_TABS.indexOf(routeToTab(model.route))
@@ -229,6 +233,11 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
       h.Class(
         'pointer-events-none absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-background via-background/85 to-transparent px-4 pt-8 pb-safe',
       ),
+      // Own snapshot group above the sliding content (see `styles.css`): the
+      // page snapshot renders in the transition overlay above all live
+      // content, so without this the incoming rows slide over the bar
+      // mid-swipe. Both snapshots are frozen, so the bar swaps instantly.
+      h.Style({ viewTransitionName: 'bottom-nav' }),
     ],
     [
       h.div(
@@ -241,12 +250,11 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
           h.span(
             [
               h.Class(
-                'absolute top-1.5 bottom-1.5 rounded-full bg-white transition-[left] duration-300 ease-out motion-reduce:transition-none',
+                'absolute top-1.5 bottom-1.5 left-1.5 rounded-full bg-white transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none',
               ),
               h.Style({
-                left: `calc(6px + ${activeIndex} * (100% - 12px) / 3)`,
                 width: 'calc((100% - 12px) / 3)',
-                viewTransitionName: 'nav-pill',
+                transform: `translateX(${activeIndex * 100}%)`,
               }),
               h.AriaHidden(true),
             ],
@@ -352,8 +360,10 @@ export const shell = (
           // captures this column as `page-content` and slides it
           // directionally (see `view-transition.ts` and the
           // `:active-view-transition-type` rules in `styles.css`).
-          // Header and tab bar carry no name, so they stay live: the bar
-          // keeps its own 300ms pill slide in sync underneath.
+          // Header and tab bar sit outside the snapshot: the bar carries
+          // its own `bottom-nav` name pinned above, and the header swaps
+          // with the frozen root snapshots — both swap instantly while
+          // the page glides underneath.
           h.Style({ viewTransitionName: 'page-content' }),
         ],
         focused

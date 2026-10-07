@@ -261,10 +261,12 @@
  *
  * `view-transition.ts` wraps cross-tab renders in
  * `document.startViewTransition({ types: ['slide-forward' | 'slide-backward'] })`.
- * The shell tags the content column `page-content` and the active-tab pill
- * `nav-pill`, so only those two snapshots animate — header and bar chrome
- * stay live. Each side runs 300ms to match the pill's own
- * `transition-[left] duration-300` slide.
+ * The shell tags the content column `page-content`, so only that snapshot
+ * animates — the header and tab bar stay live and swap instantly. The root
+ * snapshot pair is frozen below for the same reason: without it the browser
+ * crossfades the whole page underneath the named group and the bar ghosts
+ * mid-swipe. The pill slides under the active tab on its own `transform`
+ * transition in the live DOM, on the same curve as the page.
  */
 @keyframes page-in-from-right {
   from {
@@ -305,8 +307,34 @@ html:active-view-transition-type(slide-backward) {
   }
 }
 
-::view-transition-group(page-content),
-::view-transition-group(nav-pill) {
-  animation-duration: 300ms;
-  animation-timing-function: ease-out;
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* The bottom nav is its own group pinned above the sliding content: the
+   page snapshot paints in the overlay above all live content, so without
+   this the rows slide over the bar mid-swipe. Old and new snapshots both
+   freeze (no crossfade), so the bar swaps instantly and stays opaque over
+   the sliding rows. */
+::view-transition-group(bottom-nav) {
+  animation: none;
+  z-index: 2;
+}
+
+::view-transition-old(bottom-nav),
+::view-transition-new(bottom-nav) {
+  animation: none;
+}
+
+::view-transition-group(page-content) {
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(page-content) {
+    animation: none;
+  }
 }
