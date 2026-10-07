@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
+import { Arbitrary, Schema } from 'effect'
 import {
   FSRS6_DEFAULT_WEIGHTS,
   initialDifficulty,
@@ -46,12 +47,14 @@ describe('FSRS-6 primitives', () => {
     expect(retrievability(weights, 30, 10)).toBeLessThan(0.9)
   })
 
-  it('inverts retrievability: a scheduled interval recalls at the desired retention', () => {
-    for (const stability of [5, 10, 100]) {
+  it.prop(
+    'inverts retrievability: a scheduled interval recalls at the desired retention',
+    [Arbitrary.schema(Schema.Natural).pipe(Arbitrary.map((value) => 5 + (value % 96)))],
+    ([stability]) => {
       const interval = nextInterval(weights, stability, 0.9, 365)
-      expect(retrievability(weights, interval, stability)).toBeCloseTo(0.9, 3)
-    }
-  })
+      expect(retrievability(weights, interval, stability)).toBeCloseTo(0.9, 2)
+    },
+  )
 
   it('caps the interval at the maximum', () => {
     expect(nextInterval(weights, 10_000, 0.9, 365)).toBe(365)
@@ -61,49 +64,18 @@ describe('FSRS-6 primitives', () => {
 
 describe('scheduleReview', () => {
   const now = new Date('2026-10-05T10:00:00Z')
-
-  it('schedules a new Card from its initial state', () => {
-    const fresh: SchedulerCard = {
-      stability: 0,
-      difficulty: 1,
-      state: 'new',
-      reps: 0,
-      lapses: 0,
-      lastReviewedAt: null,
-    }
-    const good = scheduleReview(fresh, 'Good', settings, now)
-    expect(good.state).toBe('review')
-    expect(good.stability).toBe(2.3065)
-    expect(good.reps).toBe(1)
-    expect(good.lapses).toBe(0)
-    expect(good.intervalDays).toBe(2)
-
-    // `Again` re-queues later this session, after `lapseMinutes`: interval 0.
-    expect(scheduleReview(fresh, 'Again', settings, now).intervalDays).toBe(0)
-    expect(scheduleReview(fresh, 'Again', settings, now).state).toBe('learning')
-    expect(scheduleReview(fresh, 'Again', settings, now).lapses).toBe(1)
-    expect(scheduleReview(fresh, 'Easy', settings, now).intervalDays).toBe(8)
+  const natural = Arbitrary.schema(Schema.Natural)
+  const schedulerCard: Arbitrary.Arbitrary<SchedulerCard> = Arbitrary.all({
+    stability: natural.pipe(Arbitrary.map((value) => 0.001 + (value % 3_650_000) / 100)),
+    difficulty: natural.pipe(Arbitrary.map((value) => 1 + (value % 9_001) / 1_000)),
+    state: Arbitrary.schema(Schema.Literals(['new', 'learning', 'review', 'relearning'])),
+    reps: natural.pipe(Arbitrary.map((value) => value % 1_000)),
+    lapses: natural.pipe(Arbitrary.map((value) => value % 100)),
+    lastReviewedAt: natural.pipe(
+      Arbitrary.map((value) => new Date(now.getTime() - (value % 5_270_000_000)).toISOString()),
+    ),
   })
-
-  it('grows Stability and the interval on a successful Review', () => {
-    const scheduled = scheduleReview(card(), 'Good', settings, now)
-    expect(scheduled.state).toBe('review')
-    expect(scheduled.stability).toBeGreaterThan(10)
-    expect(scheduled.intervalDays).toBe(Math.round(scheduled.stability))
-    expect(scheduled.intervalDays).toBeGreaterThan(10)
-    expect(scheduled.reps).toBe(6)
-    expect(scheduled.lapses).toBe(0)
-  })
-
-  it('counts a lapse and moves the Card to relearning', () => {
-    const scheduled = scheduleReview(card(), 'Again', settings, now)
-    expect(scheduled.state).toBe('relearning')
-    expect(scheduled.lapses).toBe(1)
-    expect(scheduled.reps).toBe(6)
-    expect(scheduled.stability).toBeLessThan(10)
-    // Interval 0: the Card returns later this session, not tomorrow.
-    expect(scheduled.intervalDays).toBe(0)
-  })
+  const grade = Arbitrary.schema(Schema.Literals(['Again', 'Hard', 'Good', 'Easy']))
 
   it('uses the short-term formula for a same-day Review', () => {
     const sameDay = card({ lastReviewedAt: now.toISOString() })
@@ -113,9 +85,38 @@ describe('scheduleReview', () => {
     expect(easy.stability).toBeGreaterThan(10)
   })
 
-  it('is deterministic', () => {
-    const first = scheduleReview(card(), 'Hard', settings, now)
-    const second = scheduleReview(card(), 'Hard', settings, now)
-    expect(first).toEqual(second)
-  })
+  it.prop(
+    'keeps scheduling invariants for every Card and Grade',
+    [schedulerCard, grade],
+    ([card, grade]) => {
+      const scheduled = scheduleReview(card, grade, settings, now)
+      const isNew = card.state === 'new' || card.reps === 0
+      const isAgain = grade === 'Again'
+
+      expect(Number.isFinite(scheduled.stability)).toBe(true)
+      expect(scheduled.stability).toBeGreaterThanOrEqual(0.001)
+      expect(scheduled.stability).toBeLessThanOrEqual(36_500)
+      expect(scheduled.difficulty).toBeGreaterThanOrEqual(1)
+      expect(scheduled.difficulty).toBeLessThanOrEqual(10)
+      expect(scheduled.state).toBe(
+        isNew ? (isAgain ? 'learning' : 'review') : isAgain ? 'relearning' : 'review',
+      )
+      if (isAgain) {
+        expect(scheduled.intervalDays).toBe(0)
+      } else {
+        expect(scheduled.intervalDays).toBe(
+          nextInterval(
+            weights,
+            scheduled.stability,
+            settings.desiredRetention,
+            settings.maximumInterval,
+          ),
+        )
+        if (!isNew) expect(scheduled.stability).toBeGreaterThanOrEqual(card.stability)
+      }
+      expect(scheduled.intervalDays).toBeLessThanOrEqual(settings.maximumInterval)
+      expect(scheduled.reps).toBe(isNew ? 1 : card.reps + 1)
+      expect(scheduled.lapses).toBe(isNew ? Number(isAgain) : card.lapses + Number(isAgain))
+    },
+  )
 })

@@ -11,7 +11,6 @@
 
 import { describe, expect, it } from 'vitest'
 import { Option } from 'effect'
-import type { Url } from 'foldkit/url'
 import { DeckId, type DeckSummary } from '@nook/api'
 import { getAllByText, getByText, given, scene, tap } from 'foldkit/scene'
 import { Message, seedModel } from '../src/app/model'
@@ -19,15 +18,7 @@ import type { Model } from '../src/app/model'
 import type { HtmlBuilder } from 'foldkit/html'
 import { update } from '../src/app/update'
 import { decksView } from '../src/app/decks'
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
+import { url } from './helpers'
 
 const deck = (
   id: string,

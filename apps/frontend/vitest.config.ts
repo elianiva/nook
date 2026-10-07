@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
  *
  * `@` is the source root. The tests reach Foldkit through `app/update`, so
  * Foldkit is inlined for Vite to transform rather than externalized for Node
- * to resolve.
+ * to resolve. `@effect/vitest` is inlined so it shares the test runner's suite state.
  */
 export default defineConfig({
   resolve: {
@@ -18,7 +18,7 @@ export default defineConfig({
     environment: 'node',
     server: {
       deps: {
-        inline: ['foldkit'],
+        inline: ['foldkit', '@effect/vitest'],
       },
     },
   },

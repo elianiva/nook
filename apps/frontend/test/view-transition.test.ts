@@ -4,21 +4,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Option } from 'effect'
-import type { Url } from 'foldkit/url'
 import { DeckId } from '@nook/api'
 import { Message, seedModel } from '../src/app/model'
 import { AppRoute } from '../src/app/routes'
 import { transitionDirection, viewTransition } from '../src/app/view-transition'
-
-const url = (pathname: string): Url => ({
-  protocol: 'http:',
-  host: 'localhost',
-  port: Option.none(),
-  pathname,
-  search: Option.none(),
-  hash: Option.none(),
-})
+import { url } from './helpers'
 
 const deckDetail = (id: string) => AppRoute.DeckDetail({ deckId: DeckId.make(id) })
 
