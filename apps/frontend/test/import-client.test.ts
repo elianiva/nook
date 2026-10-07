@@ -145,3 +145,43 @@ describe('ImportProgress', () => {
     expect(Schema.decodeUnknownSync(ImportProgress)(plain)).toEqual(plain)
   })
 })
+
+describe('importRun subscription lifetime', () => {
+  it('keeps one worker across the run phases and media toggles', async () => {
+    const { subscriptions } = await import('../src/app/subscriptions')
+    const entry = (
+      subscriptions as unknown as Record<
+        string,
+        {
+          readonly keepAliveEquivalence?: (left: unknown, right: unknown) => boolean
+          readonly modelToDependencies: (model: unknown) => unknown
+        }
+      >
+    ).importRun
+    if (entry === undefined) throw new Error('expected an importRun subscription')
+    // The worker reports these phases itself as it opens the archive and then
+    // writes rows. Restarting on them tears the worker down mid-run, and each
+    // replacement starts by posting `reading` again: the panel loops on
+    // counting and reading instead of finishing.
+    const equivalence = entry.keepAliveEquivalence
+    if (typeof equivalence !== 'function') throw new Error('expected keepAliveEquivalence')
+    const { Option } = await import('effect')
+    const base = {
+      importId: Option.some('a'.repeat(64)),
+      active: true,
+      phase: 'running' as const,
+      hasPreview: false,
+      includeMedia: true,
+    }
+    // The worker's own progress must not restart it.
+    expect(equivalence(base, { ...base, phase: 'reading' })).toBe(true)
+    expect(equivalence({ ...base, phase: 'reading' }, { ...base, phase: 'writing' })).toBe(true)
+    // A Media toggle must not restart the run worker.
+    expect(equivalence(base, { ...base, includeMedia: false })).toBe(true)
+    // A real transition restarts: preview swaps its worker for the run one.
+    expect(equivalence({ ...base, phase: 'preview' }, base)).toBe(false)
+    // An end state tears the worker down.
+    expect(equivalence(base, { ...base, active: false })).toBe(false)
+    expect(equivalence(base, { ...base, phase: 'done' })).toBe(false)
+  })
+})

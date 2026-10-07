@@ -13,13 +13,26 @@
  * shows the last counts the Model holds.
  */
 
-import { Effect, Option, Queue, Schema, Stream } from 'effect'
+import { Effect, Equivalence, Match, Option, Queue, Schema, Stream } from 'effect'
 import { Subscription } from 'foldkit'
 import { ImportId } from '@nook/api'
 import { loadImportJob } from '@/lib/import-jobs'
 import type { ImportWorkerCommand, ImportWorkerEvent } from '@/lib/import-worker-protocol'
 import { Message } from './model'
 import type { Model } from './model'
+
+/**
+ * Which Import the `importRun` stream serves: the detail panel's preview, one
+ * live run, or an end state with no worker. `running`, `reading`, and
+ * `writing` are one run — the worker itself moves between them — so the
+ * subscription must not restart across them.
+ */
+const runClass = (phase: string): 'preview' | 'run' | 'end' =>
+  Match.value(phase).pipe(
+    Match.when('preview', () => 'preview' as const),
+    Match.whenOr('running', 'reading', 'writing', () => 'run' as const),
+    Match.orElse(() => 'end' as const),
+  )
 
 /** One worker event, as the Message it becomes. */
 export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => {
@@ -50,6 +63,10 @@ export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => 
  * worker when the subscription tears down, which is also how a run is
  * cancelled: the cursors in D1 make the next run pick up where this one
  * stopped. A failed or finished stream ends, so the worker does not linger.
+ *
+ * The run reads the Media choice from the dependencies it starts with, so a
+ * later toggle never tears the worker down and starts another run over what
+ * is already running.
  */
 const streamImport = (
   id: ImportId,
@@ -116,8 +133,25 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
     },
     {
       // The pick opens the preview worker; the Start press swaps it for the
-      // run. Phase is a dependency here on purpose, so the preview worker
-      // tears down as soon as its one answer lands.
+      // run. The run worker must then survive its own progress: it posts
+      // `reading` when it opens the archive and `writing` when it starts
+      // writing rows, and every new worker starts by posting `reading` again.
+      // Restarting on those phase moves tears the worker down mid-run and the
+      // replacement flips the phase back, so the run re-opens the archive in
+      // a loop of counting and reading instead of finishing. The equivalence
+      // below treats `running`, `reading`, and `writing` as one run, so only
+      // a real transition — preview to run, run to an end — restarts the
+      // stream. `includeMedia` is read when the run starts and never
+      // restarts it; the counts land in `status`, which is not a dependency.
+      keepAliveEquivalence: Equivalence.Struct({
+        importId: Option.makeEquivalence<string>(Equivalence.String),
+        active: Equivalence.Boolean,
+        phase: Equivalence.make(
+          (left: string, right: string) => runClass(left) === runClass(right),
+        ),
+        hasPreview: Equivalence.Boolean,
+        includeMedia: (_a: boolean, _b: boolean) => true,
+      }),
       modelToDependencies: (model) => ({
         importId: model.importState.id,
         active: model.importState.active,
@@ -125,7 +159,16 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         hasPreview: Option.isSome(model.importState.preview),
         includeMedia: model.importState.includeMedia,
       }),
-      dependenciesToStream: ({ importId, active, phase, hasPreview, includeMedia }) => {
+      dependenciesToStream: (
+        dependencies: Readonly<{
+          importId: Option.Option<ImportId>
+          active: boolean
+          phase: string
+          hasPreview: boolean
+          includeMedia: boolean
+        }>,
+      ) => {
+        const { importId, active, phase, hasPreview, includeMedia } = dependencies
         if (!active || Option.isNone(importId)) return Stream.empty
         if (phase === 'preview' && !hasPreview) {
           return streamImport(importId.value, 'preview', includeMedia)
