@@ -70,6 +70,16 @@ layer(TestLayers)('per-deck limits over sqlite', (it) => {
       expect(queue.dueCapped).toBe(true)
       expect(queue.newCapped).toBe(true)
 
+      const continued = yield* client.reviewsQueue({
+        deckId: showcaseDeck,
+        timezone: 'UTC',
+        bypassDueLimit: true,
+      })
+      expect(continued.cards.length).toBe(4)
+      expect(continued.cards.every((card) => card.state !== 'new')).toBe(true)
+      expect(continued.reviewedToday).toBe(0)
+      expect(continued.totalNew).toBe(2)
+
       const detail = yield* client.decksGetById({ deckId: showcaseDeck })
       expect(detail.summary.dueCount).toBe(4)
       expect(detail.summary.dueToday).toBe(1)

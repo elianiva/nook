@@ -180,6 +180,8 @@ export const ReviewState = S.Struct({
   error: S.Option(S.String),
   /** Why the session ended with no Cards: truly empty, or stopped by a limit. */
   doneKind: ReviewDoneKind,
+  /** This session explicitly bypassed the daily due limit. Never persisted. */
+  bypassDueLimit: S.Boolean,
   /** What the queue knew when it landed: the counts behind the done screen. */
   queueTotalDue: S.Number,
   queueTotalNew: S.Number,
@@ -208,6 +210,7 @@ export const idleReview: ReviewState = {
   offline: [],
   error: Option.none(),
   doneKind: 'empty',
+  bypassDueLimit: false,
   queueTotalDue: 0,
   queueTotalNew: 0,
   queueReviewedToday: 0,
@@ -468,6 +471,8 @@ export const Message = defineMessageUnion({
     totalDue: S.Number,
     newCapped: S.Boolean,
     dueCapped: S.Boolean,
+    /** This response was requested by the session-only due-limit bypass. */
+    beyondLimit: S.Boolean,
   },
   /** The Learner revealed the answer side. */
   RevealedAnswer: {},
@@ -505,6 +510,8 @@ export const Message = defineMessageUnion({
   GradeFailed: { error: S.String },
   /** The Learner pressed Retry on a grade that did not land. */
   ClickedRetryGrades: {},
+  /** The learner chose to continue with due Cards only, past today's cap. */
+  ClickedContinuePastDueLimit: {},
   /** The Learner pressed the Import button. */
   ClickedImport: {},
   /** The Learner picked an archive, and it hashes to this Import id. Nothing runs yet: the detail panel previews it first. */

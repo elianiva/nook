@@ -90,7 +90,7 @@ const routeLoads = (model: Model): Update.Return<Model, Message> =>
       model,
       commands: [
         LoadCachedQueue({ deckId: Option.none() }),
-        FetchReviewQueue({ deckId: Option.none() }),
+        FetchReviewQueue({ deckId: Option.none(), bypassDueLimit: false }),
         FetchSettings(),
       ],
     }),
@@ -98,7 +98,7 @@ const routeLoads = (model: Model): Update.Return<Model, Message> =>
       model,
       commands: [
         LoadCachedQueue({ deckId: Option.some(deckId) }),
-        FetchReviewQueue({ deckId: Option.some(deckId) }),
+        FetchReviewQueue({ deckId: Option.some(deckId), bypassDueLimit: false }),
         FetchSettings(),
       ],
     }),
@@ -141,12 +141,15 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
       if (route._tag === 'ReviewDeck') {
         return [
           LoadCachedQueue({ deckId: Option.some(route.deckId) }),
-          FetchReviewQueue({ deckId: Option.some(route.deckId) }),
+          FetchReviewQueue({
+            deckId: Option.some(route.deckId),
+            bypassDueLimit: model.review.bypassDueLimit,
+          }),
         ]
       }
       return [
         LoadCachedQueue({ deckId: Option.none() }),
-        FetchReviewQueue({ deckId: Option.none() }),
+        FetchReviewQueue({ deckId: Option.none(), bypassDueLimit: model.review.bypassDueLimit }),
       ]
     }
     case 'settings':
@@ -338,7 +341,12 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     LoadFailed: ({ error, retry }) => ({
-      model: modifyFields(model, { notice: () => Option.some({ message: error, retry }) }),
+      model: modifyFields(model, {
+        notice: () => Option.some({ message: error, retry }),
+        ...(retry === 'reviewQueue' && model.review.bypassDueLimit
+          ? { review: () => ({ ...model.review, phase: 'done' as const }) }
+          : {}),
+      }),
     }),
 
     ClickedRetry: () =>
@@ -366,6 +374,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       totalDue,
       newCapped,
       dueCapped,
+      beyondLimit,
     }) => {
       const route = model.route
       const deckId = route._tag === 'ReviewDeck' ? Option.some(route.deckId) : Option.none()
@@ -389,21 +398,44 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             // A cached queue answers first; the network answer replaces it
             // only when it carries Cards, so offline Cards never flash away.
             review: () =>
-              cards.length === 0 && model.review.cards.length > 0
-                ? model.review
-                : {
-                    ...idleReview,
+              beyondLimit
+                ? {
+                    ...model.review,
+                    cards: [...model.review.cards, ...cards],
+                    index: model.review.cards.length,
+                    revealed: false,
                     phase: cards.length === 0 ? 'done' : 'reviewing',
-                    cards: [...cards],
                     dayStartUtc: Option.some(dayStartUtc),
                     lapseMinutes,
-                    doneKind: limitStopped ? 'limits' : 'empty',
-                    ...queueCounts,
-                  },
+                    doneKind: cards.length === 0 && (newCapped || dueCapped) ? 'limits' : 'empty',
+                    bypassDueLimit: true,
+                    queueTotalDue: totalDue,
+                    queueTotalNew: 0,
+                    queueReviewedToday: reviewedToday,
+                    queueNewToday: newToday,
+                    queueNewCapped: false,
+                    queueDueCapped: dueCapped,
+                    queueServedDue:
+                      model.review.queueServedDue +
+                      cards.filter((card) => card.state !== 'new').length,
+                    queueServedNew: model.review.queueServedNew,
+                  }
+                : cards.length === 0 && model.review.cards.length > 0
+                  ? model.review
+                  : {
+                      ...idleReview,
+                      phase: cards.length === 0 ? 'done' : 'reviewing',
+                      cards: [...cards],
+                      dayStartUtc: Option.some(dayStartUtc),
+                      lapseMinutes,
+                      doneKind: limitStopped ? 'limits' : 'empty',
+                      bypassDueLimit: false,
+                      ...queueCounts,
+                    },
           }),
         ),
         commands:
-          cards.length === 0
+          cards.length === 0 || beyondLimit
             ? []
             : [PersistReviewQueue({ deckId, cards: [...cards], dayStartUtc, lapseMinutes })],
       }
@@ -530,6 +562,29 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         SubmitGrade(entry),
       ),
     }),
+
+    ClickedContinuePastDueLimit: () => {
+      if (
+        model.review.phase !== 'done' ||
+        !model.review.queueDueCapped ||
+        model.review.queueTotalDue === 0
+      ) {
+        return { model }
+      }
+      const deckId =
+        model.route._tag === 'ReviewDeck' ? Option.some(model.route.deckId) : Option.none()
+      return {
+        model: modifyFields(model, {
+          review: () => ({
+            ...model.review,
+            phase: 'loading',
+            bypassDueLimit: true,
+            error: Option.none(),
+          }),
+        }),
+        commands: [FetchReviewQueue({ deckId, bypassDueLimit: true })],
+      }
+    },
 
     RegainedNetwork: () => {
       const queued = model.review.offline

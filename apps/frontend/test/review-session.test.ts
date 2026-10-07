@@ -56,6 +56,7 @@ const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
       totalDue: cards.filter((card) => card.state !== 'new').length,
       newCapped: false,
       dueCapped: false,
+      beyondLimit: false,
     }),
   ).model
   return update(queued, Message.RevealedAnswer()).model
@@ -120,6 +121,48 @@ describe('review session', () => {
 
     const retried = update(failed.model, Message.ClickedRetryGrades())
     expect(names(retried)).toEqual(['SubmitGrade'])
+  })
+
+  it('continues with due cards only when the learner bypasses the daily cap', () => {
+    const due = card('c1')
+    const model = update(
+      seedModel(url('/review')),
+      Message.GotReviewQueue({
+        cards: [due],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 1,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 3,
+        newCapped: false,
+        dueCapped: true,
+        beyondLimit: false,
+      }),
+    ).model
+    const continued = update(model, Message.ClickedContinuePastDueLimit())
+    expect(continued.model.review.bypassDueLimit).toBe(true)
+    expect(names(continued)).toEqual(['FetchReviewQueue'])
+
+    const added = update(
+      continued.model,
+      Message.GotReviewQueue({
+        cards: [card('c2')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 1,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 2,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: true,
+      }),
+    )
+    expect(added.model.review.cards.map((entry) => entry.cardId)).toEqual(['c1', 'c2'])
+    expect(added.model.review.index).toBe(1)
+    expect(added.model.review.graded).toBe(0)
+    expect(added.model.review.bypassDueLimit).toBe(true)
   })
 
   it('sends the learner timezone with the queue fetch', () => {

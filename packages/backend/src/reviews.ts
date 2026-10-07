@@ -179,6 +179,7 @@ export class Reviews extends Context.Service<
     queue(input: {
       deckId: Option.Option<DeckId>
       timezone?: string | undefined
+      bypassDueLimit?: boolean | undefined
     }): Effect.Effect<ReviewQueue, StorageUnavailable>
     grade(
       submission: ReviewSubmission,
@@ -245,6 +246,7 @@ export class Reviews extends Context.Service<
       const queue = (input: {
         deckId: Option.Option<DeckId>
         timezone?: string | undefined
+        bypassDueLimit?: boolean | undefined
       }): Effect.Effect<ReviewQueue, StorageUnavailable> =>
         Effect.gen(function* () {
           const fsrs = yield* readFsrs
@@ -293,8 +295,10 @@ export class Reviews extends Context.Service<
               AND (${deck} IS NULL OR c.deck_id = ${deck})`
           const totalNew = (yield* decodeRows(CountRow, totalNewRows))[0]?.n ?? 0
 
-          const dueAllowed = Math.max(0, reviewsPerDay - reviewedToday)
-          const newAllowed = Math.max(0, newPerDay - introducedToday)
+          const dueAllowed = input.bypassDueLimit
+            ? totalDue
+            : Math.max(0, reviewsPerDay - reviewedToday)
+          const newAllowed = input.bypassDueLimit ? 0 : Math.max(0, newPerDay - introducedToday)
 
           const rows = yield* sql`SELECT c.id AS "cardId", c.deck_id AS "deckId",
             c.note_id AS "noteId", c.template_ord AS "templateOrd",
@@ -312,6 +316,7 @@ export class Reviews extends Context.Service<
             WHERE c.suspended = 0 AND c.note_id IS NOT NULL
               AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
               AND (c.state = 'new' OR (c.due_at IS NOT NULL AND c.due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
+              AND (${input.bypassDueLimit ?? false} = 0 OR c.state != 'new')
               AND (${deck} IS NULL OR c.deck_id = ${deck})
             ORDER BY CASE WHEN c.state = 'new' THEN 1 ELSE 0 END, c.due_at
             LIMIT ${QUEUE_LIMIT}`
@@ -322,8 +327,9 @@ export class Reviews extends Context.Service<
           const fresh = newWaiting.slice(0, newAllowed)
           // A 200-Card prefetch can hold fewer due Cards than the limit
           // allows; only a limit cut counts as capped, never a short fetch.
-          const dueCapped = dueWaiting.length > due.length
-          const newCapped = newWaiting.length > fresh.length
+          const dueCapped = dueWaiting.length > due.length || totalDue > due.length
+          const newCapped =
+            !input.bypassDueLimit && (newWaiting.length > fresh.length || totalNew > fresh.length)
           const cards = yield* Effect.forEach([...due, ...fresh], toReviewCard, { concurrency: 1 })
           return {
             cards,
@@ -648,8 +654,8 @@ export const ReviewsHandlers = ReviewsRpc.toLayer(
   Effect.gen(function* () {
     const reviews = yield* Reviews
     return ReviewsRpc.of({
-      reviewsQueue: ({ deckId, timezone }) =>
-        reviews.queue({ deckId: Option.fromUndefinedOr(deckId), timezone }),
+      reviewsQueue: ({ deckId, timezone, bypassDueLimit }) =>
+        reviews.queue({ deckId: Option.fromUndefinedOr(deckId), timezone, bypassDueLimit }),
       reviewsGrade: (payload) => reviews.grade(payload),
       reviewsUndo: ({ cardId }) => reviews.undo({ cardId }),
       reviewsExport: () => reviews.exportCollection(),

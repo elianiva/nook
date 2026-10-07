@@ -609,7 +609,12 @@ export class ImportsRpc extends RpcGroup.make(
 
 export class ReviewsRpc extends RpcGroup.make(
   Rpc.make('reviewsQueue', {
-    payload: { deckId: S.optional(DeckId), timezone: S.optional(S.String) },
+    payload: {
+      deckId: S.optional(DeckId),
+      timezone: S.optional(S.String),
+      /** One-session option: serve due Cards past the daily cap and exclude new Cards. */
+      bypassDueLimit: S.optional(S.Boolean),
+    },
     success: ReviewQueue,
     error: StorageUnavailable,
   }),

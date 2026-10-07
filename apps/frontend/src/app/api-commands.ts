@@ -79,12 +79,16 @@ export const SaveSettings = Command.define('SaveSettings', {
 })
 
 export const FetchReviewQueue = Command.define('FetchReviewQueue', {
-  args: { deckId: S.Option(DeckId) },
+  args: { deckId: S.Option(DeckId), bypassDueLimit: S.Boolean },
   messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
-  execute: ({ deckId }) =>
+  execute: ({ deckId, bypassDueLimit }) =>
     NookRpc.pipe(
       Effect.flatMap((rpc) =>
-        rpc.reviewsQueue({ deckId: Option.getOrUndefined(deckId), timezone: timezone() }),
+        rpc.reviewsQueue({
+          deckId: Option.getOrUndefined(deckId),
+          timezone: timezone(),
+          bypassDueLimit,
+        }),
       ),
       Effect.map((queue) =>
         MessageConstructors.GotReviewQueue({
@@ -97,6 +101,7 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
           totalDue: queue.totalDue,
           newCapped: queue.newCapped,
           dueCapped: queue.dueCapped,
+          beyondLimit: bypassDueLimit,
         }),
       ),
       Effect.catch(() =>
@@ -284,6 +289,7 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
               totalDue: 0,
               newCapped: false,
               dueCapped: false,
+              beyondLimit: false,
             }),
           ),
         ),

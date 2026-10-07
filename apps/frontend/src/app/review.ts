@@ -118,7 +118,7 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
                 nothingDue && !capped
                   ? 'Every Card in this queue is scheduled for later.'
                   : capped
-                    ? `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. ${remaining} more ${remaining === 1 ? 'waits' : 'wait'} past today's limits — they return tomorrow, or raise the limits.`
+                    ? `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. ${remaining} more ${remaining === 1 ? 'waits' : 'wait'} past today's limits.`
                     : `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. They come back when FSRS says so.`,
               ],
               h,
@@ -140,22 +140,40 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
               {},
               [
                 h.div(
-                  [h.Class('flex items-center justify-center gap-2')],
+                  [h.Class('flex flex-col items-center justify-center gap-2')],
                   [
-                    h.a(
+                    ...(review.queueDueCapped && review.queueTotalDue > 0
+                      ? [
+                          button<Message>(
+                            {
+                              onClick: Message.ClickedContinuePastDueLimit(),
+                              size: 'sm',
+                              className: 'w-full',
+                            },
+                            ['Review due Cards anyway · this session only'],
+                            h,
+                          ),
+                        ]
+                      : []),
+                    h.div(
+                      [h.Class('flex items-center justify-center gap-2')],
                       [
-                        h.Href(routeToUrl({ _tag: 'Decks' })),
-                        h.Class('text-xs font-medium text-primary hover:underline'),
+                        h.a(
+                          [
+                            h.Href(routeToUrl({ _tag: 'Decks' })),
+                            h.Class('text-xs font-medium text-primary hover:underline'),
+                          ],
+                          ['Back to decks'],
+                        ),
+                        button<Message>(
+                          {
+                            onClick: Message.ClickedExport(),
+                            size: 'sm',
+                          },
+                          [icon(h, Download, 'size-3.5', 'inline-start'), 'Export collection'],
+                          h,
+                        ),
                       ],
-                      ['Back to decks'],
-                    ),
-                    button<Message>(
-                      {
-                        onClick: Message.ClickedExport(),
-                        size: 'sm',
-                      },
-                      [icon(h, Download, 'size-3.5', 'inline-start'), 'Export collection'],
-                      h,
                     ),
                   ],
                 ),
@@ -345,14 +363,9 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
               [h.Class('hidden pt-2 text-center text-[11px] text-muted-foreground sm:block')],
               [review.revealed ? '1–4 to grade · U to undo' : 'Space to reveal'],
             ),
-            ...(review.revealed || !tapToReveal
-              ? []
-              : [
-                  h.p(
-                    [h.Class('pt-2 text-center text-[11px] text-muted-foreground')],
-                    ['Or tap the Card'],
-                  ),
-                ]),
+            // Keep the former hint's space reserved so revealing never moves
+            // the grade controls, without showing the redundant instruction.
+            h.p([h.Class('min-h-6 pt-2')], []),
           ],
         ),
       ],
