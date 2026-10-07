@@ -2,7 +2,7 @@ import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
-import { DecksRpc, DeckId } from '@nook/api'
+import { DecksRpc, CardId, DeckId } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { migrate } from './migrate'
 
@@ -22,10 +22,10 @@ layer(TestLayers)('deck management over sqlite', (it) => {
       expect(detail.cards.length).toBe(8)
       const previews = new Map(detail.cards.map((card) => [card.id, card.preview]))
       // Basic note: the prompt side only, never the answer.
-      expect(previews.get('card-showcase-01')).toBe('おはよう')
+      expect(previews.get(CardId.make('card-showcase-01'))).toBe('おはよう')
       // Cloze note: surrounding text with the hidden answer replaced by its hint.
-      expect(previews.get('card-showcase-07')).toContain('東京は')
-      expect(previews.get('card-showcase-07')).not.toContain('日本の首都')
+      expect(previews.get(CardId.make('card-showcase-07'))).toContain('東京は')
+      expect(previews.get(CardId.make('card-showcase-07'))).not.toContain('日本の首都')
     }).pipe(Effect.scoped),
   )
 
