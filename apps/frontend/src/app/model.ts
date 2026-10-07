@@ -135,6 +135,10 @@ export const validateDraft = (draft: SettingsDraft): string | undefined => {
 export const ReviewPhase = S.Literals(['loading', 'reviewing', 'done', 'failed'])
 export type ReviewPhase = typeof ReviewPhase.Type
 
+/** Why the review session ended with no Cards to show. */
+export const ReviewDoneKind = S.Literals(['empty', 'limits'])
+export type ReviewDoneKind = typeof ReviewDoneKind.Type
+
 /** A Grade the app has applied on screen but the server has not confirmed yet. */
 export const ReviewPending = S.Struct({
   id: S.String,
@@ -174,6 +178,18 @@ export const ReviewState = S.Struct({
   offline: S.Array(ReviewPending),
   /** Why the last grade failed, as one sentence for the Learner. */
   error: S.Option(S.String),
+  /** Why the session ended with no Cards: truly empty, or stopped by a limit. */
+  doneKind: ReviewDoneKind,
+  /** What the queue knew when it landed: the counts behind the done screen. */
+  queueTotalDue: S.Number,
+  queueTotalNew: S.Number,
+  queueReviewedToday: S.Number,
+  queueNewToday: S.Number,
+  queueNewCapped: S.Boolean,
+  queueDueCapped: S.Boolean,
+  /** Due and new Cards the landed queue served, for the "N more" remainder. */
+  queueServedDue: S.Number,
+  queueServedNew: S.Number,
 })
 export type ReviewState = typeof ReviewState.Type
 
@@ -191,6 +207,15 @@ export const idleReview: ReviewState = {
   undone: false,
   offline: [],
   error: Option.none(),
+  doneKind: 'empty',
+  queueTotalDue: 0,
+  queueTotalNew: 0,
+  queueReviewedToday: 0,
+  queueNewToday: 0,
+  queueNewCapped: false,
+  queueDueCapped: false,
+  queueServedDue: 0,
+  queueServedNew: 0,
 }
 
 /** Which fetch or save a notice retry runs. The list and detail reads are Queries now, so they carry their own Retry. */
@@ -225,6 +250,13 @@ export type DeckConfirm = typeof DeckConfirm.Type
  * leaks across pages. `saving` marks a mutation in flight, `saved` the
  * confirmation after a rename lands, and `error` the last mutation failure
  * as one sentence for the Learner.
+ *
+ * The limits draft holds the three override fields as text: blank means
+ * "follow Settings" (`null` on the wire), so half-typed input never
+ * corrupts the numeric model. `limitsSaved` confirms a limits save the way
+ * `saved` confirms a rename. `cardsOpen` folds the long Card list away —
+ * the Manage section sits below it, so a Deck with hundreds of Cards would
+ * otherwise bury its own settings.
  */
 export const DeckManage = S.Struct({
   deckId: S.Option(DeckId),
@@ -235,6 +267,14 @@ export const DeckManage = S.Struct({
   saving: S.Boolean,
   saved: S.Boolean,
   error: S.Option(S.String),
+  editingLimits: S.Boolean,
+  newPerDay: S.String,
+  reviewsPerDay: S.String,
+  lapseMinutes: S.String,
+  limitsSaving: S.Boolean,
+  limitsSaved: S.Boolean,
+  limitsError: S.Option(S.String),
+  cardsOpen: S.Boolean,
 })
 export type DeckManage = typeof DeckManage.Type
 
@@ -247,7 +287,24 @@ export const idleDeckManage: DeckManage = {
   saving: false,
   saved: false,
   error: Option.none(),
+  editingLimits: false,
+  newPerDay: '',
+  reviewsPerDay: '',
+  lapseMinutes: '',
+  limitsSaving: false,
+  limitsSaved: false,
+  limitsError: Option.none(),
+  cardsOpen: false,
 }
+
+/** The limits draft for a Deck, seeded from its summary: overrides as text, blank for "follow Settings". */
+export const limitsTextFromSummary = (summary: {
+  limits: { newPerDay: number | null; reviewsPerDay: number | null; lapseMinutes: number | null }
+}): { newPerDay: string; reviewsPerDay: string; lapseMinutes: string } => ({
+  newPerDay: summary.limits.newPerDay === null ? '' : String(summary.limits.newPerDay),
+  reviewsPerDay: summary.limits.reviewsPerDay === null ? '' : String(summary.limits.reviewsPerDay),
+  lapseMinutes: summary.limits.lapseMinutes === null ? '' : String(summary.limits.lapseMinutes),
+})
 
 /**
  * An Import the client can resume: its id and the archive's name.
@@ -401,7 +458,19 @@ export const Message = defineMessageUnion({
   /** The Learner pressed a Start action: one Deck's queue, or every Deck's. */
   StartedReview: { deckId: S.Option(DeckId) },
   /** The backend answered with the Cards to review, already rendered. */
-  GotReviewQueue: { cards: S.Array(ReviewCard), dayStartUtc: S.String, lapseMinutes: S.Number },
+  GotReviewQueue: {
+    cards: S.Array(ReviewCard),
+    dayStartUtc: S.String,
+    lapseMinutes: S.Number,
+    reviewedToday: S.Number,
+    newToday: S.Number,
+    newRemaining: S.Number,
+    dueRemaining: S.Number,
+    totalNew: S.Number,
+    totalDue: S.Number,
+    newCapped: S.Boolean,
+    dueCapped: S.Boolean,
+  },
   /** The Learner revealed the answer side. */
   RevealedAnswer: {},
   /** The Learner graded the shown Card. */
@@ -508,6 +577,27 @@ export const Message = defineMessageUnion({
   ClickedSaveDeck: { deckId: DeckId },
   /** The rename landed. The detail and list reads refresh after it. */
   RenamedDeck: { deckId: DeckId },
+  /** The Learner typed a per-deck limit override. Blank follows Settings. */
+  TypedDeckNewPerDay: { value: S.String },
+  TypedDeckReviewsPerDay: { value: S.String },
+  TypedDeckLapseMinutes: { value: S.String },
+  /** The Learner opened the limits form, seeded from the deck's summary. */
+  ClickedEditDeckLimits: {
+    deckId: DeckId,
+    newPerDay: S.String,
+    reviewsPerDay: S.String,
+    lapseMinutes: S.String,
+  },
+  /** The Learner saved the limits form. */
+  ClickedSaveDeckLimits: { deckId: DeckId },
+  /** The limits landed. The detail and list reads refresh after it. */
+  SavedDeckLimits: { deckId: DeckId },
+  /** The Learner closed the limits form without saving. */
+  ClickedCancelDeckLimits: {},
+  /** The Learner cleared the limits form to follow Settings. */
+  ClickedResetDeckLimits: {},
+  /** The Learner folded or unfolded the deck page's Card list. */
+  ToggledDeckCards: {},
   /** The Learner opened a destructive confirm. Only one is open at a time. */
   ClickedResetDeck: { deckId: DeckId },
   ClickedRemoveDeck: { deckId: DeckId },

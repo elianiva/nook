@@ -10,7 +10,7 @@
 import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, Pencil, Play, RotateCcw, Trash2 } from 'lucide'
+import { ChevronDown, CircleAlert, Pencil, Play, RotateCcw, Settings2, Trash2 } from 'lucide'
 import { badge } from '@/components/ui/badge'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
 import { errorPanel, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
+import { limitsTextFromSummary } from './model'
 import type { DeckManage, Model } from './model'
 import { deckDetailQuery } from './queries'
 import { routeToUrl } from './routes'
@@ -100,8 +101,10 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
   )
 }
 
-const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
-  h.div(
+const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html => {
+  const today = detail.summary.dueToday + detail.summary.newToday
+  const total = detail.summary.dueCount + detail.summary.newCount
+  return h.div(
     [h.Class('rounded-[20px] border-0 bg-[var(--theme-block)] p-4')],
     [
       h.div(
@@ -119,9 +122,9 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
             [
               h.div(
                 [h.Class('text-lg font-bold tabular-nums leading-none text-destructive')],
-                [String(detail.summary.dueCount)],
+                [String(detail.summary.dueToday)],
               ),
-              h.div([h.Class('mt-1 text-[11px] text-muted-foreground')], ['Due']),
+              h.div([h.Class('mt-1 text-[11px] text-muted-foreground')], ['Due today']),
             ],
           ),
           h.div(
@@ -129,9 +132,9 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
             [
               h.div(
                 [h.Class('text-lg font-bold tabular-nums leading-none')],
-                [String(detail.summary.newCount)],
+                [String(detail.summary.newToday)],
               ),
-              h.div([h.Class('mt-1 text-[11px] text-muted-foreground')], ['New']),
+              h.div([h.Class('mt-1 text-[11px] text-muted-foreground')], ['New today']),
             ],
           ),
           h.div(
@@ -146,6 +149,17 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
           ),
         ],
       ),
+      // The queue caps today by the limits; the sentence names the
+      // remainder, so a Learner with 200 due and a 100 cap sees "100 today ·
+      // 200 due in total" instead of thinking Cards vanished.
+      ...(total === today
+        ? []
+        : [
+            h.p(
+              [h.Class('mt-2 text-center text-[11px] text-muted-foreground')],
+              [`${today} today · ${total} due in total`],
+            ),
+          ]),
       h.div(
         [h.Class('mt-3 flex items-center gap-2')],
         [
@@ -161,16 +175,17 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
           onClick: Message.StartedReview({ deckId: Option.some(detail.summary.id) }),
           size: 'xl',
           className: 'mt-3 w-full',
-          isDisabled: detail.summary.dueCount + detail.summary.newCount === 0,
+          isDisabled: today === 0,
         },
         [
           icon(h, Play, 'size-4', 'inline-start'),
-          `Review ${detail.summary.dueCount + detail.summary.newCount} Cards`,
+          today === 0 ? 'Nothing due today' : `Review ${today} Cards`,
         ],
         h,
       ),
     ],
   )
+}
 
 /** A deck id that names no Deck. This is an answer, not a failure to retry. */
 const deckNotFound = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
@@ -205,14 +220,210 @@ const deckBody = (
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Child> => [
   header(detail, h),
-  h.h2([h.Class('text-sm font-semibold')], [`Cards · ${detail.cards.length} shown`]),
-  h.div(
-    [h.Class('flex flex-col gap-1.5')],
-    detail.cards.map((card, index) => cardRow(card, index, h)),
-  ),
+  cardsSection(detail, forDeck ? manage : null, h),
   h.h2([h.Class('text-sm font-semibold')], ['Manage']),
   manageSection(detail, forDeck ? manage : null, h),
 ]
+
+/**
+ * The Card list, folded by default: a Deck with hundreds of Cards used to
+ * bury its own Manage section. The block reads like the page's other grey
+ * sections — a thick toggle with the list inside — so it never looks like a
+ * stray dropdown, and the count stays visible either way.
+ */
+const cardsSection = (
+  detail: DeckDetail,
+  manage: DeckManage | null,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const open = manage?.cardsOpen ?? false
+  return h.div(
+    [h.Class('flex flex-col gap-2 rounded-[20px] border-0 bg-[var(--theme-block)] p-4')],
+    [
+      h.button(
+        [
+          h.OnClick(Message.ToggledDeckCards()),
+          h.Class('flex w-full items-center justify-between gap-3 text-left outline-none'),
+          h.AriaExpanded(open),
+          h.AriaLabel(open ? 'Hide Cards' : 'Show Cards'),
+        ],
+        [
+          h.div(
+            [h.Class('flex flex-col gap-0.5')],
+            [
+              h.span([h.Class('text-sm font-bold')], ['Cards']),
+              h.span(
+                [h.Class('text-xs text-muted-foreground')],
+                [
+                  `${detail.cards.length} ${detail.cards.length === 1 ? 'Card' : 'Cards'}${open ? '' : ' · hidden'}`,
+                ],
+              ),
+            ],
+          ),
+          icon(h, ChevronDown, open ? 'size-5 rotate-180' : 'size-5'),
+        ],
+      ),
+      ...(open
+        ? [
+            h.div(
+              [h.Class('flex flex-col gap-1.5')],
+              detail.cards.map((card, index) => cardRow(card, index, h)),
+            ),
+          ]
+        : []),
+    ],
+  )
+}
+
+/** One limits override row: label on the left, narrow control on the right. */
+const limitField = (
+  id: string,
+  labelText: string,
+  value: string,
+  toMessage: (value: string) => Message,
+  placeholder: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class('flex items-center gap-3 py-1')],
+    [
+      h.label([h.For(id), h.Class('flex-1 text-[13px] font-semibold')], [labelText]),
+      h.input([
+        h.Id(id),
+        h.Type('number'),
+        h.Value(value),
+        h.OnInput(toMessage),
+        h.Min('0'),
+        h.Step('1'),
+        h.Placeholder(placeholder),
+        h.Class(
+          'w-24 rounded-[10px] border-0 bg-white px-2.5 py-1.5 text-right text-sm tabular-nums outline-none',
+        ),
+      ]),
+    ],
+  )
+
+/** The per-deck limits form: blank follows Settings, Save parses the text. */
+const limitsForm = (
+  id: DeckId,
+  state: DeckManage,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => [
+  ...Option.match(state.limitsError, {
+    onNone: () => [] as ReadonlyArray<Child>,
+    onSome: (error) => [
+      h.div(
+        [
+          h.Class(
+            'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
+          ),
+          h.Role('alert'),
+        ],
+        [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
+      ),
+    ],
+  }),
+  limitField(
+    'deck-new-per-day',
+    'New Cards per day',
+    state.newPerDay,
+    (value) => Message.TypedDeckNewPerDay({ value }),
+    'Default',
+    h,
+  ),
+  limitField(
+    'deck-reviews-per-day',
+    'Reviews per day',
+    state.reviewsPerDay,
+    (value) => Message.TypedDeckReviewsPerDay({ value }),
+    'Default',
+    h,
+  ),
+  limitField(
+    'deck-lapse-minutes',
+    'Lapse minutes',
+    state.lapseMinutes,
+    (value) => Message.TypedDeckLapseMinutes({ value }),
+    'Default',
+    h,
+  ),
+  h.p(
+    [h.Class('text-[11px] text-muted-foreground')],
+    ['Blank follows Settings. 0 pauses that queue for this deck.'],
+  ),
+  h.div(
+    [h.Class('flex gap-2')],
+    [
+      button<Message>(
+        {
+          onClick: Message.ClickedSaveDeckLimits({ deckId: id }),
+          size: 'sm',
+          isDisabled: state.limitsSaving,
+          className: 'flex-1',
+        },
+        [state.limitsSaving ? 'Saving…' : 'Save limits'],
+        h,
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedResetDeckLimits(),
+          size: 'sm',
+          isDisabled: state.limitsSaving,
+        },
+        ['Use defaults'],
+        h,
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedCancelDeckLimits(),
+          size: 'sm',
+          isDisabled: state.limitsSaving,
+        },
+        ['Cancel'],
+        h,
+      ),
+    ],
+  ),
+]
+
+const limitsSummaryText = (detail: DeckDetail): string => {
+  const parts = [
+    detail.summary.limits.newPerDay === null ? null : `${detail.summary.limits.newPerDay} new/d`,
+    detail.summary.limits.reviewsPerDay === null
+      ? null
+      : `${detail.summary.limits.reviewsPerDay} rev/d`,
+    detail.summary.limits.lapseMinutes === null
+      ? null
+      : `${detail.summary.limits.lapseMinutes}m lapse`,
+  ].filter((part): part is string => part !== null)
+  return parts.length === 0 ? 'Follows Settings' : parts.join(' · ')
+}
+
+const limitsRow = (detail: DeckDetail, saving: boolean, h: HtmlBuilder<Message>): Child =>
+  h.div(
+    [h.Class('flex items-center gap-3 py-1 pt-3')],
+    [
+      h.div(
+        [h.Class('min-w-0 flex-1')],
+        [
+          h.div([h.Class('text-[13px] font-semibold')], ['Daily limits']),
+          h.div([h.Class('truncate text-xs text-muted-foreground')], [limitsSummaryText(detail)]),
+        ],
+      ),
+      button<Message>(
+        {
+          onClick: Message.ClickedEditDeckLimits({
+            deckId: detail.summary.id,
+            ...limitsTextFromSummary(detail.summary),
+          }),
+          size: 'sm',
+          isDisabled: saving,
+        },
+        [icon(h, Settings2, 'size-3.5'), 'Limits'],
+        h,
+      ),
+    ],
+  )
 
 /**
  * The Manage section: rename the Deck, reset its Schedule, or remove it.
@@ -236,6 +447,14 @@ const manageSection = (
     saving: false,
     saved: false,
     error: Option.none(),
+    editingLimits: false,
+    newPerDay: '',
+    reviewsPerDay: '',
+    lapseMinutes: '',
+    limitsSaving: false,
+    limitsSaved: false,
+    limitsError: Option.none(),
+    cardsOpen: false,
   }
   const id = detail.summary.id
   return h.div(
@@ -250,6 +469,18 @@ const manageSection = (
                 ),
               ],
               ['Deck renamed.'],
+            ),
+          ]
+        : []),
+      ...(state.limitsSaved
+        ? [
+            h.div(
+              [
+                h.Class(
+                  'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
+                ),
+              ],
+              ['Limits saved.'],
             ),
           ]
         : []),
@@ -268,6 +499,9 @@ const manageSection = (
         ],
       }),
       ...(state.editing ? renameForm(id, state, h) : [renameRow(detail, state.saving, h)]),
+      ...(state.editingLimits
+        ? limitsForm(id, state, h)
+        : [limitsRow(detail, state.saving || state.limitsSaving, h)]),
       ...Option.match(state.confirming, {
         onNone: () => destructiveRows(id, state.saving, h),
         onSome: (confirm) =>

@@ -14,7 +14,7 @@
 
 import { Effect, Option, Schema as S } from 'effect'
 import { Command } from 'foldkit'
-import { AppSettings, CardId, DeckId, DeckRename, Grade, ReviewCard } from '@nook/api'
+import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard } from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { NookRpc } from '@/lib/rpc'
 import { Message as MessageConstructors } from './model'
@@ -100,7 +100,15 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
         MessageConstructors.GotReviewQueue({
           cards: queue.cards,
           dayStartUtc: queue.dayStartUtc,
-          lapseMinutes: 10,
+          lapseMinutes: queue.lapseMinutes,
+          reviewedToday: queue.reviewedToday,
+          newToday: queue.newToday,
+          newRemaining: queue.newRemaining,
+          dueRemaining: queue.dueRemaining,
+          totalNew: queue.totalNew,
+          totalDue: queue.totalDue,
+          newCapped: queue.newCapped,
+          dueCapped: queue.dueCapped,
         }),
       ),
       Effect.catch(() =>
@@ -281,6 +289,16 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
               cards: [...cards],
               dayStartUtc: queue.dayStartUtc,
               lapseMinutes: queue.lapseMinutes,
+              // A cached queue predates the counts: the network answer
+              // replaces them when it lands.
+              reviewedToday: 0,
+              newToday: 0,
+              newRemaining: 0,
+              dueRemaining: 0,
+              totalNew: cards.length,
+              totalDue: 0,
+              newCapped: false,
+              dueCapped: false,
             }),
           ),
         ),
@@ -309,7 +327,7 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
 const deckManageFailed = (error: string) => MessageConstructors.DeckManageFailed({ error })
 
 /**
- * The deck mutations: rename, reset, remove.
+ * The deck mutations: rename, limits, reset, remove.
  *
  * Each answers with a success Message the update folds into a refresh (the
  * list and detail Queries re-read), or with `DeckManageFailed`, which the
@@ -321,11 +339,27 @@ export const RenameDeck = Command.define('RenameDeck', {
   messages: [MessageConstructors.RenamedDeck, MessageConstructors.DeckManageFailed],
   execute: ({ deckId, rename }) =>
     NookRpc.pipe(
-      Effect.flatMap((rpc) => rpc.decksRename({ deckId, rename })),
+      Effect.flatMap((rpc) => rpc.decksRename({ deckId, rename, timezone: timezone() })),
       Effect.map(() => MessageConstructors.RenamedDeck({ deckId })),
       Effect.catch(() =>
         Effect.succeed(
           deckManageFailed('Could not rename the deck. Check the connection and try again.'),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+export const SaveDeckLimits = Command.define('SaveDeckLimits', {
+  args: { deckId: DeckId, limits: DeckLimits },
+  messages: [MessageConstructors.SavedDeckLimits, MessageConstructors.DeckManageFailed],
+  execute: ({ deckId, limits }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.decksSetLimits({ deckId, limits, timezone: timezone() })),
+      Effect.map(() => MessageConstructors.SavedDeckLimits({ deckId })),
+      Effect.catch(() =>
+        Effect.succeed(
+          deckManageFailed('Could not save the deck limits. Check the connection and try again.'),
         ),
       ),
       Effect.provide(NookRpc.layer),
@@ -337,7 +371,7 @@ export const ResetDeck = Command.define('ResetDeck', {
   messages: [MessageConstructors.ResetDeckDone, MessageConstructors.DeckManageFailed],
   execute: ({ deckId }) =>
     NookRpc.pipe(
-      Effect.flatMap((rpc) => rpc.decksReset({ deckId })),
+      Effect.flatMap((rpc) => rpc.decksReset({ deckId, timezone: timezone() })),
       Effect.map(() => MessageConstructors.ResetDeckDone({ deckId })),
       Effect.catch(() =>
         Effect.succeed(

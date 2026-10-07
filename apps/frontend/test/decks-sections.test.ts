@@ -40,6 +40,9 @@ const deck = (
   newCount: counts.newCount,
   dueCount: counts.dueCount,
   totalCount: counts.totalCount,
+  newToday: counts.newCount,
+  dueToday: counts.dueCount,
+  limits: { newPerDay: null, reviewsPerDay: null, lapseMinutes: null },
   lastStudiedAt: Option.none(),
   retention7d: 0,
 })

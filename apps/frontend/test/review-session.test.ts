@@ -47,6 +47,14 @@ const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
       cards: [...cards],
       dayStartUtc: '2026-10-05T04:00:00Z',
       lapseMinutes: 10,
+      reviewedToday: 0,
+      newToday: 0,
+      newRemaining: 0,
+      dueRemaining: 0,
+      totalNew: cards.filter((card) => card.state === 'new').length,
+      totalDue: cards.filter((card) => card.state !== 'new').length,
+      newCapped: false,
+      dueCapped: false,
     }),
   ).model
   return update(queued, Message.RevealedAnswer()).model

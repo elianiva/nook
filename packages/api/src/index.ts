@@ -63,7 +63,28 @@ export const Card = S.Struct({
 })
 export type Card = typeof Card.Type
 
-/** The list-screen projection of a Deck: identity, counts, and the next Review. Never full Card bodies. */
+/**
+ * One Deck's scheduling overrides, as the limits endpoint receives them.
+ *
+ * Every field is `null` for "use the global Settings value": a blank field
+ * on the deck page follows Settings, so existing Decks behave exactly as
+ * before. Non-null values must be whole numbers — 0 or more for the per-day
+ * counts, at least 1 for the lapse minutes.
+ */
+export const DeckLimits = S.Struct({
+  newPerDay: S.NullOr(S.Number),
+  reviewsPerDay: S.NullOr(S.Number),
+  lapseMinutes: S.NullOr(S.Number),
+})
+export type DeckLimits = typeof DeckLimits.Type
+
+/** The list-screen projection of a Deck: identity, counts, and the next Review. Never full Card bodies.
+ *
+ * `newCount` and `dueCount` are totals: every Card waiting, before the day's
+ * limits. `newToday` and `dueToday` are what the learner can still review
+ * this learner-day, after the limits. The list screens show the totals; the
+ * deck page shows both.
+ */
 export const DeckSummary = S.Struct({
   id: DeckId,
   name: S.String,
@@ -74,6 +95,12 @@ export const DeckSummary = S.Struct({
   dueCount: S.Number,
   /** All Cards in the Deck, including new and due. */
   totalCount: S.Number,
+  /** New Cards still introducible today, after the day's limit. */
+  newToday: S.Number,
+  /** Review Cards still answerable today, after the day's limit. */
+  dueToday: S.Number,
+  /** This Deck's limit overrides. `null` per field means "use Settings". */
+  limits: DeckLimits,
   /** ISO date of the most recent Review session. Absent when never studied. */
   lastStudiedAt: S.Option(S.String),
   /** Share reviewed in the last 7 days, 0–100. Drives the progress bar. */
@@ -340,6 +367,24 @@ export const ReviewQueue = S.Struct({
   cards: S.Array(ReviewCard),
   /** ISO 8601 UTC instant the learner-day boundary sits at, for the client's clock display. */
   dayStartUtc: S.String,
+  /** Minutes after which a lapsed Card returns. The deck's override wins over Settings. */
+  lapseMinutes: S.Number,
+  /** Cards answered today: distinct review Cards, `Again` re-grades excluded. */
+  reviewedToday: S.Number,
+  /** New Cards introduced today. */
+  newToday: S.Number,
+  /** New Cards the day's limit still allows, after this queue. */
+  newRemaining: S.Number,
+  /** Review Cards the day's limit still allows, after this queue. */
+  dueRemaining: S.Number,
+  /** Total new Cards waiting, before the day's limit. */
+  totalNew: S.Number,
+  /** Total review Cards waiting, before the day's limit. */
+  totalDue: S.Number,
+  /** Whether the new-Card limit stopped more Cards joining this queue. */
+  newCapped: S.Boolean,
+  /** Whether the review limit stopped more Cards joining this queue. */
+  dueCapped: S.Boolean,
 })
 export type ReviewQueue = typeof ReviewQueue.Type
 
@@ -458,11 +503,22 @@ export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', 
 
 export class DecksRpc extends RpcGroup.make(
   Rpc.make('decksList', {
+    /** The learner timezone, for the day boundary. The server defaults to UTC without it. */
+    payload: { timezone: S.optional(S.String) },
     success: S.Array(DeckSummary),
     error: StorageUnavailable,
   }),
   Rpc.make('decksGetById', {
-    payload: { deckId: DeckId },
+    payload: { deckId: DeckId, timezone: S.optional(S.String) },
+    success: DeckDetail,
+    error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+  /**
+   * Set a Deck's scheduling overrides (`null` per field follows Settings).
+   * Bad values are a 503 `StorageUnavailable`, like the blank-name rename.
+   */
+  Rpc.make('decksSetLimits', {
+    payload: { deckId: DeckId, limits: DeckLimits, timezone: S.optional(S.String) },
     success: DeckDetail,
     error: S.Union([DeckNotFound, StorageUnavailable]),
   }),
@@ -471,7 +527,7 @@ export class DecksRpc extends RpcGroup.make(
    * it reaches SQL; an unknown id is a `DeckNotFound`.
    */
   Rpc.make('decksRename', {
-    payload: { deckId: DeckId, rename: DeckRename },
+    payload: { deckId: DeckId, rename: DeckRename, timezone: S.optional(S.String) },
     success: DeckDetail,
     error: S.Union([DeckNotFound, StorageUnavailable]),
   }),
@@ -481,7 +537,7 @@ export class DecksRpc extends RpcGroup.make(
    * rendered queue are untouched — only the Schedule goes.
    */
   Rpc.make('decksReset', {
-    payload: { deckId: DeckId },
+    payload: { deckId: DeckId, timezone: S.optional(S.String) },
     success: DeckDetail,
     error: S.Union([DeckNotFound, StorageUnavailable]),
   }),

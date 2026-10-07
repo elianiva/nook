@@ -2,10 +2,14 @@ import { Context, Effect, Layer, Option, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { previewCard } from '@nook/anki/render'
 import { CardId, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
-import type { Card, DeckDetail, DeckRename, DeckSummary } from '@nook/api'
+import type { Card, DeckDetail, DeckLimits, DeckRename, DeckSummary } from '@nook/api'
 import { runStatements } from './batch'
+import { dayStartUtc, reviewDayKey } from './day-boundary'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
-import type { StorageError } from './storage-error'
+
+/** The learner timezone, or UTC when the browser sends none. */
+const resolveTimezone = (timezone?: string): string =>
+  timezone === undefined || timezone === '' ? 'UTC' : timezone
 
 /** One row of the `decks` table with its counts computed in SQL. */
 const DeckRow = Schema.Struct({
@@ -15,8 +19,18 @@ const DeckRow = Schema.Struct({
   newCount: Schema.Number,
   dueCount: Schema.Number,
   totalCount: Schema.Number,
+  newPerDay: Schema.NullOr(Schema.Number),
+  reviewsPerDay: Schema.NullOr(Schema.Number),
+  lapseMinutes: Schema.NullOr(Schema.Number),
   lastStudiedAt: Schema.NullOr(Schema.String),
   retention7d: Schema.Number,
+})
+
+/** One row of the global scheduling limits the per-deck overrides fall back to. */
+const GlobalLimitsRow = Schema.Struct({
+  newPerDay: Schema.Number,
+  reviewsPerDay: Schema.Number,
+  dayRolloverHour: Schema.Number,
 })
 
 /** One row of the `cards` table, plus its Note and Note Type for the prompt preview. */
@@ -85,13 +99,23 @@ const previewRow = (row: typeof CardRow.Type): string => {
   })
 }
 
-const toSummary = (row: typeof DeckRow.Type): DeckSummary => ({
+const toSummary = (
+  row: typeof DeckRow.Type,
+  today: { newToday: number; dueToday: number },
+): DeckSummary => ({
   id: DeckId.make(row.id),
   name: row.name,
   description: row.description,
   newCount: row.newCount,
   dueCount: row.dueCount,
   totalCount: row.totalCount,
+  newToday: today.newToday,
+  dueToday: today.dueToday,
+  limits: {
+    newPerDay: row.newPerDay,
+    reviewsPerDay: row.reviewsPerDay,
+    lapseMinutes: row.lapseMinutes,
+  } satisfies DeckLimits,
   lastStudiedAt: row.lastStudiedAt === null ? Option.none() : Option.some(row.lastStudiedAt),
   retention7d: row.retention7d,
 })
@@ -118,13 +142,27 @@ const toCard = (row: typeof CardRow.Type): Card => ({
 export class Decks extends Context.Service<
   Decks,
   {
-    readonly list: Effect.Effect<ReadonlyArray<DeckSummary>, StorageUnavailable>
-    getById(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    list(input?: {
+      readonly timezone?: string | undefined
+    }): Effect.Effect<ReadonlyArray<DeckSummary>, StorageUnavailable>
+    getById(
+      id: DeckId,
+      input?: { readonly timezone?: string | undefined },
+    ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
     rename(
       id: DeckId,
       rename: DeckRename,
+      input?: { readonly timezone?: string | undefined },
     ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
-    reset(id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    setLimits(
+      id: DeckId,
+      limits: DeckLimits,
+      input?: { readonly timezone?: string | undefined },
+    ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    reset(
+      id: DeckId,
+      input?: { readonly timezone?: string | undefined },
+    ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
     remove(id: DeckId): Effect.Effect<void, DeckNotFound | StorageUnavailable>
   }
 >()('nook/backend/Decks') {
@@ -133,47 +171,134 @@ export class Decks extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
 
-      const list = Effect.gen(function* () {
-        const rows = yield* sql`SELECT id, name, description,
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
-              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-              AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
-            last_studied_at AS "lastStudiedAt",
-            (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
-              FROM reviews r JOIN cards c ON c.id = r.card_id
-              WHERE c.deck_id = decks.id
-                AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
-            FROM decks ORDER BY name`
-        const decoded = yield* decodeRows(DeckRow, rows)
-        return decoded.map(toSummary)
-      }).pipe(Effect.withSpan('Decks.list'), (self) =>
-        withStorageErrorPassThrough(self, 'list decks'),
-      )
+      /**
+       * What "today" has already used, per deck id: distinct review Cards
+       * answered since the boundary (re-grades excluded, like Anki) and new
+       * Cards introduced since it. The queue uses the same two counts, so
+       * the summary's `newToday`/`dueToday` always agree with it.
+       */
+      const readDayUse = (boundary: string, todayKey: string) => {
+        const DayRow = Schema.Struct({ deckId: Schema.String, n: Schema.Number })
+        return Effect.gen(function* () {
+          const reviewed = yield* decodeRows(
+            DayRow,
+            yield* sql`SELECT c.deck_id AS "deckId", COUNT(DISTINCT r.card_id) AS n
+            FROM reviews r JOIN cards c ON c.id = r.card_id
+            WHERE r.reviewed_at >= ${boundary} GROUP BY c.deck_id`,
+          )
+          const introduced = yield* decodeRows(
+            DayRow,
+            yield* sql`SELECT deck_id AS "deckId", COUNT(*) AS n FROM cards
+            WHERE introduced_day >= ${todayKey} AND state != 'new' GROUP BY deck_id`,
+          )
+          const use = new Map<string, { reviewed: number; introduced: number }>()
+          for (const row of reviewed) use.set(row.deckId, { reviewed: row.n, introduced: 0 })
+          for (const row of introduced) {
+            const entry = use.get(row.deckId) ?? { reviewed: 0, introduced: 0 }
+            use.set(row.deckId, { ...entry, introduced: row.n })
+          }
+          return use
+        })
+      }
 
-      // The one-deck read, shared by get, rename, and reset: unknown ids are
-      // a 404 `DeckNotFound`, never a storage problem. The caller wraps it in
-      // `withStorageErrorPassThrough` with its own operation name, so SQL and
-      // row-decode failures surface as a 503 `StorageUnavailable`.
-      const readDetail = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageError> =>
+      const readGlobals = () =>
         Effect.gen(function* () {
-          const summaryRows = yield* sql`SELECT id, name, description,
+          const decoded = yield* decodeRows(
+            GlobalLimitsRow,
+            yield* sql`SELECT fsrs_new_per_day AS "newPerDay",
+            fsrs_reviews_per_day AS "reviewsPerDay",
+            behaviour_day_rollover_hour AS "dayRolloverHour" FROM settings WHERE id = 1`,
+          )
+          const found = decoded[0]
+          if (found === undefined) {
+            return yield* Effect.die(new Error('The settings store is missing its row.'))
+          }
+          return found
+        })
+
+      const todayFor = (
+        row: typeof DeckRow.Type,
+        globals: typeof GlobalLimitsRow.Type,
+        use: ReadonlyMap<string, { reviewed: number; introduced: number }>,
+      ): { newToday: number; dueToday: number } => {
+        const used = use.get(row.id) ?? { reviewed: 0, introduced: 0 }
+        const newLimit = row.newPerDay ?? globals.newPerDay
+        const reviewLimit = row.reviewsPerDay ?? globals.reviewsPerDay
+        return {
+          newToday: Math.max(0, Math.min(row.newCount, newLimit - used.introduced)),
+          dueToday: Math.max(0, Math.min(row.dueCount, reviewLimit - used.reviewed)),
+        }
+      }
+
+      const summaryRows = Effect.gen(function* () {
+        return yield* decodeRows(
+          DeckRow,
+          yield* sql`SELECT id, name, description,
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
+            new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
+            lapse_minutes AS "lapseMinutes",
             last_studied_at AS "lastStudiedAt",
             (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
               FROM reviews r JOIN cards c ON c.id = r.card_id
               WHERE c.deck_id = decks.id
                 AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
-            FROM decks WHERE id = ${id}`
-          const summaries = yield* decodeRows(DeckRow, summaryRows)
+            FROM decks ORDER BY name`,
+        )
+      })
+
+      const list = (input?: { readonly timezone?: string | undefined }) =>
+        Effect.gen(function* () {
+          const timezone = resolveTimezone(input?.timezone)
+          const globals = yield* readGlobals()
+          const now = new Date()
+          const boundary = dayStartUtc(timezone, globals.dayRolloverHour, now)
+          const todayKey = reviewDayKey(timezone, globals.dayRolloverHour, now)
+          const use = yield* readDayUse(boundary, todayKey)
+          const decoded = yield* summaryRows
+          return decoded.map((row) => toSummary(row, todayFor(row, globals, use)))
+        }).pipe(Effect.withSpan('Decks.list'), (self) =>
+          withStorageErrorPassThrough(self, 'list decks'),
+        )
+
+      // The one-deck read, shared by get, rename, limits, and reset: unknown
+      // ids are a 404 `DeckNotFound`, never a storage problem. The caller
+      // wraps it in `withStorageErrorPassThrough` with its own operation
+      // name, so SQL and row-decode failures surface as a 503
+      // `StorageUnavailable`.
+      const readDetail = (id: DeckId, timezone?: string) => {
+        return Effect.gen(function* () {
+          const zone = resolveTimezone(timezone)
+          const summaries = yield* decodeRows(
+            DeckRow,
+            yield* sql`SELECT id, name, description,
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+              AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
+            new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
+            lapse_minutes AS "lapseMinutes",
+            last_studied_at AS "lastStudiedAt",
+            (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
+              FROM reviews r JOIN cards c ON c.id = r.card_id
+              WHERE c.deck_id = decks.id
+                AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
+            FROM decks WHERE id = ${id}`,
+          )
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
-          const cardRows = yield* sql`SELECT c.id, c.deck_id AS "deckId", c.due_at AS "dueAt",
+          const globals = yield* readGlobals()
+          const now = new Date()
+          const boundary = dayStartUtc(zone, globals.dayRolloverHour, now)
+          const todayKey = reviewDayKey(zone, globals.dayRolloverHour, now)
+          const use = yield* readDayUse(boundary, todayKey)
+          const cards = yield* decodeRows(
+            CardRow,
+            yield* sql`SELECT c.id, c.deck_id AS "deckId", c.due_at AS "dueAt",
             COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             c.stability, c.difficulty, c.state, c.template_ord AS "templateOrd",
             n.fields AS "noteFields", n.tags AS "noteTags",
@@ -183,20 +308,28 @@ export class Decks extends Context.Service<
             FROM cards c LEFT JOIN notes n ON n.id = c.note_id
             LEFT JOIN note_types nt ON nt.id = n.note_type_id
             LEFT JOIN decks d ON d.id = c.deck_id
-            WHERE c.deck_id = ${id} ORDER BY c.rowid LIMIT 200`
-          const cards = yield* decodeRows(CardRow, cardRows)
-          return { summary: toSummary(summary), cards: cards.map(toCard) } satisfies DeckDetail
+            WHERE c.deck_id = ${id} ORDER BY c.rowid LIMIT 200`,
+          )
+          return {
+            summary: toSummary(summary, todayFor(summary, globals, use)),
+            cards: cards.map(toCard),
+          } satisfies DeckDetail
         })
+      }
 
-      const getById = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
-        readDetail(id).pipe(Effect.withSpan('Decks.getById'), (self) =>
+      const getById = (
+        id: DeckId,
+        input?: { readonly timezone?: string | undefined },
+      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable, never> =>
+        readDetail(id, input?.timezone).pipe(Effect.withSpan('Decks.getById'), (self) =>
           withStorageErrorPassThrough(self, 'read deck'),
         )
 
       const rename = (
         id: DeckId,
         rename: DeckRename,
-      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+        input?: { readonly timezone?: string | undefined },
+      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable, never> =>
         Effect.gen(function* () {
           // An empty name would render as a blank row everywhere; reject it
           // before it reaches SQL.
@@ -210,9 +343,43 @@ export class Decks extends Context.Service<
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
           yield* sql`UPDATE decks SET name = ${name}, description = ${rename.description.trim()},
             updated_at = datetime('now') WHERE id = ${id}`
-          return yield* readDetail(id)
+          return yield* readDetail(id, input?.timezone)
         }).pipe(Effect.withSpan('Decks.rename'), (self) =>
           withStorageErrorPassThrough(self, 'rename deck'),
+        )
+
+      /**
+       * Set a Deck's scheduling overrides. Each field is `null` for "follow
+       * Settings". Non-null values are checked before they reach SQL: whole
+       * numbers, 0 or more for the per-day counts, at least 1 for lapse
+       * minutes.
+       */
+      const setLimits = (
+        id: DeckId,
+        limits: DeckLimits,
+        input?: { readonly timezone?: string | undefined },
+      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+        Effect.gen(function* () {
+          const valid = (value: number | null, min: number): boolean =>
+            value === null || (Number.isInteger(value) && value >= min)
+          if (!valid(limits.newPerDay, 0) || !valid(limits.reviewsPerDay, 0)) {
+            return yield* new StorageUnavailable({
+              message: 'Could not save the deck limits. Per-day counts must be 0 or more.',
+            })
+          }
+          if (!valid(limits.lapseMinutes, 1)) {
+            return yield* new StorageUnavailable({
+              message: 'Could not save the deck limits. Lapse minutes must be at least 1.',
+            })
+          }
+          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
+          yield* sql`UPDATE decks SET new_per_day = ${limits.newPerDay},
+            reviews_per_day = ${limits.reviewsPerDay}, lapse_minutes = ${limits.lapseMinutes},
+            updated_at = datetime('now') WHERE id = ${id}`
+          return yield* readDetail(id, input?.timezone)
+        }).pipe(Effect.withSpan('Decks.setLimits'), (self) =>
+          withStorageErrorPassThrough(self, 'save deck limits'),
         )
 
       /**
@@ -221,7 +388,10 @@ export class Decks extends Context.Service<
        * is removed. Notes, Note Types, and the Deck itself stay — only the
        * Schedule goes, so re-studying starts clean.
        */
-      const reset = (id: DeckId): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
+      const reset = (
+        id: DeckId,
+        input?: { readonly timezone?: string | undefined },
+      ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
@@ -236,7 +406,7 @@ export class Decks extends Context.Service<
             sql`UPDATE decks SET last_studied_at = NULL, updated_at = datetime('now')
               WHERE id = ${id}`,
           ])
-          return yield* readDetail(id)
+          return yield* readDetail(id, input?.timezone)
         }).pipe(Effect.withSpan('Decks.reset'), (self) =>
           withStorageErrorPassThrough(self, 'reset deck'),
         )
@@ -262,7 +432,7 @@ export class Decks extends Context.Service<
           withStorageErrorPassThrough(self, 'remove deck'),
         )
 
-      return Decks.of({ list, getById, rename, reset, remove })
+      return Decks.of({ list, getById, rename, setLimits, reset, remove })
     }),
   )
 }
@@ -271,10 +441,12 @@ export const DecksHandlers = DecksRpc.toLayer(
   Effect.gen(function* () {
     const decks = yield* Decks
     return DecksRpc.of({
-      decksList: () => decks.list,
-      decksGetById: ({ deckId }) => decks.getById(deckId),
-      decksRename: ({ deckId, rename }) => decks.rename(deckId, rename),
-      decksReset: ({ deckId }) => decks.reset(deckId),
+      decksList: ({ timezone }) => decks.list({ timezone }),
+      decksGetById: ({ deckId, timezone }) => decks.getById(deckId, { timezone }),
+      decksSetLimits: ({ deckId, limits, timezone }) =>
+        decks.setLimits(deckId, limits, { timezone }),
+      decksRename: ({ deckId, rename, timezone }) => decks.rename(deckId, rename, { timezone }),
+      decksReset: ({ deckId, timezone }) => decks.reset(deckId, { timezone }),
       decksRemove: ({ deckId }) => decks.remove(deckId),
     })
   }),

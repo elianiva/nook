@@ -83,7 +83,7 @@ layer(TestLayers)('deck management over sqlite', (it) => {
 
       yield* client.decksRemove({ deckId: showcaseDeck })
 
-      const decks = yield* client.decksList()
+      const decks = yield* client.decksList({})
       expect(decks.some((deck) => deck.id === showcaseDeck)).toBe(false)
 
       const gone = yield* Effect.exit(client.decksGetById({ deckId: showcaseDeck }))

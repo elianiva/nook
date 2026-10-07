@@ -77,10 +77,19 @@ const loadingView = (h: HtmlBuilder<Message>): ReadonlyArray<Child> => [
 ]
 
 const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
-  const graded = model.review.graded
-  const saving = model.review.pending.length
-  const queued = model.review.offline.length
-  const nothingDue = graded === 0 && model.review.cards.length === 0
+  const review = model.review
+  const graded = review.graded
+  const saving = review.pending.length
+  const queued = review.offline.length
+  const nothingDue = graded === 0 && review.cards.length === 0
+  // The queue caps by the limits: a capped queue stops although Cards stay.
+  // Name the remainder from the queue's totals minus what it served, so
+  // "Session complete" never reads as "deck finished".
+  const capped = review.doneKind === 'limits' || review.queueDueCapped || review.queueNewCapped
+  const remaining = Math.max(
+    0,
+    review.queueTotalDue - review.queueServedDue + (review.queueTotalNew - review.queueServedNew),
+  )
   return [
     centered(
       [
@@ -89,16 +98,28 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
           [
             Empty.media<Message>(
               { variant: 'icon' },
-              [icon(h, nothingDue ? Inbox : Check, 'size-4')],
+              [icon(h, nothingDue && !capped ? Inbox : Check, 'size-4')],
               h,
             ),
-            Empty.title<Message>({}, [nothingDue ? 'Nothing due' : 'Session complete'], h),
+            Empty.title<Message>(
+              {},
+              [
+                nothingDue && !capped
+                  ? 'Nothing due'
+                  : capped
+                    ? 'Daily limit reached'
+                    : 'Session complete',
+              ],
+              h,
+            ),
             Empty.description<Message>(
               {},
               [
-                nothingDue
+                nothingDue && !capped
                   ? 'Every Card in this queue is scheduled for later.'
-                  : `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. They come back when FSRS says so.`,
+                  : capped
+                    ? `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. ${remaining} more ${remaining === 1 ? 'waits' : 'wait'} past today's limits — they return tomorrow, or raise the limits.`
+                    : `You reviewed ${graded} ${graded === 1 ? 'Card' : 'Cards'}. They come back when FSRS says so.`,
               ],
               h,
             ),

@@ -26,7 +26,7 @@ layer(HandlersLive)('backend over sqlite', (it) => {
       yield* migrate
       const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc))
 
-      const decks = yield* client.decksList()
+      const decks = yield* client.decksList({})
       assert.isAtLeast(decks.length, 1)
       const showcase = decks.find((deck) => deck.id === 'deck-showcase-japanese')
       assert.isDefined(showcase)

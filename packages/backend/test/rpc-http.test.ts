@@ -87,7 +87,7 @@ it.effect('serves the browser RPC envelope over real HTTP', () =>
     )
     const client = yield* RpcClient.make(Api).pipe(Effect.provide(protocol))
 
-    const decks = yield* client.decksList()
+    const decks = yield* client.decksList({})
     assert.isAtLeast(decks.length, 1)
     const showcase = decks.find((deck) => deck.id === 'deck-showcase-japanese')
     assert.isDefined(showcase)

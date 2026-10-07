@@ -70,7 +70,7 @@ export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html => {
               ),
               h.div(
                 [h.Class('text-xs text-[var(--theme-sub)]')],
-                [`${deck.dueCount} due · ${deck.newCount} new · ${lastStudied(deck)}`],
+                [`${deck.dueToday} due today · ${deck.newToday} new today · ${lastStudied(deck)}`],
               ),
               Progress<Message>(
                 {
@@ -87,12 +87,12 @@ export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html => {
               h.span(
                 [
                   h.Class(
-                    cn('text-xl font-bold tabular-nums leading-none', dueTone(deck.dueCount)),
+                    cn('text-xl font-bold tabular-nums leading-none', dueTone(deck.dueToday)),
                   ),
                 ],
-                [String(deck.dueCount)],
+                [String(deck.dueToday)],
               ),
-              h.span([h.Class('text-[11px] text-[var(--theme-sub)]')], ['due']),
+              h.span([h.Class('text-[11px] text-[var(--theme-sub)]')], ['due today']),
               icon(h, ChevronRight, 'size-4 text-[var(--theme-sub)]'),
             ],
           ),

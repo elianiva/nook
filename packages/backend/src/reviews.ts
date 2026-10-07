@@ -118,6 +118,13 @@ const FsrsRow = Schema.Struct({
   dayRolloverHour: Schema.Number,
 })
 
+/** One Deck's limit overrides, as the `decks` table stores them. */
+const DeckLimitsRow = Schema.Struct({
+  newPerDay: Schema.NullOr(Schema.Number),
+  reviewsPerDay: Schema.NullOr(Schema.Number),
+  lapseMinutes: Schema.NullOr(Schema.Number),
+})
+
 /** One row of the last grade, for undo. */
 const LastReviewRow = Schema.Struct({
   id: Schema.String,
@@ -233,11 +240,17 @@ export class Reviews extends Context.Service<
       /**
        * Due Cards first, then new ones, capped by the day's remaining limits.
        *
-       * The limits count what today already used: Reviews logged since the day
-       * boundary, plus new Cards introduced since it. A buried Card — a
-       * same-Note sibling of a graded Card, or an `Again` waiting out its
-       * lapse — stays out until its instant passes. `dueInDays` for a Card
-       * with no due instant (a new Card) is 0.
+       * The review limit counts distinct Cards answered today (re-grades of
+       * one Card count once, like Anki), and the new limit counts Cards
+       * introduced today. A buried Card — a same-Note sibling of a graded
+       * Card, or an `Again` waiting out its lapse — stays out until its
+       * instant passes. `dueInDays` for a Card with no due instant (a new
+       * Card) is 0.
+       *
+       * A deck page names one Deck, so that Deck's overrides win over
+       * Settings; the all-decks queue keeps the global values. The answer
+       * carries both the queue and the counts behind it, so the done screen
+       * can name the limit instead of "nothing due".
        */
       const queue = (input: {
         deckId: Option.Option<DeckId>
@@ -252,18 +265,47 @@ export class Reviews extends Context.Service<
           const todayKey = reviewDayKey(timezone, fsrs.dayRolloverHour, now)
           const deck = Option.getOrNull(input.deckId)
 
-          const reviewCountRows = yield* sql`SELECT COUNT(*) AS n FROM reviews
+          const limitsRows =
+            deck === null
+              ? []
+              : yield* sql`SELECT new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
+                lapse_minutes AS "lapseMinutes" FROM decks WHERE id = ${deck}`
+          const limitsDecoded = yield* decodeRows(DeckLimitsRow, limitsRows)
+          const override = limitsDecoded[0]
+          const newPerDay = override?.newPerDay ?? fsrs.newPerDay
+          const reviewsPerDay = override?.reviewsPerDay ?? fsrs.reviewsPerDay
+          const lapseMinutes = override?.lapseMinutes ?? fsrs.lapseMinutes
+
+          // Anki behaviour: one Card counts once, no matter how often it was
+          // graded today. `Again` re-grades never consume the review limit.
+          const reviewCountRows = yield* sql`SELECT COUNT(DISTINCT card_id) AS n FROM reviews
             WHERE reviewed_at >= ${boundary}
             AND (${deck} IS NULL OR card_id IN (SELECT id FROM cards WHERE deck_id = ${deck}))`
           const reviewCounts = yield* decodeRows(CountRow, reviewCountRows)
+          const reviewedToday = reviewCounts[0]?.n ?? 0
           const newCountRows = yield* sql`SELECT COUNT(*) AS n FROM cards
             WHERE introduced_day >= ${todayKey} AND state != 'new'
             AND (${deck} IS NULL OR deck_id = ${deck})`
           const newCounts = yield* decodeRows(CountRow, newCountRows)
-          const dueRemaining = Math.max(0, fsrs.reviewsPerDay - (reviewCounts[0]?.n ?? 0))
-          const newRemaining = Math.max(0, fsrs.newPerDay - (newCounts[0]?.n ?? 0))
+          const introducedToday = newCounts[0]?.n ?? 0
 
-          if (dueRemaining + newRemaining === 0) return { cards: [], dayStartUtc: boundary }
+          // Totals before the limits, for the done screen's "N more tomorrow".
+          const totalDueRows = yield* sql`SELECT COUNT(*) AS n FROM cards c
+            WHERE c.suspended = 0 AND c.note_id IS NOT NULL
+              AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+              AND c.state != 'new' AND c.due_at IS NOT NULL
+              AND c.due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              AND (${deck} IS NULL OR c.deck_id = ${deck})`
+          const totalDue = (yield* decodeRows(CountRow, totalDueRows))[0]?.n ?? 0
+          const totalNewRows = yield* sql`SELECT COUNT(*) AS n FROM cards c
+            WHERE c.suspended = 0 AND c.note_id IS NOT NULL
+              AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+              AND c.state = 'new'
+              AND (${deck} IS NULL OR c.deck_id = ${deck})`
+          const totalNew = (yield* decodeRows(CountRow, totalNewRows))[0]?.n ?? 0
+
+          const dueAllowed = Math.max(0, reviewsPerDay - reviewedToday)
+          const newAllowed = Math.max(0, newPerDay - introducedToday)
 
           const rows = yield* sql`SELECT c.id AS "cardId", c.deck_id AS "deckId",
             c.note_id AS "noteId", c.template_ord AS "templateOrd",
@@ -285,10 +327,28 @@ export class Reviews extends Context.Service<
             ORDER BY CASE WHEN c.state = 'new' THEN 1 ELSE 0 END, c.due_at
             LIMIT ${QUEUE_LIMIT}`
           const decoded = yield* decodeRows(QueueRow, rows)
-          const due = decoded.filter((row) => row.state !== 'new').slice(0, dueRemaining)
-          const fresh = decoded.filter((row) => row.state === 'new').slice(0, newRemaining)
+          const dueWaiting = decoded.filter((row) => row.state !== 'new')
+          const newWaiting = decoded.filter((row) => row.state === 'new')
+          const due = dueWaiting.slice(0, dueAllowed)
+          const fresh = newWaiting.slice(0, newAllowed)
+          // A 200-Card prefetch can hold fewer due Cards than the limit
+          // allows; only a limit cut counts as capped, never a short fetch.
+          const dueCapped = dueWaiting.length > due.length
+          const newCapped = newWaiting.length > fresh.length
           const cards = yield* Effect.forEach([...due, ...fresh], toReviewCard, { concurrency: 1 })
-          return { cards, dayStartUtc: boundary } satisfies ReviewQueue
+          return {
+            cards,
+            dayStartUtc: boundary,
+            lapseMinutes,
+            reviewedToday,
+            newToday: introducedToday,
+            newRemaining: Math.max(0, newAllowed - fresh.length),
+            dueRemaining: Math.max(0, dueAllowed - due.length),
+            totalNew,
+            totalDue,
+            newCapped,
+            dueCapped,
+          } satisfies ReviewQueue
         }).pipe(Effect.withSpan('Reviews.queue'), (self) =>
           withStorageErrorPassThrough(self, 'load the review queue'),
         )
@@ -324,6 +384,14 @@ export class Reviews extends Context.Service<
             submission.timezone === undefined || submission.timezone === ''
               ? 'UTC'
               : submission.timezone
+          const deckLimitsRows = yield* sql`SELECT new_per_day AS "newPerDay",
+            reviews_per_day AS "reviewsPerDay", lapse_minutes AS "lapseMinutes"
+            FROM decks WHERE id = ${card.deckId}`
+          const deckLimitsDecoded = yield* decodeRows(DeckLimitsRow, deckLimitsRows)
+          const deckOverride = deckLimitsDecoded[0]
+          // The graded Card's own Deck sets its lapse: a deck page's override
+          // follows the Card there, without a new wire field.
+          const lapseMinutes = deckOverride?.lapseMinutes ?? fsrs.lapseMinutes
           const boundary = dayStartUtc(timezone, fsrs.dayRolloverHour, now)
           const todayKey = reviewDayKey(timezone, fsrs.dayRolloverHour, now)
           const scheduled = scheduleReview(
@@ -349,10 +417,10 @@ export class Reviews extends Context.Service<
           // Card buries until then so the queue skips it until it is due.
           // Passing grades bury until the next boundary at the earliest — a
           // sub-day FSRS interval still waits for tomorrow.
-          const requeueAt = new Date(now.getTime() + fsrs.lapseMinutes * 60_000).toISOString()
+          const requeueAt = new Date(now.getTime() + lapseMinutes * 60_000).toISOString()
           const dueAt = requeueInSession
             ? requeueAt
-            : dueInstantUtc(boundary, Math.max(1, interval), now, fsrs.lapseMinutes)
+            : dueInstantUtc(boundary, Math.max(1, interval), now, lapseMinutes)
           const buriedUntil = requeueInSession ? requeueAt : null
 
           // The Review row, its before-grade snapshot, and the Card's new state
@@ -360,7 +428,7 @@ export class Reviews extends Context.Service<
           // the batch atomically. Siblings — other Cards from the same Note —
           // bury until the next day, so one Note never shows two Cards in a
           // session.
-          const nextDay = dueInstantUtc(boundary, 1, now, fsrs.lapseMinutes)
+          const nextDay = dueInstantUtc(boundary, 1, now, lapseMinutes)
           const statements = [
             sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
               VALUES (${submission.id}, ${submission.cardId}, ${submission.grade},

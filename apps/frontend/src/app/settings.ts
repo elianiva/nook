@@ -4,7 +4,8 @@
  * Sections, top to bottom:
  * 1. FSRS scheduling — desired retention, weights (advanced), maximum
  *    interval
- * 2. Deck defaults — new Cards and reviews per day, lapse minutes
+ * 2. Global defaults — new Cards and reviews per day, lapse minutes.
+ *    Every deck follows these unless its own limits say otherwise.
  * 3. Behaviour — review sounds, tap-to-reveal, day rollover, keep-awake
  *
  * Every field edits a local draft; Save validates the whole form and sends
@@ -184,7 +185,7 @@ const fsrsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>
 
 const defaultsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Message>): Html =>
   section(
-    'Deck defaults',
+    'Global defaults',
     [
       numberField(
         'new-per-day',
@@ -212,6 +213,10 @@ const defaultsSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mess
         '1',
         { min: '1', inputMode: 'numeric' },
         h,
+      ),
+      h.p(
+        [h.Class('text-[11px] text-muted-foreground')],
+        ['Every deck follows these unless its own limits say otherwise.'],
       ),
     ],
     h,

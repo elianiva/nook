@@ -30,6 +30,7 @@ import {
   RemoveDeck,
   RenameDeck,
   ResetDeck,
+  SaveDeckLimits,
   SaveSettings,
   SubmitGrade,
   UndoGrade,
@@ -348,9 +349,33 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       return { model, commands: [NavigateToPath({ path: routeToUrl(path) })] }
     },
 
-    GotReviewQueue: ({ cards, dayStartUtc, lapseMinutes }) => {
+    GotReviewQueue: ({
+      cards,
+      dayStartUtc,
+      lapseMinutes,
+      reviewedToday,
+      newToday,
+      totalNew,
+      totalDue,
+      newCapped,
+      dueCapped,
+    }) => {
       const route = model.route
       const deckId = route._tag === 'ReviewDeck' ? Option.some(route.deckId) : Option.none()
+      // The queue is empty for two reasons: nothing waits, or a limit
+      // stopped everything. Only a capped empty queue is a limit stop — a
+      // short fetch (fewer Cards than the limit allows) is just empty.
+      const limitStopped = cards.length === 0 && (newCapped || dueCapped || totalNew + totalDue > 0)
+      const queueCounts = {
+        queueTotalDue: totalDue,
+        queueTotalNew: totalNew,
+        queueReviewedToday: reviewedToday,
+        queueNewToday: newToday,
+        queueNewCapped: newCapped,
+        queueDueCapped: dueCapped,
+        queueServedDue: cards.filter((card) => card.state !== 'new').length,
+        queueServedNew: cards.filter((card) => card.state === 'new').length,
+      }
       return {
         model: clearNotice(
           modifyFields(model, {
@@ -365,6 +390,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
                     cards: [...cards],
                     dayStartUtc: Option.some(dayStartUtc),
                     lapseMinutes,
+                    doneKind: limitStopped ? 'limits' : 'empty',
+                    ...queueCounts,
                   },
           }),
         ),
@@ -759,6 +786,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ClickedEditDeck: ({ deckId, name, description }) => ({
       model: modifyFields(model, {
         deckManage: () => ({
+          ...model.deckManage,
           deckId: Option.some(deckId),
           name,
           description,
@@ -903,11 +931,142 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       commands: [NavigateToPath({ path: routeToUrl({ _tag: 'Decks' }) })],
     }),
 
+    ToggledDeckCards: () => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, cardsOpen: !model.deckManage.cardsOpen }),
+      }),
+    }),
+
+    // The limits form opens seeded from the deck's summary: overrides as
+    // text, blank for "follow Settings". Typing keeps the text; only Save
+    // parses it, so half-typed input never corrupts the draft.
+    ClickedEditDeckLimits: ({ deckId, newPerDay, reviewsPerDay, lapseMinutes }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          deckId: Option.some(deckId),
+          editingLimits: true,
+          newPerDay,
+          reviewsPerDay,
+          lapseMinutes,
+          limitsSaving: false,
+          limitsSaved: false,
+          limitsError: Option.none(),
+        }),
+      }),
+    }),
+
+    TypedDeckNewPerDay: ({ value }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, newPerDay: value, limitsSaved: false }),
+      }),
+    }),
+
+    TypedDeckReviewsPerDay: ({ value }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, reviewsPerDay: value, limitsSaved: false }),
+      }),
+    }),
+
+    TypedDeckLapseMinutes: ({ value }) => ({
+      model: modifyFields(model, {
+        deckManage: () => ({ ...model.deckManage, lapseMinutes: value, limitsSaved: false }),
+      }),
+    }),
+
+    ClickedResetDeckLimits: () => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          newPerDay: '',
+          reviewsPerDay: '',
+          lapseMinutes: '',
+          limitsSaved: false,
+          limitsError: Option.none(),
+        }),
+      }),
+    }),
+
+    ClickedCancelDeckLimits: () => ({
+      model: modifyFields(model, {
+        deckManage: () => ({
+          ...model.deckManage,
+          editingLimits: false,
+          limitsError: Option.none(),
+        }),
+      }),
+    }),
+
+    // Save parses the text: blank means `null` (follow Settings), anything
+    // else must be a whole number in range. Bad input stays on the device
+    // with a sentence, like the blank deck name.
+    ClickedSaveDeckLimits: ({ deckId }) => {
+      const parseLimit = (value: string, min: number): number | null | undefined => {
+        if (value.trim() === '') return null
+        const parsed = Number(value)
+        return Number.isInteger(parsed) && parsed >= min ? parsed : undefined
+      }
+      const newPerDay = parseLimit(model.deckManage.newPerDay, 0)
+      const reviewsPerDay = parseLimit(model.deckManage.reviewsPerDay, 0)
+      const lapseMinutes = parseLimit(model.deckManage.lapseMinutes, 1)
+      if (newPerDay === undefined || reviewsPerDay === undefined) {
+        return {
+          model: modifyFields(model, {
+            deckManage: () => ({
+              ...model.deckManage,
+              limitsError: Option.some('Per-day counts must be whole numbers, 0 or more.'),
+            }),
+          }),
+        }
+      }
+      if (lapseMinutes === undefined) {
+        return {
+          model: modifyFields(model, {
+            deckManage: () => ({
+              ...model.deckManage,
+              limitsError: Option.some('Lapse minutes must be a whole number, at least 1.'),
+            }),
+          }),
+        }
+      }
+      return {
+        model: modifyFields(model, {
+          deckManage: () => ({
+            ...model.deckManage,
+            limitsSaving: true,
+            limitsSaved: false,
+            limitsError: Option.none(),
+          }),
+        }),
+        commands: [SaveDeckLimits({ deckId, limits: { newPerDay, reviewsPerDay, lapseMinutes } })],
+      }
+    },
+
+    // The limits landed: both reads refresh, so the deck page and every
+    // list show the new today-counts. The Queries keep their last data
+    // while the fresh answer arrives.
+    SavedDeckLimits: ({ deckId }) => {
+      const next: Model = {
+        ...model,
+        deckManage: {
+          ...model.deckManage,
+          editingLimits: false,
+          limitsSaving: false,
+          limitsSaved: true,
+        },
+      }
+      return Update.combine<Model, Message>(next, [
+        decks.revalidateOrLoad,
+        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+      ])
+    },
+
     DeckManageFailed: ({ error }) => ({
       model: modifyFields(model, {
         deckManage: () => ({
           ...model.deckManage,
           saving: false,
+          limitsSaving: false,
           error: Option.some(error),
         }),
       }),

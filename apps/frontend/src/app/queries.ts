@@ -215,7 +215,10 @@ export const decksQuery = Query.define({
   error: S.String,
   execute: withCache(
     decksPersist,
-    call((rpc) => rpc.decksList(), 'Could not load the decks. Check the connection and try again.'),
+    call(
+      (rpc) => rpc.decksList({ timezone: timezone() }),
+      'Could not load the decks. Check the connection and try again.',
+    ),
     'Could not load the decks. Check the connection and try again.',
   ),
 })
@@ -234,7 +237,7 @@ export const deckDetailQuery = Query.define({
     withCache(
       deckDetailPersistFor(deckId),
       NookRpc.pipe(
-        Effect.flatMap((rpc) => rpc.decksGetById({ deckId })),
+        Effect.flatMap((rpc) => rpc.decksGetById({ deckId, timezone: timezone() })),
         Effect.catchTag('DeckNotFound', () => Effect.fail('notFound' as const)),
         Effect.mapError((error): DeckDetailError =>
           error === 'notFound' ? 'notFound' : 'unavailable',

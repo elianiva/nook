@@ -375,7 +375,7 @@ const deckCard = (deck: DeckSummary, variant: 'due' | 'clean', h: HtmlBuilder<Me
           h.div([h.Class('truncate text-[13px] font-bold')], [deck.name]),
           h.div(
             [h.Class('text-[11px] text-[var(--theme-sub)]')],
-            [`${deck.dueCount} due · ${deck.newCount} new`],
+            [`${deck.dueToday} due today · ${deck.newToday} new today`],
           ),
           ...(variant === 'due'
             ? [
@@ -400,7 +400,7 @@ const deckCard = (deck: DeckSummary, variant: 'due' | 'clean', h: HtmlBuilder<Me
                       : 'rounded-full bg-[var(--theme-bar-idle)] px-2 py-0.5 text-[11px] font-extrabold text-[var(--theme-sub)] tabular-nums',
                   ),
                 ],
-                [`${deck.dueCount} due`],
+                [`${deck.dueToday} due today`],
               ),
               icon(h, ChevronRight, 'size-4 text-[var(--theme-sub)]'),
             ],
@@ -433,8 +433,8 @@ const deckSections = (
   all: ReadonlyArray<DeckSummary>,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Child> => {
-  const due = all.filter((deck) => deck.dueCount > 0)
-  const clean = all.filter((deck) => deck.dueCount === 0)
+  const due = all.filter((deck) => deck.dueToday > 0)
+  const clean = all.filter((deck) => deck.dueToday === 0)
   return [
     ...(due.length === 0
       ? []

@@ -114,7 +114,7 @@ layer(TestLayers)('imports over sqlite', (it) => {
       expect(started.noteCount).toBe(2)
 
       // The Deck and Note Type land with the manifest, before any Note needs them.
-      const decksAfterStart = yield* client.decksList()
+      const decksAfterStart = yield* client.decksList({})
       expect(decksAfterStart.find((deck) => deck.id === '7')?.name).toBe('Japanese::Core')
 
       const firstBatch = yield* client.importsWriteBatch({
