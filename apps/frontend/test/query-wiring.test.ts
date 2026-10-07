@@ -57,12 +57,19 @@ describe('Query wiring', () => {
       'FetchDecks',
       'RestoreImportJob',
       'RestoreQueries',
+      'RestoreQueuedGrades',
     ])
-    expect(names(init(url('/decks')))).toEqual(['FetchDecks', 'RestoreImportJob', 'RestoreQueries'])
+    expect(names(init(url('/decks')))).toEqual([
+      'FetchDecks',
+      'RestoreImportJob',
+      'RestoreQueries',
+      'RestoreQueuedGrades',
+    ])
     expect(names(init(url('/decks/deck-a')))).toEqual([
       'FetchDeckDetail',
       'RestoreImportJob',
       'RestoreQueries',
+      'RestoreQueuedGrades',
     ])
   })
 

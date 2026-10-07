@@ -7,9 +7,8 @@
  * them with `revalidateOrLoad`. A Query shows its own failure and Retry;
  * a `LoadFailed` answer — settings and the review queue — sets the notice.
  *
- * Settings edits write into `settingsDraft` only; Save validates the draft
- * and, when clean, sends it through the save Command, whose answer copies
- * into `settings`.
+ * Settings edits write into `settingsDraft`; Save validates and applies that
+ * draft optimistically, with the prior server value retained for rollback.
  */
 
 import { HashMap, Option } from 'effect'
@@ -17,7 +16,7 @@ import { Navigation, Update } from 'foldkit'
 import { AsyncData } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
-import type { Grade } from '@nook/api'
+import type { DeckDetail, DeckId, DeckLimits, DeckSummary, Grade } from '@nook/api'
 import { NavigateInternal, NavigateToPath } from './commands'
 import {
   DownloadFile,
@@ -27,6 +26,7 @@ import {
   LoadCachedQueue,
   PersistReviewQueue,
   ReloadApp,
+  RestoreQueuedGrades,
   RemoveDeck,
   RenameDeck,
   ResetDeck,
@@ -42,6 +42,7 @@ import { ApplyTheme } from './theme-commands'
 import { foldHintMessage } from './hints'
 import type { LoadRetry } from './model'
 import type { RestoredAnswer } from './model'
+import type { DeckCacheSnapshot } from './model'
 import {
   Message,
   draftFromSettings,
@@ -114,7 +115,12 @@ export const init = (url: Url): Update.Return<Model, Message> => {
     // An Import interrupted by a reload is still in IndexedDB; restore it so the
     // worker can pick it up again. Cached list answers reseed the Queries, so
     // a cold boot offline still shows the last data while the route loads run.
-    commands: [...(loads.commands ?? []), RestoreImportJob(), RestoreQueries()],
+    commands: [
+      ...(loads.commands ?? []),
+      RestoreImportJob(),
+      RestoreQueries(),
+      RestoreQueuedGrades(),
+    ],
   }
 }
 
@@ -157,6 +163,8 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
       return [FetchSettings()]
     case 'saveSettings':
       return [SaveSettings({ settings: settingsFromDraft(model) })]
+    case 'queuedGrades':
+      return [RestoreQueuedGrades()]
     case 'undoReview': {
       const last = model.review.lastGrade
       if (Option.isNone(last)) return []
@@ -164,6 +172,22 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
     }
     case 'collectionExport':
       return [FetchExport()]
+  }
+}
+
+const beginSettingsSave = (model: Model): Model => {
+  const settings = settingsFromDraft(model)
+  return {
+    ...model,
+    settings,
+    settingsRollback: Option.some(model.settings),
+    settingsDraft: {
+      ...model.settingsDraft,
+      weightsError: Option.none(),
+      saved: false,
+      saving: true,
+    },
+    notice: Option.none(),
   }
 }
 
@@ -229,7 +253,7 @@ const seedCachedQueries = (model: Model, answers: ReadonlyArray<RestoredAnswer>)
       }
       // Single-field args encode to one JSON object with sorted keys, which
       // `JSON.stringify` matches: no key ordering to canonicalize.
-      const key = JSON.stringify({ deckId: answer.deckId })
+      const key = deckDetailKey(answer.deckId)
       next = {
         ...next,
         deckDetail: {
@@ -244,6 +268,73 @@ const seedCachedQueries = (model: Model, answers: ReadonlyArray<RestoredAnswer>)
     }
   }
   return next
+}
+
+const deckDetailKey = (deckId: DeckId): string => JSON.stringify({ deckId })
+
+const deckCacheSnapshot = (model: Model, deckId: DeckId) => ({
+  deckId,
+  summaries: AsyncData.getData(decksQuery.read(model.decks)),
+  detail: AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })),
+})
+
+/** Applies one optimistic summary edit to every loaded cache for this deck. */
+const updateDeckCache = (
+  model: Model,
+  deckId: DeckId,
+  updateSummary: (summary: DeckSummary) => DeckSummary,
+): Model => {
+  const summaryMatches = (summary: DeckSummary): DeckSummary =>
+    summary.id === deckId ? updateSummary(summary) : summary
+  const summaries = AsyncData.map(model.decks.data, (rows) => rows.map(summaryMatches))
+  const key = deckDetailKey(deckId)
+  const entry = HashMap.get(model.deckDetail.entries, key)
+  const detailModel = Option.match(entry, {
+    onNone: () => model.deckDetail,
+    onSome: (cached) => ({
+      ...model.deckDetail,
+      entries: HashMap.set(model.deckDetail.entries, key, {
+        ...cached,
+        data: AsyncData.map(cached.data, (detail: DeckDetail) => ({
+          ...detail,
+          summary: updateSummary(detail.summary),
+        })),
+      }),
+    }),
+  })
+  return {
+    ...model,
+    decks: { ...model.decks, data: summaries },
+    deckDetail: detailModel,
+  }
+}
+
+/** Rolls an optimistic cache edit back to its server values after failure. */
+const restoreDeckCache = (model: Model, snapshot: DeckCacheSnapshot): Model => {
+  let restored = model
+  if (Option.isSome(snapshot.summaries)) {
+    restored = {
+      ...restored,
+      decks: { ...restored.decks, data: AsyncData.succeed(snapshot.summaries.value) },
+    }
+  }
+  if (Option.isSome(snapshot.detail)) {
+    const key = deckDetailKey(snapshot.deckId)
+    const entry = HashMap.get(restored.deckDetail.entries, key)
+    if (Option.isSome(entry)) {
+      restored = {
+        ...restored,
+        deckDetail: {
+          ...restored.deckDetail,
+          entries: HashMap.set(restored.deckDetail.entries, key, {
+            ...entry.value,
+            data: AsyncData.succeed(snapshot.detail.value),
+          }),
+        },
+      }
+    }
+  }
+  return restored
 }
 
 /**
@@ -284,6 +375,7 @@ const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message>
           phase: done ? 'done' : 'reviewing',
           error: Option.none(),
         }),
+        queuedGrades: () => [...model.queuedGrades, entry],
       }),
     ),
     commands: [SubmitGrade(entry)],
@@ -332,32 +424,75 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     PrefetchedDeckDetail: ({ deckId }) => deckDetail.loadIfMissing(model, { deckId }),
 
     GotSettings: ({ settings }) => ({
-      model: clearNotice({
-        ...modifyFields(model, { settings: () => settings }),
-        settingsDraft: draftFromSettings(settings),
-      }),
+      model: Option.isSome(model.settingsRollback)
+        ? model
+        : clearNotice({
+            ...modifyFields(model, { settings: () => settings }),
+            settingsDraft: draftFromSettings(settings),
+          }),
     }),
 
-    SavedSettings: ({ settings }) => ({
-      model: clearNotice({
-        ...modifyFields(model, { settings: () => settings }),
-        settingsDraft: { ...draftFromSettings(settings), saved: true },
-      }),
-    }),
+    SavedSettings: ({ settings }) => {
+      const draft = model.settingsDraft.saving
+        ? { ...draftFromSettings(settings), saved: true }
+        : model.settingsDraft
+      return {
+        model: clearNotice({
+          ...modifyFields(model, {
+            settings: () => settings,
+            settingsRollback: () => Option.none(),
+          }),
+          settingsDraft: draft,
+        }),
+      }
+    },
 
-    LoadFailed: ({ error, retry }) => ({
-      model: modifyFields(model, {
-        notice: () => Option.some({ message: error, retry }),
-        ...(retry === 'reviewQueue' && model.review.bypassDueLimit
-          ? { review: () => ({ ...model.review, phase: 'done' as const }) }
-          : {}),
-      }),
-    }),
+    RestoredQueuedGrades: ({ grades }) => {
+      const known = new Set(model.queuedGrades.map((entry) => entry.id))
+      const restored = grades.filter((entry) => !known.has(entry.id))
+      const queuedGrades = [...model.queuedGrades, ...restored]
+      const pendingIds = new Set(model.review.pending.map((entry) => entry.id))
+      const offline = queuedGrades.filter((entry) => !pendingIds.has(entry.id))
+      return {
+        model: {
+          ...model,
+          queuedGrades,
+          review: { ...model.review, offline },
+        },
+        commands: restored.map((entry) => SubmitGrade(entry)),
+      }
+    },
+
+    LoadFailed: ({ error, retry }) => {
+      let next = model
+      if (retry === 'saveSettings' && Option.isSome(model.settingsRollback)) {
+        next = {
+          ...model,
+          settings: model.settingsRollback.value,
+          settingsRollback: Option.none(),
+          settingsDraft: { ...model.settingsDraft, saving: false },
+        }
+      }
+      return {
+        model: modifyFields(next, {
+          notice: () => Option.some({ message: error, retry }),
+          ...(retry === 'reviewQueue' && model.review.bypassDueLimit
+            ? { review: () => ({ ...model.review, phase: 'done' as const }) }
+            : {}),
+        }),
+      }
+    },
 
     ClickedRetry: () =>
       Option.match(model.notice, {
         onNone: () => ({ model }),
-        onSome: (notice) => ({ model, commands: retryCommandsFor(model, notice.retry) }),
+        onSome: (notice) =>
+          notice.retry === 'saveSettings'
+            ? {
+                model: beginSettingsSave(model),
+                commands: [SaveSettings({ settings: settingsFromDraft(model) })],
+              }
+            : { model, commands: retryCommandsFor(model, notice.retry) },
       }),
 
     // A Start action is a navigation: the review route fetches its own queue.
@@ -429,6 +564,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
                   ? model.review
                   : {
                       ...idleReview,
+                      offline: model.queuedGrades,
                       phase: cards.length === 0 ? 'done' : 'reviewing',
                       cards: [...cards],
                       dayStartUtc: Option.some(dayStartUtc),
@@ -551,10 +687,11 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     GradeAccepted: ({ id, accepted }) => {
       const review = model.review
+      const queuedGrades = model.queuedGrades.filter((entry) => entry.id !== id)
       const entry =
         review.pending.find((pending) => pending.id === id) ??
         review.offline.find((pending) => pending.id === id)
-      if (entry === undefined) return { model }
+      if (entry === undefined) return { model: { ...model, queuedGrades } }
       const leechCard = accepted.leechSuspended
         ? (review.cards.find((card) => card.cardId === accepted.cardId) ??
           review.requeue.find((card) => card.cardId === accepted.cardId))
@@ -570,6 +707,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       const index = Math.max(0, review.index - removedBefore)
       return {
         model: modifyFields(model, {
+          queuedGrades: () => queuedGrades,
           review: () => ({
             ...review,
             cards,
@@ -671,17 +809,24 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     PersistedReviewQueue: () => ({ model }),
 
-    GradeFailed: ({ error }) => {
+    GradeFailed: ({ id, error, durable }) => {
       // Offline or dropped: the grade stays applied on screen and waits in
       // `offline` for the network, leaving `pending` so Retry sends it once.
       // Its id is stable, so the flush cannot double-apply it (ADR 0002).
-      const waiting = model.review.pending.slice(-1)
+      const waiting = model.review.pending.find((entry) => entry.id === id)
+      const alreadyOffline = model.review.offline.some((entry) => entry.id === id)
+      if (waiting === undefined && !alreadyOffline) return { model }
+      const persisted = durable || alreadyOffline
       return {
         model: modifyFields(model, {
           review: () => ({
             ...model.review,
-            pending: model.review.pending.slice(0, -1),
-            offline: [...model.review.offline, ...waiting],
+            pending: model.review.pending.filter((entry) => entry.id !== id),
+            offline: persisted
+              ? alreadyOffline || waiting === undefined
+                ? model.review.offline
+                : [...model.review.offline, waiting]
+              : model.review.offline.filter((entry) => entry.id !== id),
             error: Option.some(error),
           }),
         }),
@@ -692,9 +837,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: modifyFields(model, {
         review: () => ({ ...model.review, error: Option.none() }),
       }),
-      commands: [...model.review.pending, ...model.review.offline].map((entry) =>
-        SubmitGrade(entry),
-      ),
+      commands: model.queuedGrades.map((entry) => SubmitGrade(entry)),
     }),
 
     ClickedContinuePastDueLimit: () => {
@@ -721,7 +864,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     },
 
     RegainedNetwork: () => {
-      const queued = model.review.offline
+      const queued = model.queuedGrades
       const refreshed = revalidateVisible(
         modifyFields(model, {
           review: () => ({ ...model.review, error: Option.none() }),
@@ -1016,19 +1159,18 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           }),
         }
       }
+      const rename = {
+        name: model.deckManage.name.trim(),
+        description: model.deckManage.description.trim(),
+      }
+      const snapshot = deckCacheSnapshot(model, deckId)
+      const optimistic = updateDeckCache(model, deckId, (summary) => ({ ...summary, ...rename }))
       return {
-        model: modifyFields(model, {
+        model: modifyFields(optimistic, {
+          deckMutationRollback: () => Option.some(snapshot),
           deckManage: () => ({ ...model.deckManage, saving: true, error: Option.none() }),
         }),
-        commands: [
-          RenameDeck({
-            deckId,
-            rename: {
-              name: model.deckManage.name.trim(),
-              description: model.deckManage.description.trim(),
-            },
-          }),
-        ],
+        commands: [RenameDeck({ deckId, rename })],
       }
     },
 
@@ -1039,6 +1181,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       const next: Model = {
         ...model,
         deckManage: { ...model.deckManage, editing: false, saving: false, saved: true },
+        deckMutationRollback: Option.none(),
       }
       return Update.combine<Model, Message>(next, [
         decks.revalidateOrLoad,
@@ -1210,8 +1353,12 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           }),
         }
       }
+      const limits: DeckLimits = { newPerDay, reviewsPerDay, lapseMinutes }
+      const snapshot = deckCacheSnapshot(model, deckId)
+      const optimistic = updateDeckCache(model, deckId, (summary) => ({ ...summary, limits }))
       return {
-        model: modifyFields(model, {
+        model: modifyFields(optimistic, {
+          deckMutationRollback: () => Option.some(snapshot),
           deckManage: () => ({
             ...model.deckManage,
             limitsSaving: true,
@@ -1219,7 +1366,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             limitsError: Option.none(),
           }),
         }),
-        commands: [SaveDeckLimits({ deckId, limits: { newPerDay, reviewsPerDay, lapseMinutes } })],
+        commands: [SaveDeckLimits({ deckId, limits })],
       }
     },
 
@@ -1235,6 +1382,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           limitsSaving: false,
           limitsSaved: true,
         },
+        deckMutationRollback: Option.none(),
       }
       return Update.combine<Model, Message>(next, [
         decks.revalidateOrLoad,
@@ -1242,16 +1390,24 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       ])
     },
 
-    DeckManageFailed: ({ error }) => ({
-      model: modifyFields(model, {
+    DeckManageFailed: ({ deckId, error }) => {
+      const snapshot = Option.getOrNull(model.deckMutationRollback)
+      const rolledBack =
+        snapshot !== null && snapshot.deckId === deckId ? restoreDeckCache(model, snapshot) : model
+      const next = modifyFields(rolledBack, {
+        deckMutationRollback: () => Option.none(),
         deckManage: () => ({
           ...model.deckManage,
           saving: false,
           limitsSaving: false,
           error: Option.some(error),
         }),
-      }),
-    }),
+      })
+      return Update.combine<Model, Message>(next, [
+        decks.revalidateOrLoad,
+        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+      ])
+    },
 
     EditedRetention: ({ value }) => ({
       model: {
@@ -1260,6 +1416,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           desiredRetention: toNumber(value, model.settingsDraft.desiredRetention),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1267,7 +1424,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     EditedWeights: ({ value }) => ({
       model: {
         ...model,
-        settingsDraft: { ...model.settingsDraft, weightsText: value, saved: false },
+        settingsDraft: { ...model.settingsDraft, weightsText: value, saved: false, saving: false },
       },
     }),
 
@@ -1278,6 +1435,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           maximumInterval: toInt(value, model.settingsDraft.maximumInterval),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1289,6 +1447,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           newPerDay: toInt(value, model.settingsDraft.newPerDay),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1300,6 +1459,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           reviewsPerDay: toInt(value, model.settingsDraft.reviewsPerDay),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1311,6 +1471,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           lapseMinutes: toInt(value, model.settingsDraft.lapseMinutes),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1322,6 +1483,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           ...model.settingsDraft,
           dayRolloverHour: toInt(value, model.settingsDraft.dayRolloverHour),
           saved: false,
+          saving: false,
         },
       },
     }),
@@ -1329,7 +1491,12 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ToggledTapToReveal: ({ isChecked }) => ({
       model: {
         ...model,
-        settingsDraft: { ...model.settingsDraft, tapToReveal: isChecked, saved: false },
+        settingsDraft: {
+          ...model.settingsDraft,
+          tapToReveal: isChecked,
+          saved: false,
+          saving: false,
+        },
       },
     }),
 
@@ -1345,6 +1512,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     AppliedTheme: () => ({ model }),
 
     ClickedSaveSettings: () => {
+      if (model.settingsDraft.saving || Option.isSome(model.settingsRollback)) return { model }
       const error = validateDraft(model.settingsDraft)
       if (error !== undefined) {
         return {
@@ -1354,15 +1522,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
               ...model.settingsDraft,
               weightsError: Option.some(error),
               saved: false,
+              saving: false,
             },
           },
         }
       }
+      const next = beginSettingsSave(model)
       return {
-        model: {
-          ...model,
-          settingsDraft: { ...model.settingsDraft, weightsError: Option.none(), saved: false },
-        },
+        model: next,
         commands: [SaveSettings({ settings: settingsFromDraft(model) })],
       }
     },

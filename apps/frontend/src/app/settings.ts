@@ -279,7 +279,7 @@ const errorBanner = (draft: SettingsDraft, h: HtmlBuilder<Message>): Child =>
     onSome: (error) => fieldError(error, h),
   })
 
-const saveBar = (h: HtmlBuilder<Message>): Html =>
+const saveBar = (draft: SettingsDraft, h: HtmlBuilder<Message>): Html =>
   h.div(
     [h.Class('flex gap-2')],
     [
@@ -287,15 +287,17 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
         {
           onClick: Message.ClickedSaveSettings(),
           size: 'lg',
+          isDisabled: draft.saving,
           className: 'h-11 flex-1 border-0 bg-[var(--theme-ink)] text-base font-bold text-white',
         },
-        [icon(h, Save, 'size-4', 'inline-start'), 'Save settings'],
+        [icon(h, Save, 'size-4', 'inline-start'), draft.saving ? 'Saving…' : 'Save settings'],
         h,
       ),
       button<Message>(
         {
           onClick: Message.ClickedResetSettings(),
           size: 'lg',
+          isDisabled: draft.saving,
           className:
             'h-11 border-0 bg-[var(--theme-block)] px-4 text-[var(--theme-ink)] shadow-none',
           attributes: [h.AriaLabel('Reset changes')],
@@ -364,7 +366,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
     fsrsSection(draft, model, h),
     defaultsSection(draft, model, h),
     behaviourSection(draft, model, h),
-    saveBar(h),
+    saveBar(model.settingsDraft, h),
     section(
       'Collection',
       [

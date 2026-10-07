@@ -177,12 +177,74 @@ describe('review session', () => {
   it('queues a failed grade offline and flushes it on retry', () => {
     const model = reviewing([card('c1')])
     const graded = update(model, Message.ClickedGrade({ grade: 'Good' }))
-    const failed = update(graded.model, Message.GradeFailed({ error: 'offline' }))
+    const id = graded.model.review.pending[0]?.id
+    expect(id).toBeDefined()
+    if (id === undefined) return
+    const failed = update(
+      graded.model,
+      Message.GradeFailed({ id, error: 'offline', durable: true }),
+    )
     expect(failed.model.review.offline.length).toBe(1)
     expect(failed.model.review.graded).toBe(1)
+    expect(failed.model.queuedGrades).toHaveLength(1)
 
     const retried = update(failed.model, Message.ClickedRetryGrades())
     expect(names(retried)).toEqual(['SubmitGrade'])
+  })
+
+  it('does not call a grade durable when this device could not persist it', () => {
+    const graded = update(reviewing([card('c1')]), Message.ClickedGrade({ grade: 'Good' }))
+    const id = graded.model.review.pending[0]?.id
+    expect(id).toBeDefined()
+    if (id === undefined) return
+
+    const failed = update(
+      graded.model,
+      Message.GradeFailed({
+        id,
+        error: 'storage unavailable',
+        durable: false,
+      }),
+    )
+    expect(failed.model.review.pending).toEqual([])
+    expect(failed.model.review.offline).toEqual([])
+    expect(failed.model.queuedGrades.map((entry) => entry.id)).toEqual([id])
+
+    const retried = update(failed.model, Message.ClickedRetryGrades())
+    expect(names(retried)).toEqual(['SubmitGrade'])
+  })
+
+  it('restores and retries grades from the durable outbox at boot', () => {
+    const queued = { id: 'grade-1', cardId: CardId.make('c1'), grade: 'Good' as const }
+    const restored = update(
+      seedModel(url('/review')),
+      Message.RestoredQueuedGrades({ grades: [queued] }),
+    )
+    expect(restored.model.queuedGrades).toEqual([queued])
+    expect(restored.model.review.offline).toEqual([queued])
+    expect(names(restored)).toEqual(['SubmitGrade'])
+
+    const accepted = update(
+      restored.model,
+      Message.GradeAccepted({
+        id: queued.id,
+        accepted: {
+          cardId: queued.cardId,
+          grade: queued.grade,
+          state: 'review',
+          dueInDays: 1,
+          stability: 2,
+          difficulty: 5,
+          reviewLapses: 0,
+          intervalDays: 1,
+          dueAt: '2026-10-06T04:00:00Z',
+          requeueInSession: false,
+          leechSuspended: false,
+        },
+      }),
+    )
+    expect(accepted.model.queuedGrades).toEqual([])
+    expect(accepted.model.review.offline).toEqual([])
   })
 
   it('continues with due cards only when the learner bypasses the daily cap', () => {

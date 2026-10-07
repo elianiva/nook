@@ -75,6 +75,7 @@ export const SettingsDraft = S.Struct({
   tapToReveal: S.Boolean,
   dayRolloverHour: S.Number,
   saved: S.Boolean,
+  saving: S.Boolean,
 })
 export type SettingsDraft = typeof SettingsDraft.Type
 
@@ -89,6 +90,7 @@ export const draftFromSettings = (settings: AppSettings): SettingsDraft => ({
   tapToReveal: settings.behaviour.tapToReveal,
   dayRolloverHour: settings.behaviour.dayRolloverHour,
   saved: false,
+  saving: false,
 })
 
 const parseWeights = (text: string): ReadonlyArray<number> | undefined => {
@@ -237,6 +239,7 @@ export const LoadRetry = S.Literals([
   'reviewQueue',
   'settings',
   'saveSettings',
+  'queuedGrades',
   'undoReview',
   'collectionExport',
 ])
@@ -254,6 +257,14 @@ export type LoadNotice = typeof LoadNotice.Type
 /** Which destructive deck action the Manage section is confirming, if any. Only one confirm is open at a time. */
 export const DeckConfirm = S.Literals(['reset', 'remove'])
 export type DeckConfirm = typeof DeckConfirm.Type
+
+/** Server values to restore if an optimistic rename or limit change fails. */
+export const DeckCacheSnapshot = S.Struct({
+  deckId: DeckId,
+  summaries: S.Option(S.Array(DeckSummary)),
+  detail: S.Option(DeckDetail),
+})
+export type DeckCacheSnapshot = typeof DeckCacheSnapshot.Type
 
 /**
  * The deck page's Manage section: the rename draft plus which destructive
@@ -418,6 +429,12 @@ export const Model = S.Struct({
   importState: ImportState,
   /** The deck page's Manage section: rename draft and destructive confirms. */
   deckManage: DeckManage,
+  /** Server cache values held while an optimistic deck mutation is in flight. */
+  deckMutationRollback: S.Option(DeckCacheSnapshot),
+  /** Grades in IndexedDB's durable outbox until the server confirms them. */
+  queuedGrades: S.Array(ReviewPending),
+  /** Server-authoritative settings to restore if an optimistic save fails. */
+  settingsRollback: S.Option(AppSettings),
   /** Card-level suspension mutation shown in the expanded deck list. */
   cardSuspensionPending: S.Option(CardId),
   cardSuspensionError: S.Option(S.Struct({ cardId: CardId, message: S.String })),
@@ -444,6 +461,9 @@ export const seedModel = (url: Url.Url): Model => ({
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
   deckManage: idleDeckManage,
+  deckMutationRollback: Option.none(),
+  queuedGrades: [],
+  settingsRollback: Option.none(),
   cardSuspensionPending: Option.none(),
   cardSuspensionError: Option.none(),
   theme: readTheme(),
@@ -464,6 +484,8 @@ export const Message = defineMessageUnion({
   GotDeckDetailMessage: { message: deckDetailQuery.Message },
   GotSettings: { settings: AppSettings },
   SavedSettings: { settings: AppSettings },
+  /** The durable grade outbox was loaded at boot. */
+  RestoredQueuedGrades: { grades: S.Array(ReviewPending) },
   /** A Query shows its own error, so its Retry is its own Message. */
   ClickedRetryOverview: {},
   ClickedRetryDecks: {},
@@ -535,7 +557,7 @@ export const Message = defineMessageUnion({
   /** The export did not land. */
   ExportFailed: { error: S.String },
   /** The grade did not land. It waits in `pending` for Retry. */
-  GradeFailed: { error: S.String },
+  GradeFailed: { id: S.String, error: S.String, durable: S.Boolean },
   /** The Learner pressed Retry on a grade that did not land. */
   ClickedRetryGrades: {},
   /** The learner chose to continue with due Cards only, past today's cap. */
@@ -642,6 +664,6 @@ export const Message = defineMessageUnion({
   /** The removal landed. The app leaves for the deck list. */
   RemovedDeck: {},
   /** A deck mutation failed. The Manage section shows the reason. */
-  DeckManageFailed: { error: S.String },
+  DeckManageFailed: { deckId: DeckId, error: S.String },
 })
 export type Message = typeof Message.Type

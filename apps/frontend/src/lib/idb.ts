@@ -9,10 +9,10 @@
  */
 
 export const NOOK_DB_NAME = 'nook'
-export const NOOK_DB_VERSION = 4
-export const NOOK_STORES = ['reviewQueues', 'queryCache', 'importJobs'] as const
+export const NOOK_DB_VERSION = 5
+export const NOOK_STORES = ['reviewQueues', 'queryCache', 'importJobs', 'reviewGrades'] as const
 
-/** Runs one request against `storeName` and closes the database when it lands. */
+/** Runs one request against `storeName` and closes after its transaction settles. */
 export const runIdbRequest = <A>(
   storeName: string,
   mode: IDBTransactionMode,
@@ -42,17 +42,45 @@ export const runIdbRequest = <A>(
         reject(error instanceof Error ? error : new Error(`The ${storeName} did not answer.`))
         return
       }
-      transaction.oncomplete = close
-      transaction.onabort = close
+      let settled = false
+      let resultValue: { value: A } | undefined
+      const fail = (error: Error): void => {
+        if (settled) return
+        settled = true
+        close()
+        reject(error)
+      }
+      transaction.oncomplete = () => {
+        close()
+        if (settled) return
+        settled = true
+        if (resultValue === undefined) {
+          reject(new Error(`The ${storeName} transaction completed without a result.`))
+          return
+        }
+        resolve(resultValue.value)
+      }
+      transaction.onerror = () =>
+        fail(transaction.error ?? new Error(`The ${storeName} transaction failed.`))
+      transaction.onabort = () =>
+        fail(transaction.error ?? new Error(`The ${storeName} transaction was aborted.`))
       let result: IDBRequest<A>
       try {
         result = run(transaction.objectStore(storeName))
       } catch (error) {
-        reject(error instanceof Error ? error : new Error(`The ${storeName} did not answer.`))
+        try {
+          transaction.abort()
+        } catch {
+          // The transaction may already be inactive; the request still fails.
+        }
+        fail(error instanceof Error ? error : new Error(`The ${storeName} did not answer.`))
         return
       }
-      result.onsuccess = () => resolve(result.result)
-      result.onerror = () => reject(result.error ?? new Error(`The ${storeName} did not answer.`))
+      result.onsuccess = () => {
+        resultValue = { value: result.result }
+      }
+      result.onerror = () =>
+        fail(result.error ?? new Error(`The ${storeName} request did not answer.`))
     }
     open.onsuccess = () => {
       const db = open.result

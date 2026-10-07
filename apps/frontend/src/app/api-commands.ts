@@ -16,6 +16,7 @@ import { Effect, Option, Schema as S } from 'effect'
 import { Command } from 'foldkit'
 import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard } from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
+import { loadQueuedGrades, removeQueuedGrade, saveQueuedGrade } from '@/lib/review-grade-store'
 import { NookRpc } from '@/lib/rpc'
 import { learnerTimezone as timezone } from '@/lib/timezone'
 import { Message as MessageConstructors } from './model'
@@ -78,6 +79,21 @@ export const SaveSettings = Command.define('SaveSettings', {
     ),
 })
 
+export const RestoreQueuedGrades = Command.define('RestoreQueuedGrades', {
+  messages: [MessageConstructors.RestoredQueuedGrades, MessageConstructors.LoadFailed],
+  execute: loadQueuedGrades().pipe(
+    Effect.map((grades) => MessageConstructors.RestoredQueuedGrades({ grades: [...grades] })),
+    Effect.catch(() =>
+      Effect.succeed(
+        loadFailed(
+          'Could not restore saved grades from this device. Retry before continuing offline.',
+          'queuedGrades',
+        ),
+      ),
+    ),
+  ),
+})
+
 export const FetchReviewQueue = Command.define('FetchReviewQueue', {
   args: { deckId: S.Option(DeckId), bypassDueLimit: S.Boolean },
   messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
@@ -119,19 +135,35 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
 export const SubmitGrade = Command.define('SubmitGrade', {
   args: { id: S.String, cardId: CardId, grade: Grade },
   messages: [MessageConstructors.GradeAccepted, MessageConstructors.GradeFailed],
-  execute: ({ id, cardId, grade }) =>
-    NookRpc.pipe(
-      Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
+  execute: ({ id, cardId, grade }) => {
+    const pending = { id, cardId, grade }
+    const submit = saveQueuedGrade(pending).pipe(
+      Effect.mapError(() => 'storage' as const),
+      Effect.flatMap(() =>
+        NookRpc.pipe(
+          Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
+          Effect.provide(NookRpc.layer),
+          Effect.mapError(() => 'server' as const),
+        ),
+      ),
+      Effect.tap(() => removeQueuedGrade(id).pipe(Effect.catch(() => Effect.void))),
       Effect.map((accepted) => MessageConstructors.GradeAccepted({ id, accepted })),
-      Effect.catch(() =>
+    )
+    return submit.pipe(
+      Effect.catch((failure) =>
         Effect.succeed(
           MessageConstructors.GradeFailed({
-            error: 'Could not save that grade. It is waiting — try again.',
+            id,
+            durable: failure === 'server',
+            error:
+              failure === 'storage'
+                ? 'Could not save that grade on this device. Keep this tab open and retry.'
+                : 'Could not sync that grade. It is saved on this device — try again.',
           }),
         ),
       ),
-      Effect.provide(NookRpc.layer),
-    ),
+    )
+  },
 })
 
 export const SetCardSuspended = Command.define('SetCardSuspended', {
@@ -340,7 +372,8 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
     ),
 })
 
-const deckManageFailed = (error: string) => MessageConstructors.DeckManageFailed({ error })
+const deckManageFailed = (deckId: DeckId, error: string) =>
+  MessageConstructors.DeckManageFailed({ deckId, error })
 
 /**
  * The deck mutations: rename, limits, reset, remove.
@@ -359,7 +392,7 @@ export const RenameDeck = Command.define('RenameDeck', {
       Effect.map(() => MessageConstructors.RenamedDeck({ deckId })),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed('Could not rename the deck. Check the connection and try again.'),
+          deckManageFailed(deckId, 'Could not rename the deck. Check the connection and try again.'),
         ),
       ),
       Effect.provide(NookRpc.layer),
@@ -375,7 +408,10 @@ export const SaveDeckLimits = Command.define('SaveDeckLimits', {
       Effect.map(() => MessageConstructors.SavedDeckLimits({ deckId })),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed('Could not save the deck limits. Check the connection and try again.'),
+          deckManageFailed(
+            deckId,
+            'Could not save the deck limits. Check the connection and try again.',
+          ),
         ),
       ),
       Effect.provide(NookRpc.layer),
@@ -391,7 +427,7 @@ export const ResetDeck = Command.define('ResetDeck', {
       Effect.map(() => MessageConstructors.ResetDeckDone({ deckId })),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed('Could not reset the deck. Check the connection and try again.'),
+          deckManageFailed(deckId, 'Could not reset the deck. Check the connection and try again.'),
         ),
       ),
       Effect.provide(NookRpc.layer),
@@ -407,7 +443,7 @@ export const RemoveDeck = Command.define('RemoveDeck', {
       Effect.map(() => MessageConstructors.RemovedDeck()),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed('Could not remove the deck. Check the connection and try again.'),
+          deckManageFailed(deckId, 'Could not remove the deck. Check the connection and try again.'),
         ),
       ),
       Effect.provide(NookRpc.layer),
