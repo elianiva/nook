@@ -1,17 +1,25 @@
 # nook
 
-A spaced repetition system for one Learner. nook imports Anki decks, schedules
-Cards with FSRS, and runs a fast review on any device. Your collection lives in
-the cloud, and the app behaves as if it does not need the network.
+nook is a fast, simple spaced repetition system (SRS) that runs as an
+installable progressive web app (PWA). Import an Anki deck, then review your
+Cards with FSRS scheduling — online or offline, on desktop or mobile.
 
-nook is personal software. One instance serves one Learner, and Cloudflare
-Access guards it. There is no sign-up, no password, and no account to manage.
+nook is designed for one Learner and self-hosting: your collection lives in
+your own Cloudflare account, with no nook sign-up, password, or account to
+manage.
 
-## Why
+## At a glance
 
-Anki is powerful and slow to use. Renshuu is fast and holds your collection
-behind an account you do not control. nook aims at the gap between them: Anki's
-deck format, FSRS scheduling, and a review that never waits for the network.
+- **Fast reviews:** the next Cards are prefetched, so reviewing does not wait
+  for a network request.
+- **Offline-ready PWA:** install nook on your device and keep reviewing when
+  your connection drops. Grades sync when you reconnect.
+- **Anki-compatible imports:** bring in modern `.apkg` decks, including their
+  note templates, styling, and media.
+- **FSRS scheduling:** new Cards are scheduled with FSRS-6. Imported Anki
+  scheduling history is not carried over; imported Cards start as new.
+- **Personal by design:** one self-hosted instance serves one Learner. There
+  are no nook accounts or sign-up flow.
 
 ## Status
 
@@ -197,6 +205,10 @@ Identity:
 
 ## Anki compatibility
 
+nook is compatible with modern Anki `.apkg` deck imports; it is not an Anki
+client and does not sync with AnkiWeb. Import brings in deck content, not
+scheduling history.
+
 nook reads the modern `.apkg` format that Anki 26.x writes: `collection.anki21`,
 a `media` map, and numbered media files. Note types, fields, templates, and
 decks come from the normalized tables `notetypes`, `fields`, `templates`, and
@@ -208,6 +220,10 @@ Legacy exports are rejected with a message that tells the Learner to turn off
 nook does not read Anki's scheduling state, and does not import deck options.
 Imported Cards start as new, FSRS learns them from your Reviews, and nook
 applies its own global limits.
+
+## License
+
+nook is available under the MIT License. See [LICENSE](./LICENSE).
 
 ## Deploying
 

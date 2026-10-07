@@ -2,12 +2,13 @@
   "name": "nook",
   "version": "0.0.0",
   "private": true,
-  "description": "A self-hosted spaced repetition system. Imports Anki decks, schedules Cards with FSRS, and reviews offline-first.",
+  "description": "A fast, simple, self-hosted spaced repetition PWA. Import Anki decks and review online or offline with FSRS.",
   "keywords": [
     "anki",
     "cloudflare-workers",
     "effect",
     "fsrs",
+    "pwa",
     "spaced-repetition"
   ],
   "license": "MIT",

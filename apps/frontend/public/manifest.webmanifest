@@ -1,7 +1,7 @@
 {
   "name": "nook",
   "short_name": "nook",
-  "description": "A spaced repetition system. Import an Anki deck, then review.",
+  "description": "A fast, simple offline-ready spaced repetition PWA. Import Anki decks and review with FSRS.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
