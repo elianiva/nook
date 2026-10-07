@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Option } from 'effect'
-import { DeckId } from '@nook/api'
+import { CardId, DeckId } from '@nook/api'
 import { Message, seedModel } from '../src/app/model'
 import { init, update } from '../src/app/update'
 import { names, url } from './helpers'
@@ -99,6 +99,15 @@ describe('deck manage', () => {
     ).model
     expect(model.deckManage.error).toEqual(Option.some('offline'))
     expect(model.deckManage.saving).toBe(false)
+  })
+
+  it('offers a restore command for a suspended card', () => {
+    const restored = update(
+      seedModel(url('/decks/deck-a')),
+      Message.ClickedRestoreCard({ cardId: CardId.make('card-a') }),
+    )
+    expect(names(restored)).toEqual(['SetCardSuspended'])
+    expect(Option.isSome(restored.model.cardSuspensionPending)).toBe(true)
   })
 
   it('resets the manage draft when the route changes', () => {

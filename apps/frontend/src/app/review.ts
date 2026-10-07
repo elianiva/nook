@@ -204,7 +204,7 @@ const cardBody = (card: ReviewCard, revealed: boolean, h: HtmlBuilder<Message>):
   )
 
 /** The four Grades, sized for a thumb: one row, full width, 56px tall. */
-const gradeRow = (h: HtmlBuilder<Message>): Html =>
+const gradeRow = (h: HtmlBuilder<Message>, disabled: boolean): Html =>
   h.div(
     [h.Class('flex gap-2')],
     GRADES.map(({ grade, className }) =>
@@ -212,6 +212,7 @@ const gradeRow = (h: HtmlBuilder<Message>): Html =>
         {
           onClick: Message.ClickedGrade({ grade }),
           size: '2xl',
+          isDisabled: disabled,
           className: cn(
             'flex-1 flex-col gap-0 select-none transition-transform active:scale-[0.97]',
             className,
@@ -252,6 +253,8 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   const canUndo = Option.isSome(review.lastGrade)
   const requeued = review.requeue.length
   const tapToReveal = model.settings.behaviour.tapToReveal
+  const suspensionPending = Option.isSome(review.suspensionPending)
+  const suspensionError = Option.getOrNull(review.suspensionError)
 
   const error = Option.match(review.error, {
     onNone: () => null,
@@ -334,11 +337,12 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                   [h.Class('flex-1')],
                   [
                     review.revealed
-                      ? gradeRow(h)
+                      ? gradeRow(h, suspensionPending)
                       : button<Message>(
                           {
                             onClick: Message.RevealedAnswer(),
                             size: 'xl',
+                            isDisabled: suspensionPending,
                             className:
                               'w-full select-none transition-transform active:scale-[0.99]',
                           },
@@ -358,6 +362,24 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                   h,
                 ),
               ],
+            ),
+            ...(suspensionError === null
+              ? []
+              : [
+                  h.p(
+                    [h.Class('text-center text-[11px] text-destructive'), h.Role('alert')],
+                    [suspensionError],
+                  ),
+                ]),
+            button<Message>(
+              {
+                onClick: Message.ClickedSuspendCurrentCard(),
+                size: 'sm',
+                isDisabled: suspensionPending,
+                className: 'self-center',
+              },
+              [suspensionPending ? 'Suspending…' : 'Suspend card'],
+              h,
             ),
             h.p(
               [h.Class('hidden pt-2 text-center text-[11px] text-muted-foreground sm:block')],

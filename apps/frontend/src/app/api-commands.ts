@@ -134,6 +134,31 @@ export const SubmitGrade = Command.define('SubmitGrade', {
     ),
 })
 
+export const SetCardSuspended = Command.define('SetCardSuspended', {
+  args: {
+    cardId: CardId,
+    suspended: S.Boolean,
+    origin: S.Literals(['review', 'deck']),
+  },
+  messages: [MessageConstructors.CardSuspensionSaved, MessageConstructors.CardSuspensionFailed],
+  execute: ({ cardId, suspended, origin }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.cardsSetSuspended({ cardId, suspended })),
+      Effect.map(() => MessageConstructors.CardSuspensionSaved({ cardId, suspended, origin })),
+      Effect.catch(() =>
+        Effect.succeed(
+          MessageConstructors.CardSuspensionFailed({
+            error: suspended
+              ? 'Could not suspend this Card. It has not been changed.'
+              : 'Could not restore this Card. It remains suspended.',
+            origin,
+          }),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
 export const UndoGrade = Command.define('UndoGrade', {
   args: { cardId: CardId },
   messages: [MessageConstructors.UndoneGrade, MessageConstructors.UndoFailed],

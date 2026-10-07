@@ -1,6 +1,7 @@
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
+import * as Sql from 'effect/sql/SqlClient'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { DecksRpc, CardId, DeckId } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
@@ -50,6 +51,49 @@ layer(TestLayers)('deck management over sqlite', (it) => {
           deckId: DeckId.make('deck-nope'),
           rename: { name: 'Ghost', description: '' },
         }),
+      )
+      assert.strictEqual(missing._tag, 'Failure')
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('suspends and restores a Card without changing its schedule or history', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(DecksRpc)
+      const sql = yield* Sql.SqlClient
+      const cardId = CardId.make('card-showcase-01')
+      const before = yield* client.decksGetById({ deckId: showcaseDeck })
+      const beforeCard = before.cards.find((card) => card.id === cardId)
+      assert.isDefined(beforeCard)
+      if (beforeCard === undefined) return
+      const reviewRows = yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${cardId}`
+      const historyCount = (reviewRows as ReadonlyArray<{ n: number }>)[0]?.n
+      assert.isDefined(historyCount)
+
+      const suspended = yield* client.cardsSetSuspended({ cardId, suspended: true })
+      expect(suspended).toEqual({ cardId, suspended: true })
+      const paused = yield* client.decksGetById({ deckId: showcaseDeck })
+      const pausedCard = paused.cards.find((card) => card.id === cardId)
+      expect(pausedCard?.suspended).toBe(true)
+      expect(paused.summary.dueCount).toBe(before.summary.dueCount - 1)
+      expect(paused.summary.totalCount).toBe(before.summary.totalCount)
+      expect(pausedCard).toMatchObject({
+        state: beforeCard.state,
+        dueAt: beforeCard.dueAt,
+        stability: beforeCard.stability,
+        difficulty: beforeCard.difficulty,
+        lapses: beforeCard.lapses,
+      })
+      const afterRows = yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${cardId}`
+      expect((afterRows as ReadonlyArray<{ n: number }>)[0]?.n).toBe(historyCount)
+
+      yield* client.cardsSetSuspended({ cardId, suspended: false })
+      const restored = yield* client.decksGetById({ deckId: showcaseDeck })
+      expect(restored.cards.find((card) => card.id === cardId)?.suspended).toBe(false)
+      expect(restored.summary.dueCount).toBe(before.summary.dueCount)
+
+      const missing = yield* Effect.exit(
+        client.cardsSetSuspended({ cardId: CardId.make('card-nope'), suspended: false }),
       )
       assert.strictEqual(missing._tag, 'Failure')
     }).pipe(Effect.scoped),

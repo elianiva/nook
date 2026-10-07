@@ -58,10 +58,18 @@ export const Card = S.Struct({
   /** Current FSRS difficulty, 1–10. Owned by FSRS; shown, never edited directly. */
   difficulty: S.Number,
   state: CardState,
+  /** Whether this Card is manually or automatically suspended. */
+  suspended: S.Boolean,
+  /** Number of Again grades, used to identify leeches. */
+  lapses: S.Number,
   /** Plain-text prompt preview for the deck page's Card rows. Empty when the Card has no readable text (media-only). */
   preview: S.optional(S.String).pipe(S.withDecodingDefault(Effect.succeed(''))),
 })
 export type Card = typeof Card.Type
+
+/** Confirmation that a Card's suspension state changed. */
+export const CardSuspension = S.Struct({ cardId: CardId, suspended: S.Boolean })
+export type CardSuspension = typeof CardSuspension.Type
 
 /**
  * One Deck's scheduling overrides, as the limits endpoint receives them.
@@ -517,6 +525,12 @@ export class DecksRpc extends RpcGroup.make(
     payload: { deckId: DeckId, limits: DeckLimits, timezone: S.optional(S.String) },
     success: DeckDetail,
     error: S.Union([DeckNotFound, StorageUnavailable]),
+  }),
+  /** Suspend or restore a Card without changing its schedule or review history. */
+  Rpc.make('cardsSetSuspended', {
+    payload: { cardId: CardId, suspended: S.Boolean },
+    success: CardSuspension,
+    error: S.Union([CardNotFound, StorageUnavailable]),
   }),
   /**
    * Change a Deck's name and description. A blank name is rejected before

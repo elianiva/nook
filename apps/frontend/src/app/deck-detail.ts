@@ -62,9 +62,17 @@ const dueLabel = (card: CardData): string => {
 const dueClass = (dueInDays: number): string =>
   dueInDays <= 0 ? 'text-destructive' : 'text-muted-foreground'
 
-const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html => {
+const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Message>): Html => {
   // `preview` is optional on the wire for older caches; the decoder defaults it to `''`.
   const preview = card.preview ?? ''
+  const pending = Option.match(model.cardSuspensionPending, {
+    onNone: () => false,
+    onSome: (cardId) => cardId === card.id,
+  })
+  const actionError = Option.match(model.cardSuspensionError, {
+    onNone: () => null,
+    onSome: ({ cardId, message }) => (cardId === card.id ? message : null),
+  })
   return h.div(
     [
       h.Class(
@@ -79,10 +87,13 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
       h.span(
         [
           h.Class(
-            cn('shrink-0 text-right text-xs font-medium tabular-nums', dueClass(card.dueInDays)),
+            cn(
+              'shrink-0 text-right text-xs font-medium tabular-nums',
+              card.suspended ? 'text-muted-foreground' : dueClass(card.dueInDays),
+            ),
           ),
         ],
-        [dueLabel(card)],
+        [card.suspended ? 'suspended' : dueLabel(card)],
       ),
       h.div(
         [
@@ -92,11 +103,34 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
         ],
         [
           badge<Message>({ variant: stateVariant(card.state) }, [card.state], h),
+          ...(card.suspended ? [badge<Message>({ variant: 'secondary' }, ['paused'], h)] : []),
           h.span([], [`stability ${card.stability.toFixed(1)}d`]),
           h.span([], ['·']),
           h.span([], [`difficulty ${card.difficulty.toFixed(1)}/10`]),
+          ...(card.suspended
+            ? [
+                button<Message>(
+                  {
+                    onClick: Message.ClickedRestoreCard({ cardId: card.id }),
+                    size: 'sm',
+                    isDisabled: pending,
+                    className: 'ml-auto h-7 px-2',
+                  },
+                  [pending ? 'Restoring…' : 'Restore'],
+                  h,
+                ),
+              ]
+            : []),
         ],
       ),
+      ...(actionError === null
+        ? []
+        : [
+            h.p(
+              [h.Class('col-span-2 text-[11px] text-destructive'), h.Role('alert')],
+              [actionError],
+            ),
+          ]),
     ],
   )
 }
@@ -217,10 +251,11 @@ const deckBody = (
   detail: DeckDetail,
   manage: DeckManage,
   forDeck: boolean,
+  model: Model,
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Child> => [
   header(detail, h),
-  cardsSection(detail, forDeck ? manage : null, h),
+  cardsSection(detail, forDeck ? manage : null, model, h),
   h.h2([h.Class('text-sm font-semibold')], ['Manage']),
   manageSection(detail, forDeck ? manage : null, h),
 ]
@@ -234,9 +269,11 @@ const deckBody = (
 const cardsSection = (
   detail: DeckDetail,
   manage: DeckManage | null,
+  model: Model,
   h: HtmlBuilder<Message>,
 ): Html => {
   const open = manage?.cardsOpen ?? false
+  const suspendedCount = detail.cards.filter((card) => card.suspended).length
   return h.div(
     [h.Class('flex flex-col gap-2 rounded-[20px] border-0 bg-[var(--theme-block)] p-4')],
     [
@@ -255,7 +292,7 @@ const cardsSection = (
               h.span(
                 [h.Class('text-xs text-muted-foreground')],
                 [
-                  `${detail.cards.length} ${detail.cards.length === 1 ? 'Card' : 'Cards'}${open ? '' : ' · hidden'}`,
+                  `${detail.cards.length} ${detail.cards.length === 1 ? 'Card' : 'Cards'}${suspendedCount === 0 ? '' : ` · ${suspendedCount} suspended`}${open ? '' : ' · hidden'}`,
                 ],
               ),
             ],
@@ -267,7 +304,7 @@ const cardsSection = (
         ? [
             h.div(
               [h.Class('flex flex-col gap-1.5')],
-              detail.cards.map((card, index) => cardRow(card, index, h)),
+              detail.cards.map((card, index) => cardRow(card, index, model, h)),
             ),
           ]
         : []),
@@ -738,6 +775,7 @@ export const deckDetailView = (
           onNone: () => false,
           onSome: (id) => id === deckId,
         }),
+        model,
         h,
       ),
   })

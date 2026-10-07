@@ -176,6 +176,10 @@ export const ReviewState = S.Struct({
   undone: S.Boolean,
   /** Cards queued to grade while offline, flushed when the network returns. */
   offline: S.Array(ReviewPending),
+  /** Card whose suspend action is awaiting server confirmation. */
+  suspensionPending: S.Option(CardId),
+  /** The last suspend failure, shown without advancing the current Card. */
+  suspensionError: S.Option(S.String),
   /** Why the last grade failed, as one sentence for the Learner. */
   error: S.Option(S.String),
   /** Why the session ended with no Cards: truly empty, or stopped by a limit. */
@@ -208,6 +212,8 @@ export const idleReview: ReviewState = {
   lastGrade: Option.none(),
   undone: false,
   offline: [],
+  suspensionPending: Option.none(),
+  suspensionError: Option.none(),
   error: Option.none(),
   doneKind: 'empty',
   bypassDueLimit: false,
@@ -407,6 +413,9 @@ export const Model = S.Struct({
   importState: ImportState,
   /** The deck page's Manage section: rename draft and destructive confirms. */
   deckManage: DeckManage,
+  /** Card-level suspension mutation shown in the expanded deck list. */
+  cardSuspensionPending: S.Option(CardId),
+  cardSuspensionError: S.Option(S.Struct({ cardId: CardId, message: S.String })),
   /** The picked Mochi theme, mirrored from storage so the swatch ring moves on
    *  pick. Local-only; the DOM attribute and `localStorage` stay authoritative
    *  for paint, and a reload re-reads them. */
@@ -430,6 +439,8 @@ export const seedModel = (url: Url.Url): Model => ({
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
   importState: idleImport,
   deckManage: idleDeckManage,
+  cardSuspensionPending: Option.none(),
+  cardSuspensionError: Option.none(),
   theme: readTheme(),
   hints: initHints(),
   notice: Option.none(),
@@ -478,6 +489,18 @@ export const Message = defineMessageUnion({
   RevealedAnswer: {},
   /** The Learner graded the shown Card. */
   ClickedGrade: { grade: Grade },
+  /** The Learner suspended the current Card without grading it. */
+  ClickedSuspendCurrentCard: {},
+  /** The Learner restored a suspended Card from its deck page. */
+  ClickedRestoreCard: { cardId: CardId },
+  /** Suspension changed on the server; review history and schedule are intact. */
+  CardSuspensionSaved: {
+    cardId: CardId,
+    suspended: S.Boolean,
+    origin: S.Literals(['review', 'deck']),
+  },
+  /** Suspension did not change on the server. */
+  CardSuspensionFailed: { error: S.String, origin: S.Literals(['review', 'deck']) },
   /** A grade key was pressed. Ignored unless the answer is showing. */
   PressedGrade: { grade: Grade },
   /** Space or Enter was pressed: reveal, then grade Good. */

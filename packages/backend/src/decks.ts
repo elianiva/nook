@@ -1,7 +1,14 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { previewCard } from '@nook/anki/render'
-import { CardId, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
+import {
+  CardId,
+  CardNotFound,
+  DecksRpc,
+  DeckId,
+  DeckNotFound,
+  StorageUnavailable,
+} from '@nook/api'
 import type { Card, DeckDetail, DeckLimits, DeckRename, DeckSummary } from '@nook/api'
 import { runStatements } from './batch'
 import { dayStartUtc, resolveTimezone, reviewDayKey } from './day-boundary'
@@ -39,6 +46,8 @@ const CardRow = Schema.Struct({
   stability: Schema.Number,
   difficulty: Schema.Number,
   state: Schema.Literals(['new', 'learning', 'review', 'relearning']),
+  suspended: Schema.Number,
+  lapses: Schema.Number,
   templateOrd: Schema.Number,
   noteFields: Schema.NullOr(Schema.String),
   noteTags: Schema.NullOr(Schema.String),
@@ -116,6 +125,8 @@ const toCard = (row: typeof CardRow.Type): Card => ({
   stability: row.stability,
   difficulty: row.difficulty,
   state: row.state,
+  suspended: row.suspended === 1,
+  lapses: row.lapses,
   preview: previewRow(row),
 })
 
@@ -147,6 +158,10 @@ export class Decks extends Context.Service<
       limits: DeckLimits,
       input?: { readonly timezone?: string | undefined },
     ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable>
+    setSuspended(
+      id: CardId,
+      suspended: boolean,
+    ): Effect.Effect<{ cardId: CardId; suspended: boolean }, CardNotFound | StorageUnavailable>
     reset(
       id: DeckId,
       input?: { readonly timezone?: string | undefined },
@@ -222,8 +237,9 @@ export class Decks extends Context.Service<
         return yield* decodeRows(
           DeckRow,
           yield* sql`SELECT id, name, description,
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new' AND suspended = 0) AS "newCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+              AND suspended = 0
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
@@ -263,8 +279,9 @@ export class Decks extends Context.Service<
           const summaries = yield* decodeRows(
             DeckRow,
             yield* sql`SELECT id, name, description,
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new') AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new' AND suspended = 0) AS "newCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+              AND suspended = 0
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
             (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
@@ -288,7 +305,8 @@ export class Decks extends Context.Service<
             CardRow,
             yield* sql`SELECT c.id, c.deck_id AS "deckId", c.due_at AS "dueAt",
             COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
-            c.stability, c.difficulty, c.state, c.template_ord AS "templateOrd",
+            c.stability, c.difficulty, c.state, c.suspended, COALESCE(c.lapses, 0) AS lapses,
+            c.template_ord AS "templateOrd",
             n.fields AS "noteFields", n.tags AS "noteTags",
             nt.name AS "noteTypeName", nt.kind AS "noteTypeKind", nt.css AS "noteTypeCss",
             nt.fields AS "noteTypeFields", nt.templates AS "noteTypeTemplates",
@@ -370,6 +388,23 @@ export class Decks extends Context.Service<
           withStorageErrorPassThrough(self, 'save deck limits'),
         )
 
+      const setSuspended = (
+        id: CardId,
+        suspended: boolean,
+      ): Effect.Effect<
+        { cardId: CardId; suspended: boolean },
+        CardNotFound | StorageUnavailable
+      > =>
+        Effect.gen(function* () {
+          const existing = yield* sql`SELECT id FROM cards WHERE id = ${id}`
+          if (existing.length === 0) return yield* new CardNotFound({ cardId: id })
+          yield* sql`UPDATE cards SET suspended = ${suspended ? 1 : 0},
+            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${id}`
+          return { cardId: id, suspended }
+        }).pipe(Effect.withSpan('Decks.setSuspended'), (self) =>
+          withStorageErrorPassThrough(self, 'change card suspension'),
+        )
+
       /**
        * Clear a Deck's Schedule: every Card returns to `new` with zeroed FSRS
        * state, and the Review log (plus its undo snapshots) for those Cards
@@ -420,7 +455,7 @@ export class Decks extends Context.Service<
           withStorageErrorPassThrough(self, 'remove deck'),
         )
 
-      return Decks.of({ list, getById, rename, setLimits, reset, remove })
+      return Decks.of({ list, getById, rename, setLimits, setSuspended, reset, remove })
     }),
   )
 }
@@ -433,6 +468,7 @@ export const DecksHandlers = DecksRpc.toLayer(
       decksGetById: ({ deckId, timezone }) => decks.getById(deckId, { timezone }),
       decksSetLimits: ({ deckId, limits, timezone }) =>
         decks.setLimits(deckId, limits, { timezone }),
+      cardsSetSuspended: ({ cardId, suspended }) => decks.setSuspended(cardId, suspended),
       decksRename: ({ deckId, rename, timezone }) => decks.rename(deckId, rename, { timezone }),
       decksReset: ({ deckId, timezone }) => decks.reset(deckId, { timezone }),
       decksRemove: ({ deckId }) => decks.remove(deckId),

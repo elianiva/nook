@@ -86,6 +86,28 @@ describe('review session', () => {
     expect(graded.model.review.index).toBe(1)
   })
 
+  it('suspends the current Card without grading it or losing its review history', () => {
+    const model = reviewing([card('c1'), card('c2')])
+    const requested = update(model, Message.ClickedSuspendCurrentCard())
+    expect(names(requested)).toEqual(['SetCardSuspended'])
+    expect(requested.model.review.graded).toBe(0)
+    expect(requested.model.review.suspensionPending).toEqual(Option.some(CardId.make('c1')))
+
+    const saved = update(
+      requested.model,
+      Message.CardSuspensionSaved({
+        cardId: CardId.make('c1'),
+        suspended: true,
+        origin: 'review',
+      }),
+    )
+    expect(saved.model.review.cards.map((entry) => entry.cardId)).toEqual(['c2'])
+    expect(saved.model.review.index).toBe(0)
+    expect(saved.model.review.graded).toBe(0)
+    expect(saved.model.review.phase).toBe('reviewing')
+    expect(Option.isNone(saved.model.review.suspensionPending)).toBe(true)
+  })
+
   it('ends the session after the re-queued Card is graded', () => {
     let model = reviewing([card('c1')])
     model = update(model, Message.ClickedGrade({ grade: 'Again' })).model

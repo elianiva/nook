@@ -32,6 +32,7 @@ import {
   ResetDeck,
   SaveDeckLimits,
   SaveSettings,
+  SetCardSuspended,
   SubmitGrade,
   UndoGrade,
 } from './api-commands'
@@ -259,7 +260,9 @@ const seedCachedQueries = (model: Model, answers: ReadonlyArray<RestoredAnswer>)
 const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message> => {
   const review = model.review
   const card = review.cards[review.index]
-  if (card === undefined || !review.revealed) return { model }
+  if (card === undefined || !review.revealed || Option.isSome(review.suspensionPending)) {
+    return { model }
+  }
   const entry = { id: crypto.randomUUID(), cardId: card.cardId, grade }
   const requeue = grade === 'Again' ? [...review.requeue, card] : review.requeue
   const cards = grade === 'Again' ? [...review.cards, card] : review.cards
@@ -305,6 +308,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         route,
         review: idleReview,
         deckManage: idleDeckManage,
+        cardSuspensionPending: Option.none(),
+        cardSuspensionError: Option.none(),
       })
     },
 
@@ -446,6 +451,91 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     ClickedGrade: ({ grade }) => gradeCurrent(model, grade),
+
+    ClickedSuspendCurrentCard: () => {
+      const card = model.review.cards[model.review.index]
+      if (
+        model.review.phase !== 'reviewing' ||
+        card === undefined ||
+        Option.isSome(model.review.suspensionPending)
+      ) {
+        return { model }
+      }
+      return {
+        model: modifyFields(model, {
+          review: () => ({
+            ...model.review,
+            suspensionPending: Option.some(card.cardId),
+            suspensionError: Option.none(),
+          }),
+        }),
+        commands: [SetCardSuspended({ cardId: card.cardId, suspended: true, origin: 'review' })],
+      }
+    },
+
+    ClickedRestoreCard: ({ cardId }) => ({
+      model: modifyFields(model, {
+        cardSuspensionPending: () => Option.some(cardId),
+        cardSuspensionError: () => Option.none(),
+      }),
+      commands: [SetCardSuspended({ cardId, suspended: false, origin: 'deck' })],
+    }),
+
+    CardSuspensionSaved: ({ cardId, suspended, origin }) => {
+      if (origin === 'review') {
+        const pending = model.review.suspensionPending
+        if (Option.isNone(pending) || pending.value !== cardId || !suspended) return { model }
+        const cards = model.review.cards.filter((card) => card.cardId !== cardId)
+        const requeue = model.review.requeue.filter((card) => card.cardId !== cardId)
+        const index = Math.min(model.review.index, cards.length)
+        return {
+          model: modifyFields(model, {
+            review: () => ({
+              ...model.review,
+              cards,
+              index,
+              requeue,
+              revealed: false,
+              phase: index >= cards.length ? 'done' : 'reviewing',
+              suspensionPending: Option.none(),
+              suspensionError: Option.none(),
+            }),
+          }),
+        }
+      }
+      if (origin === 'deck' && model.route._tag === 'DeckDetail') {
+        const next = modifyFields(model, {
+          cardSuspensionPending: () => Option.none(),
+          cardSuspensionError: () => Option.none(),
+        })
+        return Update.combine<Model, Message>(next, [
+          decks.revalidateOrLoad,
+          (current) => deckDetail.revalidateOrLoad(current, { deckId: model.route.deckId }),
+        ])
+      }
+      return { model }
+    },
+
+    CardSuspensionFailed: ({ error, origin }) =>
+      origin === 'review'
+        ? {
+            model: modifyFields(model, {
+              review: () => ({
+                ...model.review,
+                suspensionPending: Option.none(),
+                suspensionError: Option.some(error),
+              }),
+            }),
+          }
+        : {
+            model: modifyFields(model, {
+              cardSuspensionPending: () => Option.none(),
+              cardSuspensionError: () =>
+                Option.isSome(model.cardSuspensionPending)
+                  ? Option.some({ cardId: model.cardSuspensionPending.value, message: error })
+                  : Option.none(),
+            }),
+          },
 
     PressedGrade: ({ grade }) => gradeCurrent(model, grade),
 
