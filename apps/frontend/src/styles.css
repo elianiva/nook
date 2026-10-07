@@ -255,3 +255,58 @@
 @utility pb-nav {
   padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
 }
+
+/**
+ * Page-slide transition for the tab pages (Home, Decks, Settings).
+ *
+ * `view-transition.ts` wraps cross-tab renders in
+ * `document.startViewTransition({ types: ['slide-forward' | 'slide-backward'] })`.
+ * The shell tags the content column `page-content` and the active-tab pill
+ * `nav-pill`, so only those two snapshots animate — header and bar chrome
+ * stay live. Each side runs 300ms to match the pill's own
+ * `transition-[left] duration-300` slide.
+ */
+@keyframes page-in-from-right {
+  from {
+    translate: 100% 0;
+  }
+}
+@keyframes page-out-to-left {
+  to {
+    translate: -100% 0;
+  }
+}
+@keyframes page-in-from-left {
+  from {
+    translate: -100% 0;
+  }
+}
+@keyframes page-out-to-right {
+  to {
+    translate: 100% 0;
+  }
+}
+
+html:active-view-transition-type(slide-forward) {
+  &::view-transition-old(page-content) {
+    animation-name: page-out-to-left;
+  }
+  &::view-transition-new(page-content) {
+    animation-name: page-in-from-right;
+  }
+}
+
+html:active-view-transition-type(slide-backward) {
+  &::view-transition-old(page-content) {
+    animation-name: page-out-to-right;
+  }
+  &::view-transition-new(page-content) {
+    animation-name: page-in-from-left;
+  }
+}
+
+::view-transition-group(page-content),
+::view-transition-group(nav-pill) {
+  animation-duration: 300ms;
+  animation-timing-function: ease-out;
+}

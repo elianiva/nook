@@ -14,6 +14,7 @@ import { Model } from './app/model'
 import { subscriptions } from './app/subscriptions'
 import { init, update } from './app/update'
 import { view } from './app/view'
+import { viewTransition } from './app/view-transition'
 import { readTheme } from './lib/theme'
 
 // The stored Mochi theme lands before the first render, so a reload never
@@ -27,6 +28,7 @@ const program = Runtime.makeApplication({
   init: (url: Url) => init(url),
   update,
   view,
+  viewTransition,
   subscriptions,
   routing: {
     onUrlRequest: (request: Navigation.UrlRequest): Message => Message.ClickedLink({ request }),

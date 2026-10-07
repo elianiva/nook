@@ -246,6 +246,7 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
               h.Style({
                 left: `calc(6px + ${activeIndex} * (100% - 12px) / 3)`,
                 width: 'calc((100% - 12px) / 3)',
+                viewTransitionName: 'nav-pill',
               }),
               h.AriaHidden(true),
             ],
@@ -347,6 +348,13 @@ export const shell = (
                 : 'gap-4 overflow-y-auto px-3 pt-4 pb-28 [&>*]:shrink-0',
             ),
           ),
+          // The page-slide snapshot: during a tab switch the browser
+          // captures this column as `page-content` and slides it
+          // directionally (see `view-transition.ts` and the
+          // `:active-view-transition-type` rules in `styles.css`).
+          // Header and tab bar carry no name, so they stay live: the bar
+          // keeps its own 300ms pill slide in sync underneath.
+          h.Style({ viewTransitionName: 'page-content' }),
         ],
         focused
           ? Option.isSome(model.notice)
