@@ -143,6 +143,20 @@ export class Imports extends Context.Service<
             yield* sql`INSERT INTO imports (id, filename, status, note_count, card_count, media_count)
               VALUES (${id}, ${filename}, 'running', ${manifest.noteCount}, ${manifest.cardCount},
               ${manifest.mediaCount})`
+          } else if (
+            (manifest.noteCount > 0 || manifest.cardCount > 0) &&
+            existing.notesImported === 0 &&
+            existing.cardsImported === 0
+          ) {
+            // A run that finished without owning a row: the Decks landed but
+            // no Note or Card did, so the cursors describe nothing. Reopen the
+            // run from the beginning instead of resuming past every row, which
+            // would finish `done` with nothing written a second time.
+            yield* sql`UPDATE imports SET filename = ${filename}, status = 'running', error = NULL,
+              notes_cursor = 0, cards_cursor = 0,
+              note_count = ${manifest.noteCount}, card_count = ${manifest.cardCount},
+              media_count = ${manifest.mediaCount},
+              updated_at = datetime('now') WHERE id = ${id}`
           } else if (existing.status !== 'done') {
             // A run that was interrupted keeps its cursors: this is what lets
             // the same Import continue instead of starting over.

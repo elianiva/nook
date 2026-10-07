@@ -253,6 +253,42 @@ layer(TestLayers)('imports over sqlite', (it) => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('reopens a run that finished without writing a row', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc, ImportsRpc))
+      const id = ImportId.make('f'.repeat(64))
+
+      // The Decks land with the manifest, so an empty run still names them.
+      yield* client.importsStart({ id, filename: 'kaishi.apkg', manifest: manifest() })
+      const empty = yield* client.importsComplete({ importId: id })
+      expect(empty.status).toBe('done')
+      expect(empty.notesImported).toBe(0)
+      expect(empty.cardsImported).toBe(0)
+
+      // Starting again reopens the run from the beginning instead of resuming
+      // past every row, which would finish `done` empty a second time.
+      const reopened = yield* client.importsStart({
+        id,
+        filename: 'kaishi.apkg',
+        manifest: manifest(),
+      })
+      expect(reopened.status).toBe('running')
+      expect(reopened.notesCursor).toBe(0)
+      expect(reopened.cardsCursor).toBe(0)
+
+      const written = yield* client.importsWriteBatch({
+        importId: id,
+        batch: {
+          notes: [note(10, '水'), note(11, '火')],
+          cards: [{ id: 20, noteId: 10, deckId: 7, templateOrd: 0, suspended: false, flag: 0 }],
+        },
+      })
+      expect(written.notesImported).toBe(2)
+      expect(written.cardsImported).toBe(1)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('answers 404 for an Import it does not know', () =>
     Effect.gen(function* () {
       yield* migrate
