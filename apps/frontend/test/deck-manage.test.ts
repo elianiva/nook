@@ -145,14 +145,11 @@ describe('deck manage', () => {
     expect(AsyncData.getData(decksQuery.read(renamed.model.decks))).toEqual(
       Option.some([expect.objectContaining({ name: 'New' })]),
     )
-    expect(
-      AsyncData.getData(deckDetailQuery.read(renamed.model.deckDetail, { deckId })),
-    ).toEqual(Option.some(detail('New')))
-
-    const failed = update(
-      renamed.model,
-      Message.DeckManageFailed({ deckId, error: 'offline' }),
+    expect(AsyncData.getData(deckDetailQuery.read(renamed.model.deckDetail, { deckId }))).toEqual(
+      Option.some(detail('New')),
     )
+
+    const failed = update(renamed.model, Message.DeckManageFailed({ deckId, error: 'offline' }))
     expect(AsyncData.getData(decksQuery.read(failed.model.decks))).toEqual(
       Option.some([detail('Old').summary]),
     )
@@ -172,15 +169,15 @@ describe('deck manage', () => {
         lapseMinutes: '',
       }),
     ).model
-    const limits = update(
-      model,
-      Message.TypedDeckReviewsPerDay({ value: '12' }),
-    ).model
+    const limits = update(model, Message.TypedDeckReviewsPerDay({ value: '12' })).model
     const saved = update(limits, Message.ClickedSaveDeckLimits({ deckId }))
     expect(AsyncData.getData(deckDetailQuery.read(saved.model.deckDetail, { deckId }))).toEqual(
       Option.some({
         ...detail('Deck'),
-        summary: { ...detail('Deck').summary, limits: { newPerDay: null, reviewsPerDay: 12, lapseMinutes: null } },
+        summary: {
+          ...detail('Deck').summary,
+          limits: { newPerDay: null, reviewsPerDay: 12, lapseMinutes: null },
+        },
       }),
     )
     const failed = update(saved.model, Message.DeckManageFailed({ deckId, error: 'offline' }))

@@ -202,6 +202,11 @@ describe('Import state', () => {
   })
 
   it('restores a kept archive on every boot', () => {
-    expect(names(init(url('/decks')))).toEqual(['FetchDecks', 'RestoreImportJob', 'RestoreQueries'])
+    expect(names(init(url('/decks')))).toEqual([
+      'FetchDecks',
+      'RestoreImportJob',
+      'RestoreQueries',
+      'RestoreQueuedGrades',
+    ])
   })
 })

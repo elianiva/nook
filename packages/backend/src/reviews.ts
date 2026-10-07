@@ -593,7 +593,8 @@ export class Reviews extends Context.Service<
           const card = yield* readCard(input.cardId)
           if (card === undefined) return yield* new CardNotFound({ cardId: input.cardId })
 
-          const countRows = yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${input.cardId}`
+          const countRows =
+            yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${input.cardId}`
           const total = (yield* decodeRows(CountRow, countRows))[0]?.n ?? 0
           const eventRows = yield* sql`SELECT r.id, r.grade, r.reviewed_at AS "reviewedAt",
             s.state AS "beforeState", s.stability AS "beforeStability",

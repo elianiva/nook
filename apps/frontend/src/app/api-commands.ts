@@ -427,7 +427,10 @@ export const RenameDeck = Command.define('RenameDeck', {
       Effect.map(() => MessageConstructors.RenamedDeck({ deckId })),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed(deckId, 'Could not rename the deck. Check the connection and try again.'),
+          deckManageFailed(
+            deckId,
+            'Could not rename the deck. Check the connection and try again.',
+          ),
         ),
       ),
       Effect.provide(NookRpc.layer),
@@ -478,7 +481,10 @@ export const RemoveDeck = Command.define('RemoveDeck', {
       Effect.map(() => MessageConstructors.RemovedDeck()),
       Effect.catch(() =>
         Effect.succeed(
-          deckManageFailed(deckId, 'Could not remove the deck. Check the connection and try again.'),
+          deckManageFailed(
+            deckId,
+            'Could not remove the deck. Check the connection and try again.',
+          ),
         ),
       ),
       Effect.provide(NookRpc.layer),

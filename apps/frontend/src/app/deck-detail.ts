@@ -97,17 +97,19 @@ const historyEventRow = (event: CardReviewEvent, h: HtmlBuilder<Message>): Html 
             : []),
         ],
       ),
-      h.p([h.Class('text-[11px] text-muted-foreground')], [`Before · ${scheduleText(event.before)}`]),
-      h.p([h.Class('text-[11px] text-[var(--theme-ink)]')], [`After · ${scheduleText(event.after)}`]),
+      h.p(
+        [h.Class('text-[11px] text-muted-foreground')],
+        [`Before · ${scheduleText(event.before)}`],
+      ),
+      h.p(
+        [h.Class('text-[11px] text-[var(--theme-ink)]')],
+        [`After · ${scheduleText(event.after)}`],
+      ),
     ],
   )
 }
 
-const cardHistoryPanel = (
-  cardId: CardId,
-  model: Model,
-  h: HtmlBuilder<Message>,
-): Html => {
+const cardHistoryPanel = (cardId: CardId, model: Model, h: HtmlBuilder<Message>): Html => {
   const error = Option.getOrNull(model.cardHistoryError)
   return h.div(
     [
@@ -152,7 +154,9 @@ const cardHistoryPanel = (
         ? [
             h.p(
               [h.Class('text-[10px] text-muted-foreground')],
-              [`Showing the latest ${model.cardHistory.length} of ${model.cardHistoryTotal} reviews.`],
+              [
+                `Showing the latest ${model.cardHistory.length} of ${model.cardHistoryTotal} reviews.`,
+              ],
             ),
           ]
         : []),
@@ -216,7 +220,7 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
               onClick: Message.ClickedCardHistory({ cardId: card.id }),
               size: 'sm',
               className: 'h-7 px-2',
-              attributes: [h.AriaExpanded(historyOpen ? 'true' : 'false')],
+              attributes: [h.AriaExpanded(historyOpen)],
             },
             [historyOpen ? 'Hide history' : 'History'],
             h,

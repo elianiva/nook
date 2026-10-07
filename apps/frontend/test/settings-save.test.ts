@@ -42,8 +42,10 @@ describe('settings save', () => {
     const saved = update(
       newerDraft,
       Message.SavedSettings({
-        ...DEFAULT_SETTINGS,
-        fsrs: { ...DEFAULT_SETTINGS.fsrs, desiredRetention: 0.91 },
+        settings: {
+          ...DEFAULT_SETTINGS,
+          fsrs: { ...DEFAULT_SETTINGS.fsrs, desiredRetention: 0.91 },
+        },
       }),
     )
 
@@ -82,17 +84,11 @@ describe('settings save', () => {
     expect(names(retry)).toEqual(['FetchFsrsDiagnostics'])
     expect(retry.model.fsrsDiagnosticsLoading).toBe(true)
 
-    const failed = update(
-      retry.model,
-      Message.FsrsDiagnosticsFailed({ error: 'offline' }),
-    )
+    const failed = update(retry.model, Message.FsrsDiagnosticsFailed({ error: 'offline' }))
     expect(failed.model.fsrsDiagnosticsLoading).toBe(false)
     expect(Option.getOrNull(failed.model.fsrsDiagnosticsError)).toBe('offline')
 
-    const loaded = update(
-      failed.model,
-      Message.GotFsrsDiagnostics({ diagnostics: report }),
-    )
+    const loaded = update(failed.model, Message.GotFsrsDiagnostics({ diagnostics: report }))
     expect(Option.getOrNull(loaded.model.fsrsDiagnostics)).toEqual(report)
     expect(Option.isNone(loaded.model.fsrsDiagnosticsError)).toBe(true)
   })

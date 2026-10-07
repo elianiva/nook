@@ -44,9 +44,7 @@ export const saveQueuedGrade = (
   ).pipe(Effect.asVoid)
 
 /** Removes a grade that the server has accepted. */
-export const removeQueuedGrade = (
-  id: string,
-): Effect.Effect<void, ReviewGradeStoreUnavailable> =>
+export const removeQueuedGrade = (id: string): Effect.Effect<void, ReviewGradeStoreUnavailable> =>
   request('readwrite', (store) => store.delete(id)).pipe(Effect.asVoid)
 
 /** Loads the entire outbox; invalid records fail closed rather than vanish. */

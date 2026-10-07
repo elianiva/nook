@@ -145,8 +145,9 @@ layer(TestLayers)('imports over sqlite', (it) => {
       // The imported Deck shows through the screens that already read `cards`.
       const detail = yield* client.decksGetById({ deckId: DeckId.make('7') })
       expect(detail.summary.totalCount).toBe(2)
-      expect(detail.summary.newCount).toBe(2)
+      expect(detail.summary.newCount).toBe(1)
       expect(detail.cards.length).toBe(2)
+      expect(detail.cards.filter((card) => card.suspended)).toHaveLength(1)
 
       // Importing the same archive again lands on the same Import: it is done,
       // and its cursors say there is nothing left to write.

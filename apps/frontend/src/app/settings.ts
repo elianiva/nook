@@ -135,7 +135,12 @@ const fsrsHealthPanel = (model: Model, h: HtmlBuilder<Message>): Html => {
     [
       h.p([h.Class('text-[13px] font-semibold')], ['FSRS health check']),
       ...(model.fsrsDiagnosticsLoading && report === null
-        ? [h.p([h.Class('text-xs text-muted-foreground'), h.Role('status')], ['Loading saved review data…'])]
+        ? [
+            h.p(
+              [h.Class('text-xs text-muted-foreground'), h.Role('status')],
+              ['Loading saved review data…'],
+            ),
+          ]
         : []),
       ...(error === null
         ? []
@@ -161,26 +166,37 @@ const fsrsHealthPanel = (model: Model, h: HtmlBuilder<Message>): Html => {
         : [
             h.p(
               [h.Class('text-xs text-muted-foreground')],
-              [`${report.reviewCount} saved review events · ${report.completeHistoryCount} with complete schedule history · ${report.incompleteHistoryCount} missing schedule snapshots.`],
+              [
+                `${report.reviewCount} saved review events · ${report.completeHistoryCount} with complete schedule history · ${report.incompleteHistoryCount} missing schedule snapshots.`,
+              ],
             ),
             h.div(
               [h.Class('flex flex-wrap gap-2')],
-              ([
-                ['Again', report.ratings.again],
-                ['Hard', report.ratings.hard],
-                ['Good', report.ratings.good],
-                ['Easy', report.ratings.easy],
-              ] as const).map(([grade, count]) =>
+              (
+                [
+                  ['Again', report.ratings.again],
+                  ['Hard', report.ratings.hard],
+                  ['Good', report.ratings.good],
+                  ['Easy', report.ratings.easy],
+                ] as const
+              ).map(([grade, count]) =>
                 h.span(
-                  [h.Class('rounded-full bg-white px-2.5 py-1 text-[11px] text-[var(--theme-ink)]')],
+                  [
+                    h.Class(
+                      'rounded-full bg-white px-2.5 py-1 text-[11px] text-[var(--theme-ink)]',
+                    ),
+                  ],
                   [`${grade} ${count}`],
                 ),
+              ),
             ),
             ...(report.reviewCount < 200
               ? [
                   h.p(
                     [h.Class('text-xs text-amber-800')],
-                    ['Anki notes that optimizer results are weak with fewer than a few hundred reviews. Treat this as an approximate data-volume warning, not an optimizer guarantee.'],
+                    [
+                      'Anki notes that optimizer results are weak with fewer than a few hundred reviews. Treat this as an approximate data-volume warning, not an optimizer guarantee.',
+                    ],
                   ),
                 ]
               : []),
@@ -188,19 +204,25 @@ const fsrsHealthPanel = (model: Model, h: HtmlBuilder<Message>): Html => {
               ? [
                   h.p(
                     [h.Class('text-xs text-amber-800'), h.Role('status')],
-                    ['No Again ratings appear in this 200+ review history. Check rating use: Hard means you recalled the answer; choose Again if you forgot. The counts suggest a possible issue, but cannot prove one.'],
+                    [
+                      'No Again ratings appear in this 200+ review history. Check rating use: Hard means you recalled the answer; choose Again if you forgot. The counts suggest a possible issue, but cannot prove one.',
+                    ],
                   ),
                 ]
               : [
                   h.p(
                     [h.Class('text-xs text-muted-foreground')],
-                    ['Use Again when you cannot recall the answer. Hard means you remembered it, but with difficulty.'],
+                    [
+                      'Use Again when you cannot recall the answer. Hard means you remembered it, but with difficulty.',
+                    ],
                   ),
                 ]),
           ]),
       h.p(
         [h.Class('text-xs text-muted-foreground')],
-        ['Nook does not yet have a validated FSRS optimizer, so saved parameters are kept as-is instead of hand-edited. Saving settings does not reschedule existing cards; new grades use the saved parameters.'],
+        [
+          'Nook does not yet have a validated FSRS optimizer, so saved parameters are kept as-is instead of hand-edited. Saving settings does not reschedule existing cards; new grades use the saved parameters.',
+        ],
       ),
     ],
   )

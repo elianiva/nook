@@ -1,14 +1,7 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { previewCard } from '@nook/anki/render'
-import {
-  CardId,
-  CardNotFound,
-  DecksRpc,
-  DeckId,
-  DeckNotFound,
-  StorageUnavailable,
-} from '@nook/api'
+import { CardId, CardNotFound, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
 import type { Card, DeckDetail, DeckLimits, DeckRename, DeckSummary } from '@nook/api'
 import { runStatements } from './batch'
 import { dayStartUtc, resolveTimezone, reviewDayKey } from './day-boundary'
@@ -394,10 +387,7 @@ export class Decks extends Context.Service<
       const setSuspended = (
         id: CardId,
         suspended: boolean,
-      ): Effect.Effect<
-        { cardId: CardId; suspended: boolean },
-        CardNotFound | StorageUnavailable
-      > =>
+      ): Effect.Effect<{ cardId: CardId; suspended: boolean }, CardNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           const existing = yield* sql`SELECT id FROM cards WHERE id = ${id}`
           if (existing.length === 0) return yield* new CardNotFound({ cardId: id })

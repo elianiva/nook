@@ -58,10 +58,12 @@ layer(TestLayers)('review session behaviour', (it) => {
       yield* client.reviewsUndo({ cardId: target.cardId })
       const undoneRows = yield* sql`SELECT suspended, review_lapses AS "reviewLapses"
         FROM cards WHERE id = ${target.cardId}`
-      expect((undoneRows as ReadonlyArray<{ suspended: number; reviewLapses: number }>)[0]).toEqual({
-        suspended: 0,
-        reviewLapses: 7,
-      })
+      expect((undoneRows as ReadonlyArray<{ suspended: number; reviewLapses: number }>)[0]).toEqual(
+        {
+          suspended: 0,
+          reviewLapses: 7,
+        },
+      )
       const restored = yield* client.reviewsQueue(query)
       expect(restored.cards.some((card) => card.cardId === target.cardId)).toBe(true)
 

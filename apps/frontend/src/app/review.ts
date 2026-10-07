@@ -125,9 +125,7 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
               ],
               h,
             ),
-            ...(Option.isNone(review.error)
-              ? []
-              : [errorBanner(review.error.value, h)]),
+            ...(Option.isNone(review.error) ? [] : [errorBanner(review.error.value, h)]),
             ...(leechCard === null
               ? []
               : [

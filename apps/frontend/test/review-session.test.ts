@@ -109,7 +109,10 @@ describe('review session', () => {
   })
 
   it('removes a newly suspended leech from the in-session Again requeue', () => {
-    const graded = update(reviewing([card('c1'), card('c2')]), Message.ClickedGrade({ grade: 'Again' }))
+    const graded = update(
+      reviewing([card('c1'), card('c2')]),
+      Message.ClickedGrade({ grade: 'Again' }),
+    )
     const entry = graded.model.review.pending[0]
     expect(entry).toBeDefined()
     if (entry === undefined) return
@@ -139,10 +142,7 @@ describe('review session', () => {
     expect(accepted.model.review.leechSuspendedCard).toEqual(Option.some(card('c1')))
     expect(accepted.model.review.leechSuspendedReviewLapses).toBe(8)
 
-    const undone = update(
-      accepted.model,
-      Message.UndoneGrade({ cardId: CardId.make('c1') }),
-    )
+    const undone = update(accepted.model, Message.UndoneGrade({ cardId: CardId.make('c1') }))
     expect(undone.model.review.cards.map((entry) => entry.cardId)).toEqual(['c1', 'c2'])
     expect(undone.model.review.index).toBe(0)
     expect(Option.isNone(undone.model.review.leechSuspendedCard)).toBe(true)
@@ -264,7 +264,11 @@ describe('review session', () => {
         beyondLimit: false,
       }),
     ).model
-    const continued = update(model, Message.ClickedContinuePastDueLimit())
+    const revealed = update(model, Message.RevealedAnswer()).model
+    const exhausted = update(revealed, Message.ClickedGrade({ grade: 'Good' })).model
+    expect(exhausted.review.phase).toBe('done')
+
+    const continued = update(exhausted, Message.ClickedContinuePastDueLimit())
     expect(continued.model.review.bypassDueLimit).toBe(true)
     expect(names(continued)).toEqual(['FetchReviewQueue'])
 
@@ -285,7 +289,7 @@ describe('review session', () => {
     )
     expect(added.model.review.cards.map((entry) => entry.cardId)).toEqual(['c1', 'c2'])
     expect(added.model.review.index).toBe(1)
-    expect(added.model.review.graded).toBe(0)
+    expect(added.model.review.graded).toBe(1)
     expect(added.model.review.bypassDueLimit).toBe(true)
   })
 

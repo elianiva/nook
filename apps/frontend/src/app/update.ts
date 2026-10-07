@@ -734,13 +734,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         }
       }
       if (origin === 'deck' && model.route._tag === 'DeckDetail') {
+        const deckId = model.route.deckId
         const next = modifyFields(model, {
           cardSuspensionPending: () => Option.none(),
           cardSuspensionError: () => Option.none(),
         })
         return Update.combine<Model, Message>(next, [
           decks.revalidateOrLoad,
-          (current) => deckDetail.revalidateOrLoad(current, { deckId: model.route.deckId }),
+          (current) => deckDetail.revalidateOrLoad(current, { deckId }),
         ])
       }
       return { model }
@@ -791,9 +792,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           review.requeue.find((card) => card.cardId === accepted.cardId))
         : undefined
       const removedBefore = accepted.leechSuspended
-        ? review.cards
-            .slice(0, review.index)
-            .filter((card) => card.cardId === accepted.cardId).length
+        ? review.cards.slice(0, review.index).filter((card) => card.cardId === accepted.cardId)
+            .length
         : 0
       const cards = accepted.leechSuspended
         ? review.cards.filter((card) => card.cardId !== accepted.cardId)
@@ -806,8 +806,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             ...review,
             cards,
             index,
-            phase:
-              review.phase === 'reviewing' && index >= cards.length ? 'done' : review.phase,
+            phase: review.phase === 'reviewing' && index >= cards.length ? 'done' : review.phase,
             requeue: accepted.leechSuspended
               ? review.requeue.filter((card) => card.cardId !== accepted.cardId)
               : review.requeue,
