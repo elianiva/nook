@@ -31,7 +31,7 @@ import {
   ReviewAccepted,
   ReviewCard,
 } from '@nook/api'
-import { ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
+import { ImportPreview, ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
 import { readTheme } from '@/lib/theme'
 import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
@@ -273,10 +273,10 @@ export const RestoredAnswer = S.Union([
 ])
 export type RestoredAnswer = typeof RestoredAnswer.Type
 
-/** Where an Import is, for the panel to name. `running` means the worker should be up. */
+/** Where an Import is, for the panel to name. `preview` means the archive is picked but nothing runs yet. `running` means the worker should be up. */
 export const ImportPhase = S.Literals([
   'idle',
-  'preparing',
+  'preview',
   'running',
   'reading',
   'writing',
@@ -299,14 +299,19 @@ export const ImportState = S.Struct({
    * keys on, so the worker is not torn down when only the phase moves.
    */
   active: S.Boolean,
-  /** Where the run is: preparing the file, reading it, writing rows, or an end. */
+  /** Where the run is: picked, reading, writing rows, or an end. */
   phase: ImportPhase,
   /**
-   * Where the read of the archive has reached, while the phase is `reading`.
-   * The worker reports each open step as it happens, so the panel names what
-   * the run is doing. `None` before the first step arrives and after reading.
+   * Where the read of the archive has reached, while the phase is `reading`
+   * or `preview`. The worker reports each open step as it happens, so the
+   * panel names what the run is doing. `None` before the first step arrives
+   * and after reading.
    */
   readStage: S.Option(ImportReadStage),
+  /** What the archive holds, read before anything is written. `None` until the preview arrives. */
+  preview: S.Option(ImportPreview),
+  /** Whether the run writes the archive's Media. The Learner toggles this on the detail panel. */
+  includeMedia: S.Boolean,
   /** The last counts the worker reported, for the progress bar. */
   status: S.Option(ImportProgress),
   /** Why the last run failed, as one sentence for the Learner. */
@@ -320,6 +325,8 @@ export const idleImport: ImportState = {
   active: false,
   phase: 'idle',
   readStage: Option.none(),
+  preview: Option.none(),
+  includeMedia: true,
   status: Option.none(),
   error: Option.none(),
 }
@@ -440,9 +447,15 @@ export const Message = defineMessageUnion({
   ClickedRetryGrades: {},
   /** The Learner pressed the Import button. */
   ClickedImport: {},
-  /** The Learner picked an archive, and it hashes to this Import id. */
+  /** The Learner picked an archive, and it hashes to this Import id. Nothing runs yet: the detail panel previews it first. */
   GotImportFile: { id: ImportId, filename: S.String },
-  /** The Learner dismissed the file picker. */
+  /** The archive's contents, read for the detail panel before anything is written. */
+  GotImportPreview: { preview: ImportPreview },
+  /** The Learner toggled Media on the detail panel. */
+  ToggledImportMedia: { isChecked: S.Boolean },
+  /** The Learner pressed Start on the detail panel. */
+  ClickedStartImport: {},
+  /** The Learner dismissed the file picker. Nothing was picked, so the panel closes. */
   CancelledImportSelect: {},
   /** Boot found a stored Import to resume, or none. */
   RestoredImportJob: { job: S.Option(ImportJobMeta) },

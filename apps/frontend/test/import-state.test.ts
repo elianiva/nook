@@ -46,29 +46,90 @@ const names = (result: {
   readonly commands?: ReadonlyArray<{ readonly name: string }>
 }): string[] => (result.commands ?? []).map((command) => command.name)
 
-/** A Model whose Import has started, which is the state most cases move from. */
-const running = (): Model =>
+/** A Model whose Import file is picked: the detail panel shows, nothing runs yet. */
+const picked = (): Model =>
   update(decksModel(), Message.GotImportFile({ id: ID, filename: 'japanese.apkg' })).model
 
+const preview = {
+  schemaVersion: 18,
+  noteCount: 2,
+  cardCount: 2,
+  mediaCount: 1,
+  mediaBytes: 2048,
+  decks: [{ id: 7, name: 'Japanese::Core' }],
+  noteTypes: [{ id: 100, name: 'Basic', kind: 'normal' as const, templateCount: 1 }],
+}
+
+/** A Model whose detail panel has its preview: Start is available. */
+const previewed = (): Model => update(picked(), Message.GotImportPreview({ preview })).model
+
+/** A Model whose Import has started, which is the state most cases move from. */
+const running = (): Model => update(previewed(), Message.ClickedStartImport()).model
+
 describe('Import state', () => {
-  it('starts the worker when a file is picked', () => {
+  it('opens the detail panel on pick, with no run yet', () => {
     const { model } = update(decksModel(), Message.GotImportFile({ id: ID, filename: 'x.apkg' }))
     expect(some(model.importState.id)).toBe(ID)
     expect(model.importState.filename).toBe('x.apkg')
+    expect(model.importState.phase).toBe('preview')
     expect(model.importState.active).toBe(true)
-    expect(model.importState.phase).toBe('running')
+    expect(Option.isNone(model.importState.preview)).toBe(true)
+    expect(model.importState.includeMedia).toBe(true)
   })
 
-  it('shows preparing, with no worker, while the picker is open', () => {
+  it('lands the preview without starting the run', () => {
+    const { model } = update(picked(), Message.GotImportPreview({ preview }))
+    expect(model.importState.phase).toBe('preview')
+    expect(model.importState.active).toBe(false)
+    expect(some(model.importState.preview).noteCount).toBe(2)
+    expect(Option.isNone(model.importState.error)).toBe(true)
+  })
+
+  it('toggles the media choice on the detail panel', () => {
+    const off = update(previewed(), Message.ToggledImportMedia({ isChecked: false })).model
+    expect(off.importState.includeMedia).toBe(false)
+    expect(off.importState.phase).toBe('preview')
+    const on = update(off, Message.ToggledImportMedia({ isChecked: true })).model
+    expect(on.importState.includeMedia).toBe(true)
+  })
+
+  it('starts the run from the detail panel', () => {
+    const { model } = update(previewed(), Message.ClickedStartImport())
+    expect(model.importState.phase).toBe('running')
+    expect(model.importState.active).toBe(true)
+    expect(some(model.importState.id)).toBe(ID)
+  })
+
+  it('ignores Start outside the detail panel', () => {
+    const { model } = update(decksModel(), Message.ClickedStartImport())
+    expect(model.importState).toEqual(idleImport)
+  })
+
+  it('keeps the detail panel when the preview read fails', () => {
+    const { model } = update(picked(), Message.FailedImport({ error: 'That file is damaged.' }))
+    expect(model.importState.phase).toBe('preview')
+    expect(model.importState.active).toBe(false)
+    expect(some(model.importState.error)).toBe('That file is damaged.')
+    expect(Option.isSome(model.importState.id)).toBe(true)
+  })
+
+  it('retries a failed preview read without another file pick', () => {
+    const failed = update(picked(), Message.FailedImport({ error: 'boom' })).model
+    const { model } = update(failed, Message.ClickedRetryImport())
+    expect(model.importState.phase).toBe('preview')
+    expect(model.importState.active).toBe(true)
+    expect(Option.isNone(model.importState.error)).toBe(true)
+    expect(some(model.importState.id)).toBe(ID)
+  })
+
+  it('pressing Import runs the picker with no panel behind it', () => {
     const result = update(decksModel(), Message.ClickedImport())
-    expect(result.model.importState.phase).toBe('preparing')
-    expect(result.model.importState.active).toBe(false)
+    expect(result.model.importState).toEqual(idleImport)
     expect(names(result)).toEqual(['PrepareImport'])
   })
 
-  it('resets when the picker is cancelled', () => {
-    const preparing = update(decksModel(), Message.ClickedImport()).model
-    const { model } = update(preparing, Message.CancelledImportSelect())
+  it('cancelling the picker leaves no panel', () => {
+    const { model } = update(decksModel(), Message.CancelledImportSelect())
     expect(model.importState).toEqual(idleImport)
   })
 
@@ -114,6 +175,7 @@ describe('Import state', () => {
 
   it('retries a failed run without another file pick', () => {
     const failed = update(running(), Message.FailedImport({ error: 'boom' })).model
+    expect(failed.importState.phase).toBe('failed')
     const { model } = update(failed, Message.ClickedRetryImport())
     expect(model.importState.active).toBe(true)
     expect(model.importState.phase).toBe('running')
@@ -134,7 +196,7 @@ describe('Import state', () => {
     expect(names(result)).toEqual(['ClearImportJob'])
   })
 
-  it('resumes a kept archive on boot', () => {
+  it('resumes a kept archive on boot, past the detail panel', () => {
     const { model } = update(
       decksModel(),
       Message.RestoredImportJob({ job: Option.some({ id: ID, filename: 'x.apkg' }) }),
@@ -142,6 +204,7 @@ describe('Import state', () => {
     expect(model.importState.active).toBe(true)
     expect(model.importState.phase).toBe('running')
     expect(some(model.importState.id)).toBe(ID)
+    expect(Option.isNone(model.importState.preview)).toBe(true)
   })
 
   it('does nothing when boot finds no kept archive', () => {

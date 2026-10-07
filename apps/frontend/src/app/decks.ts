@@ -14,13 +14,14 @@ import { Empty } from '@/components/ui/empty'
 import { input } from '@/components/ui/input'
 import { button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { switch_ } from '@/components/ui/switch'
 import { icon } from '@/lib/icons'
 import type { DeckSummary } from '@nook/api'
-import type { ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
+import type { ImportPreview, ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
 import { deckRow } from './home'
 import { errorPanel, loadingRows } from './load-state'
 import { Message } from './model'
-import type { Model } from './model'
+import type { ImportState, Model } from './model'
 import { decksQuery } from './queries'
 
 type Child = Html | string
@@ -68,6 +69,167 @@ const readStageText = (stage: ImportReadStage | undefined, filename: string): st
   }
 }
 
+/** Bytes as the panel shows them: `1.2 MB`, or `340 KB`, or the raw byte count. */
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB'] as const
+  let value = bytes / 1024
+  let unit: (typeof units)[number] = 'KB'
+  for (const next of units) {
+    unit = next
+    if (value < 1024 || next === 'GB') break
+    value /= 1024
+  }
+  return `${value >= 100 ? Math.round(value).toString() : value.toFixed(1)} ${unit}`
+}
+
+/**
+ * The Import detail panel, before anything is written.
+ *
+ * The preview worker reads what the archive holds while this shows: its
+ * Decks, its Note Types, and its counts. The Learner includes or excludes
+ * Media here — Media is the slow part — and presses Start to write. A failed
+ * read keeps this panel with a Retry, so the Learner is never sent back to
+ * the picker for a damaged archive they can simply re-pick.
+ */
+const importPreviewPanel = (state: ImportState, h: HtmlBuilder<Message>): Child => {
+  const failed = Option.match(state.error, {
+    onNone: () => null,
+    onSome: (error) => error,
+  })
+  const waiting = Option.isNone(state.preview) && failed === null
+
+  const stage = Option.match(state.readStage, {
+    onNone: () => undefined,
+    onSome: (value) => value,
+  })
+
+  const preview = Option.match(state.preview, {
+    onNone: () => null,
+    onSome: (value) => value,
+  })
+
+  const noteTypes = (value: ImportPreview): string =>
+    value.noteTypes.length === 0
+      ? 'No note types'
+      : value.noteTypes.map((noteType) => `${noteType.name} (${noteType.templateCount})`).join(', ')
+
+  return h.div(
+    [h.Class('flex flex-col gap-2 rounded-[14px] border-0 bg-[var(--theme-block)] p-3')],
+    [
+      h.div(
+        [h.Class('flex items-center gap-2')],
+        [
+          waiting
+            ? h.span(
+                [h.Class('size-4 shrink-0 animate-pulse rounded-[6px] bg-[var(--theme-bar-idle)]')],
+                [],
+              )
+            : icon(
+                h,
+                failed === null ? Upload : CircleAlert,
+                'size-4 shrink-0 text-muted-foreground',
+              ),
+          h.span(
+            [h.Class('min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground')],
+            [state.filename],
+          ),
+        ],
+      ),
+      ...(waiting
+        ? [
+            h.span(
+              [h.Class('text-xs text-muted-foreground')],
+              [readStageText(stage, state.filename)],
+            ),
+          ]
+        : failed !== null
+          ? [
+              h.p([h.Class('text-xs text-destructive')], [failed]),
+              h.div(
+                [h.Class('flex gap-1 pt-1')],
+                [
+                  button<Message>(
+                    { onClick: Message.ClickedRetryImport(), size: 'sm' },
+                    ['Retry'],
+                    h,
+                  ),
+                  button<Message>(
+                    { onClick: Message.ClickedImport(), size: 'sm' },
+                    ['Pick another file'],
+                    h,
+                  ),
+                  button<Message>(
+                    { onClick: Message.ClickedDismissImport(), size: 'sm' },
+                    ['Dismiss'],
+                    h,
+                  ),
+                ],
+              ),
+            ]
+          : preview === null
+            ? []
+            : [
+                h.span(
+                  [h.Class('text-xs font-medium')],
+                  [
+                    `${formatCount(preview.noteCount)} notes · ${formatCount(preview.cardCount)} cards · ` +
+                      `${formatCount(preview.mediaCount)} media${preview.mediaCount === 0 ? '' : ` (${formatBytes(preview.mediaBytes)})`}`,
+                  ],
+                ),
+                h.span(
+                  [h.Class('text-[11px] text-muted-foreground')],
+                  [
+                    preview.decks.length === 0
+                      ? 'No decks'
+                      : preview.decks.map((deck) => deck.name).join(', '),
+                  ],
+                ),
+                h.span([h.Class('text-[11px] text-muted-foreground')], [noteTypes(preview)]),
+                preview.mediaCount === 0
+                  ? h.empty
+                  : h.div(
+                      [h.Class('py-1')],
+                      [
+                        switch_<Message>(
+                          {
+                            id: 'import-include-media',
+                            label: `Include media (${formatCount(preview.mediaCount)} files, ${formatBytes(preview.mediaBytes)})`,
+                            description: state.includeMedia
+                              ? 'Media uploads with the import. Slow on large decks.'
+                              : 'Cards import without their images and audio.',
+                            isChecked: state.includeMedia,
+                            onToggle: (isChecked) => Message.ToggledImportMedia({ isChecked }),
+                            className: 'shrink-0 border-0 data-checked:bg-[var(--theme-tint)]',
+                            labelClass: 'flex-1 text-[13px] font-semibold',
+                            descriptionClass: 'text-[11px]',
+                            wrapperClass: 'w-full flex-row-reverse justify-between gap-3',
+                          },
+                          h,
+                        ),
+                      ],
+                    ),
+                h.div(
+                  [h.Class('flex gap-1 pt-1')],
+                  [
+                    button<Message>(
+                      { onClick: Message.ClickedStartImport(), size: 'sm' },
+                      ['Start import'],
+                      h,
+                    ),
+                    button<Message>(
+                      { onClick: Message.ClickedCancelImport(), size: 'sm' },
+                      ['Cancel'],
+                      h,
+                    ),
+                  ],
+                ),
+              ]),
+    ],
+  )
+}
+
 /**
  * The Import the Decks page is watching, or the last one it watched.
  *
@@ -79,6 +241,9 @@ const readStageText = (stage: ImportReadStage | undefined, filename: string): st
 const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   const state = model.importState
   if (state.phase === 'idle') return h.empty
+  // The detail panel owns the pick: counts, Decks, Note Types, and the Media
+  // choice. Nothing has run yet.
+  if (state.phase === 'preview') return importPreviewPanel(state, h)
 
   const stage = Option.match(state.readStage, {
     onNone: () => undefined,
@@ -87,8 +252,6 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
 
   const header = (() => {
     switch (state.phase) {
-      case 'preparing':
-        return { tone: 'text-muted-foreground', text: 'Choose an archive to import…' }
       case 'running':
       case 'reading':
         return { tone: 'text-muted-foreground', text: readStageText(stage, state.filename) }

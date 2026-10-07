@@ -36,9 +36,10 @@ export const PrepareImport = Command.define('PrepareImport', {
     const digest = yield* Effect.promise(() => crypto.subtle.digest('SHA-256', read.success))
     const id = ImportId.make(toHex(new Uint8Array(digest)))
 
-    // Keep the archive before the run starts, so a reload can resume it. The
-    // browser may refuse or later evict the record; both are recoverable by
-    // picking the file again, so the Import still runs either way.
+    // Keep the archive before the detail panel opens, so a reload can resume
+    // the pick. The browser may refuse or later evict the record; both are
+    // recoverable by picking the file again, so the Import still runs either
+    // way.
     const kept = yield* saveImportJob({
       id,
       filename,

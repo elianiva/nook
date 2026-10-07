@@ -528,15 +528,18 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     // The tab became visible, or the entry above fired: refresh what is shown.
     RevalidateVisible: () => revalidateVisible(model),
 
-    // Clear the last Import and show "preparing" while the picker is open and
-    // the archive is hashed. `active` stays false, so no worker starts yet.
+    // The picker runs with no panel behind it: nothing shows until a file is
+    // picked. `active` stays false, so no worker starts yet.
     ClickedImport: () => ({
-      model: { ...model, importState: { ...idleImport, phase: 'preparing' } },
+      model,
       commands: [PrepareImport()],
     }),
 
-    CancelledImportSelect: () => ({ model: { ...model, importState: idleImport } }),
+    CancelledImportSelect: () => ({ model }),
 
+    // The pick opens the detail panel; the preview worker reads what the
+    // archive holds while it shows. Nothing writes until the Learner presses
+    // Start. A failed preview lands the same way, on the panel.
     GotImportFile: ({ id, filename }) => ({
       model: {
         ...model,
@@ -544,16 +547,63 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           id: Option.some(id),
           filename,
           active: true,
-          phase: 'running',
+          phase: 'preview',
           readStage: Option.none(),
+          preview: Option.none(),
+          includeMedia: true,
           status: Option.none(),
           error: Option.none(),
         },
       },
     }),
 
+    GotImportPreview: ({ preview }) => ({
+      model: {
+        ...model,
+        importState: {
+          ...model.importState,
+          // The preview worker answered, so it can tear down: `active` off
+          // ends the subscription stream. Start turns it back on for the run.
+          active: false,
+          phase: 'preview',
+          readStage: Option.none(),
+          preview: Option.some(preview),
+          error: Option.none(),
+        },
+      },
+    }),
+
+    ToggledImportMedia: ({ isChecked }) => ({
+      model: {
+        ...model,
+        importState: { ...model.importState, includeMedia: isChecked },
+      },
+    }),
+
+    // Start hands the run to the worker with the Learner's Media choice. The
+    // subscription starts it because the phase moved, not because of a
+    // Command here.
+    ClickedStartImport: () =>
+      model.importState.phase === 'preview' && Option.isSome(model.importState.id)
+        ? {
+            model: {
+              ...model,
+              importState: {
+                ...model.importState,
+                active: true,
+                phase: 'running',
+                readStage: Option.none(),
+                status: Option.none(),
+                error: Option.none(),
+              },
+            },
+          }
+        : { model },
+
     // A kept archive means an Import was interrupted. Resume it: the worker
-    // calls `start` again and D1 returns the cursors it stopped at.
+    // calls `start` again and D1 returns the cursors it stopped at. Resume
+    // past the detail panel: the pick already happened, and the preview would
+    // only re-read what the run is about to write.
     RestoredImportJob: ({ job }) =>
       Option.match(job, {
         onNone: () => ({ model }),
@@ -566,6 +616,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
               active: true,
               phase: 'running',
               readStage: Option.none(),
+              preview: Option.none(),
+              includeMedia: true,
               status: Option.none(),
               error: Option.none(),
             },
@@ -616,6 +668,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           active: false,
           phase: 'done',
           readStage: Option.none(),
+          preview: model.importState.preview,
+          includeMedia: model.importState.includeMedia,
           status: Option.some(progress),
           error: Option.none(),
         },
@@ -628,33 +682,65 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       ])
     },
 
-    // The archive is kept, so Retry can resume without another file pick.
-    FailedImport: ({ error }) => ({
-      model: {
-        ...model,
-        importState: {
-          ...model.importState,
-          active: false,
-          phase: 'failed',
-          error: Option.some(error),
-        },
-      },
-    }),
+    // The archive is kept, so Retry can resume without another file pick. A
+    // failed preview keeps the detail panel, so the Learner can retry the
+    // read or pick another file; a failed run keeps its cursors for Retry.
+    FailedImport: ({ error }) =>
+      model.importState.phase === 'preview'
+        ? {
+            model: {
+              ...model,
+              importState: {
+                ...model.importState,
+                active: false,
+                preview: Option.none(),
+                status: Option.none(),
+                error: Option.some(error),
+              },
+            },
+          }
+        : {
+            model: {
+              ...model,
+              importState: {
+                ...model.importState,
+                active: false,
+                phase: 'failed',
+                error: Option.some(error),
+              },
+            },
+          },
 
     ClickedRetryImport: () =>
       Option.match(model.importState.id, {
         onNone: () => ({ model }),
-        onSome: () => ({
-          model: {
-            ...model,
-            importState: {
-              ...model.importState,
-              active: true,
-              phase: 'running',
-              error: Option.none(),
-            },
-          },
-        }),
+        // A failed preview retries the read: back to waiting for the preview
+        // worker, which the subscription starts. A failed run retries the run.
+        onSome: () =>
+          model.importState.phase === 'preview'
+            ? {
+                model: {
+                  ...model,
+                  importState: {
+                    ...model.importState,
+                    active: true,
+                    preview: Option.none(),
+                    readStage: Option.none(),
+                    error: Option.none(),
+                  },
+                },
+              }
+            : {
+                model: {
+                  ...model,
+                  importState: {
+                    ...model.importState,
+                    active: true,
+                    phase: 'running',
+                    error: Option.none(),
+                  },
+                },
+              },
       }),
 
     // Stopping a run tears the worker down and forgets the archive, which is

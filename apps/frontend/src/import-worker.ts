@@ -26,6 +26,7 @@ import type {
   ImportStart as ImportStartPayload,
 } from '@nook/api'
 import type {
+  ImportPreview,
   ImportProgress,
   ImportReadStage,
   ImportWorkerCommand,
@@ -64,6 +65,22 @@ const toManifest = (manifest: AnkiManifest): ImportManifest => ({
   noteCount: manifest.noteCount,
   cardCount: manifest.cardCount,
   mediaCount: manifest.mediaCount,
+})
+
+/** What the detail panel shows, read without reading a Note or a Card. */
+const toPreview = (manifest: AnkiManifest): ImportPreview => ({
+  schemaVersion: manifest.schemaVersion,
+  noteCount: manifest.noteCount,
+  cardCount: manifest.cardCount,
+  mediaCount: manifest.mediaCount,
+  mediaBytes: manifest.mediaBytes,
+  decks: manifest.decks.map((deck) => ({ id: deck.id, name: deckName(deck) })),
+  noteTypes: manifest.noteTypes.map((noteType) => ({
+    id: noteType.id,
+    name: noteType.name,
+    kind: noteType.kind,
+    templateCount: noteType.templates.length,
+  })),
 })
 
 /** The counts the panel shows, as plain data a `postMessage` can carry. */
@@ -112,8 +129,24 @@ const toSentence = (error: unknown): string => {
 /** Forwards the reader's open steps to the app as they happen. */
 const reportStage = (stage: ImportReadStage): void => post({ type: 'readStage', stage })
 
+/** Reads the archive and answers what it holds, writing nothing. */
+const runPreview = (
+  command: Extract<ImportWorkerCommand, { type: 'preview' }>,
+): Effect.Effect<void> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const archive = yield* AnkiArchive
+      const opened = yield* archive.open(command.blob, reportStage)
+      const manifest = yield* opened.manifest
+      post({ type: 'preview', preview: toPreview(manifest) })
+    }),
+  ).pipe(
+    Effect.provide(ankiLayer(AnkiSqliteMemory.source)),
+    Effect.catch((error) => Effect.sync(() => post({ type: 'failed', error: toSentence(error) }))),
+  )
+
 /** Reads the archive and writes it, reporting every step to the app. */
-const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
+const runImport = (command: Extract<ImportWorkerCommand, { type: 'run' }>): Effect.Effect<void> =>
   Effect.scoped(
     Effect.gen(function* () {
       post({ type: 'phase', phase: 'reading' })
@@ -122,11 +155,17 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
       const client = yield* HttpClient.HttpClient
 
       const opened = yield* archive.open(command.blob, reportStage)
-      const manifest = yield* opened.manifest
+      const read = yield* opened.manifest
+      const manifest = toManifest(read)
+      // An excluded Media choice rewrites the denominator, so progress still
+      // reaches 100: the archive carries files the run never writes.
+      const manifestForRun: ImportManifest = command.includeMedia
+        ? manifest
+        : { ...manifest, mediaCount: 0 }
       const startPayload: ImportStartPayload = {
         id: command.id,
         filename: command.filename,
-        manifest: toManifest(manifest),
+        manifest: manifestForRun,
       }
       const started = yield* rpc.importsStart(startPayload)
 
@@ -172,23 +211,26 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
 
       // Media last, one file per request: a Card renders without its audio, but
       // a half-written Note cannot. A re-run overwrites, so a retry is safe.
-      yield* opened.media.pipe(
-        Stream.grouped(MEDIA_PER_REQUEST),
-        Stream.runForEach((group) => {
-          const files = Array.from(group)
-          return Effect.forEach(files, (file) => putMedia(client, file), {
-            concurrency: 1,
-            discard: true,
-          }).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                mediaImported += files.length
-                report()
-              }),
-            ),
-          )
-        }),
-      )
+      // Excluded Media never uploads: Cards render without their files.
+      if (command.includeMedia) {
+        yield* opened.media.pipe(
+          Stream.grouped(MEDIA_PER_REQUEST),
+          Stream.runForEach((group) => {
+            const files = Array.from(group)
+            return Effect.forEach(files, (file) => putMedia(client, file), {
+              concurrency: 1,
+              discard: true,
+            }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  mediaImported += files.length
+                  report()
+                }),
+              ),
+            )
+          }),
+        )
+      }
 
       const status = yield* rpc.importsComplete({ importId: command.id })
       post({ type: 'done', progress: toProgress(status, mediaImported) })
@@ -216,9 +258,14 @@ const runImport = (command: ImportWorkerCommand): Effect.Effect<void> =>
     ),
   )
 
-scope.onmessage = (event) => {
-  if (event.data.type !== 'run') return
-  Effect.runPromise(runImport(event.data)).catch(() =>
+scope.onmessage = (event: MessageEvent<ImportWorkerCommand>) => {
+  const command = event.data
+  if (command.type !== 'preview' && command.type !== 'run') return
+  const run =
+    command.type === 'preview'
+      ? runPreview(command)
+      : runImport({ ...command, includeMedia: command.includeMedia ?? true })
+  Effect.runPromise(run).catch(() =>
     post({ type: 'failed', error: 'The import stopped unexpectedly. Try again.' }),
   )
 }

@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { Option, Schema } from 'effect'
 import { ImportId } from '@nook/api'
 import { decodeImportJob } from '../src/lib/import-jobs'
-import { ImportProgress } from '../src/lib/import-worker-protocol'
+import { ImportPreview, ImportProgress } from '../src/lib/import-worker-protocol'
 import { Message } from '../src/app/model'
 import { toMessages } from '../src/app/subscriptions'
 
@@ -67,6 +67,21 @@ describe('worker events as Messages', () => {
     ])
   })
 
+  it('maps a preview event', () => {
+    const preview = {
+      schemaVersion: 18,
+      noteCount: 4,
+      cardCount: 4,
+      mediaCount: 2,
+      mediaBytes: 2048,
+      decks: [{ id: 7, name: 'Japanese::Core' }],
+      noteTypes: [{ id: 100, name: 'Basic', kind: 'normal' as const, templateCount: 1 }],
+    }
+    expect(toMessages({ type: 'preview', preview })).toEqual([
+      Message.GotImportPreview({ preview }),
+    ])
+  })
+
   it('maps a progress event', () => {
     const progress = {
       notesImported: 2,
@@ -97,6 +112,22 @@ describe('worker events as Messages', () => {
     expect(toMessages({ type: 'failed', error: 'boom' })).toEqual([
       Message.FailedImport({ error: 'boom' }),
     ])
+  })
+})
+
+describe('ImportPreview', () => {
+  it('decodes the plain object a postMessage delivers', () => {
+    // An Effect Option would arrive empty, which is why the preview is plain data.
+    const plain = {
+      schemaVersion: 18,
+      noteCount: 4,
+      cardCount: 4,
+      mediaCount: 2,
+      mediaBytes: 2048,
+      decks: [{ id: 7, name: 'Japanese::Core' }],
+      noteTypes: [{ id: 100, name: 'Basic', kind: 'normal', templateCount: 1 }],
+    }
+    expect(Schema.decodeUnknownSync(ImportPreview)(plain)).toEqual(plain)
   })
 })
 

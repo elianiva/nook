@@ -17,7 +17,7 @@ import { Effect, Option, Queue, Schema, Stream } from 'effect'
 import { Subscription } from 'foldkit'
 import { ImportId } from '@nook/api'
 import { loadImportJob } from '@/lib/import-jobs'
-import type { ImportWorkerEvent } from '@/lib/import-worker-protocol'
+import type { ImportWorkerCommand, ImportWorkerEvent } from '@/lib/import-worker-protocol'
 import { Message } from './model'
 import type { Model } from './model'
 
@@ -28,6 +28,11 @@ export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => 
       return [Message.ImportWorkerPhase({ phase: event.phase })]
     case 'readStage':
       return [Message.ReportedImportReadStage({ stage: event.stage })]
+    case 'preview':
+      // No phase move: the open steps already arrive as `readStage`, and a
+      // `reading` phase here would start the run worker before the preview
+      // lands. The detail panel stays on `preview` throughout the read.
+      return [Message.GotImportPreview({ preview: event.preview })]
     case 'progress':
       return [Message.ReportedImport({ progress: event.progress })]
     case 'done':
@@ -44,13 +49,21 @@ export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => 
  * the stream ends without starting a worker. The finalizer terminates the
  * worker when the subscription tears down, which is also how a run is
  * cancelled: the cursors in D1 make the next run pick up where this one
- * stopped.
+ * stopped. A failed or finished stream ends, so the worker does not linger.
  */
-const streamImport = (id: ImportId): Stream.Stream<Message, never> =>
+const streamImport = (
+  id: ImportId,
+  command: 'preview' | 'run',
+  includeMedia: boolean,
+): Stream.Stream<Message, never> =>
   Stream.callback<Message>((queue) =>
     Effect.gen(function* () {
       const job = yield* loadImportJob().pipe(Effect.catch(() => Effect.succeed(Option.none())))
       if (Option.isNone(job)) {
+        Queue.offerUnsafe(
+          queue,
+          Message.FailedImport({ error: 'That file is gone. Pick it again.' }),
+        )
         Queue.endUnsafe(queue)
         return
       }
@@ -62,7 +75,13 @@ const streamImport = (id: ImportId): Stream.Stream<Message, never> =>
 
       worker.onmessage = (event: MessageEvent<ImportWorkerEvent>) => {
         for (const message of toMessages(event.data)) Queue.offerUnsafe(queue, message)
-        if (event.data.type === 'done' || event.data.type === 'failed') Queue.endUnsafe(queue)
+        if (
+          event.data.type === 'done' ||
+          event.data.type === 'failed' ||
+          event.data.type === 'preview'
+        ) {
+          Queue.endUnsafe(queue)
+        }
       }
       worker.onerror = () => {
         Queue.offerUnsafe(
@@ -72,22 +91,50 @@ const streamImport = (id: ImportId): Stream.Stream<Message, never> =>
         Queue.endUnsafe(queue)
       }
 
-      worker.postMessage({ type: 'run', id, filename: job.value.filename, blob: job.value.blob })
+      const start: ImportWorkerCommand =
+        command === 'preview'
+          ? { type: 'preview', id, filename: job.value.filename, blob: job.value.blob }
+          : {
+              type: 'run',
+              id,
+              filename: job.value.filename,
+              blob: job.value.blob,
+              includeMedia,
+            }
+      worker.postMessage(start)
     }),
   )
 
 export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
   importRun: entry(
-    { importId: Schema.Option(ImportId), active: Schema.Boolean },
     {
-      // Only the id and the active flag matter here. The phase moves on every
-      // progress tick, and keying on it would tear the worker down mid-run.
+      importId: Schema.Option(ImportId),
+      active: Schema.Boolean,
+      phase: Schema.String,
+      hasPreview: Schema.Boolean,
+      includeMedia: Schema.Boolean,
+    },
+    {
+      // The pick opens the preview worker; the Start press swaps it for the
+      // run. Phase is a dependency here on purpose, so the preview worker
+      // tears down as soon as its one answer lands.
       modelToDependencies: (model) => ({
         importId: model.importState.id,
         active: model.importState.active,
+        phase: model.importState.phase,
+        hasPreview: Option.isSome(model.importState.preview),
+        includeMedia: model.importState.includeMedia,
       }),
-      dependenciesToStream: ({ importId, active }) =>
-        active && Option.isSome(importId) ? streamImport(importId.value) : Stream.empty,
+      dependenciesToStream: ({ importId, active, phase, hasPreview, includeMedia }) => {
+        if (!active || Option.isNone(importId)) return Stream.empty
+        if (phase === 'preview' && !hasPreview) {
+          return streamImport(importId.value, 'preview', includeMedia)
+        }
+        if (phase === 'running' || phase === 'reading' || phase === 'writing') {
+          return streamImport(importId.value, 'run', includeMedia)
+        }
+        return Stream.empty
+      },
     },
   ),
 
