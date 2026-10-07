@@ -464,8 +464,6 @@ export const Message = defineMessageUnion({
     lapseMinutes: S.Number,
     reviewedToday: S.Number,
     newToday: S.Number,
-    newRemaining: S.Number,
-    dueRemaining: S.Number,
     totalNew: S.Number,
     totalDue: S.Number,
     newCapped: S.Boolean,
@@ -503,8 +501,6 @@ export const Message = defineMessageUnion({
   PersistedReviewQueue: {},
   /** The export did not land. */
   ExportFailed: { error: S.String },
-  /** A queued offline grade flushed when the network returned. */
-  FlushedOfflineGrade: { id: S.String, accepted: ReviewAccepted },
   /** The grade did not land. It waits in `pending` for Retry. */
   GradeFailed: { error: S.String },
   /** The Learner pressed Retry on a grade that did not land. */

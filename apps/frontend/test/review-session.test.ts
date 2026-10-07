@@ -49,8 +49,6 @@ const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
       lapseMinutes: 10,
       reviewedToday: 0,
       newToday: 0,
-      newRemaining: 0,
-      dueRemaining: 0,
       totalNew: cards.filter((card) => card.state === 'new').length,
       totalDue: cards.filter((card) => card.state !== 'new').length,
       newCapped: false,

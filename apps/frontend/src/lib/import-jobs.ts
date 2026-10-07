@@ -14,11 +14,10 @@
 
 import { Effect, Option } from 'effect'
 import { ImportId } from '@nook/api'
+import { runIdbRequest } from './idb'
 
-const DB_NAME = 'nook'
 const STORE_NAME = 'importJobs'
 const ACTIVE_KEY = 'active'
-const DB_VERSION = 4
 
 /** The archive and its identity, as the store holds them. */
 export interface StoredImportJob {
@@ -40,60 +39,7 @@ const request = <A>(
   run: (store: IDBObjectStore) => IDBRequest<A>,
 ): Effect.Effect<A, ImportJobStoreUnavailable> =>
   Effect.tryPromise({
-    try: () =>
-      new Promise<A>((resolve, reject) => {
-        const open = indexedDB.open(DB_NAME, DB_VERSION)
-        open.onupgradeneeded = () => {
-          const db = open.result
-          // The database is shared (see `review-queue-store.ts`): create every
-          // store the app owns, so whichever module upgrades first leaves a
-          // complete database behind.
-          for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
-            if (!db.objectStoreNames.contains(name)) {
-              db.createObjectStore(name)
-            }
-          }
-        }
-        open.onerror = () => reject(open.error ?? new Error('Could not open the import store.'))
-        open.onsuccess = () => {
-          const db = open.result
-          if (!db.objectStoreNames.contains(STORE_NAME)) {
-            // The database predates this store: widen the schema, then retry
-            // the open so the upgrade that creates the store can run (see
-            // `review-queue-store.ts` for the full pattern).
-            const version = db.version + 1
-            db.close()
-            const retry = indexedDB.open(DB_NAME, version)
-            retry.onupgradeneeded = () => {
-              const upgraded = retry.result
-              for (const name of ['reviewQueues', 'queryCache', 'importJobs'] as const) {
-                if (!upgraded.objectStoreNames.contains(name)) {
-                  upgraded.createObjectStore(name)
-                }
-              }
-            }
-            retry.onerror = () =>
-              reject(retry.error ?? new Error('Could not open the import store.'))
-            retry.onsuccess = () => {
-              const retried = retry.result
-              const transaction = retried.transaction(STORE_NAME, mode)
-              transaction.oncomplete = () => retried.close()
-              transaction.onabort = () => retried.close()
-              const result = run(transaction.objectStore(STORE_NAME))
-              result.onsuccess = () => resolve(result.result)
-              result.onerror = () =>
-                reject(result.error ?? new Error('The import store did not answer.'))
-            }
-            return
-          }
-          const transaction = db.transaction(STORE_NAME, mode)
-          const result = run(transaction.objectStore(STORE_NAME))
-          result.onsuccess = () => resolve(result.result)
-          result.onerror = () =>
-            reject(result.error ?? new Error('The import store did not answer.'))
-          transaction.oncomplete = () => db.close()
-        }
-      }),
+    try: () => runIdbRequest(STORE_NAME, mode, run),
     catch: () => new ImportJobStoreUnavailable(),
   })
 

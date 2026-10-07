@@ -4,12 +4,9 @@ import { previewCard } from '@nook/anki/render'
 import { CardId, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
 import type { Card, DeckDetail, DeckLimits, DeckRename, DeckSummary } from '@nook/api'
 import { runStatements } from './batch'
-import { dayStartUtc, reviewDayKey } from './day-boundary'
+import { dayStartUtc, resolveTimezone, reviewDayKey } from './day-boundary'
+import { StoredField, StoredTemplate } from './note-type-rows'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
-
-/** The learner timezone, or UTC when the browser sends none. */
-const resolveTimezone = (timezone?: string): string =>
-  timezone === undefined || timezone === '' ? 'UTC' : timezone
 
 /** One row of the `decks` table with its counts computed in SQL. */
 const DeckRow = Schema.Struct({
@@ -51,15 +48,6 @@ const CardRow = Schema.Struct({
   noteTypeFields: Schema.NullOr(Schema.String),
   noteTypeTemplates: Schema.NullOr(Schema.String),
   deckName: Schema.NullOr(Schema.String),
-})
-
-/** One Field or Template as the Note Type's JSON column stores it. */
-const StoredField = Schema.Struct({ ord: Schema.Number, name: Schema.String })
-const StoredTemplate = Schema.Struct({
-  ord: Schema.Number,
-  name: Schema.String,
-  questionFormat: Schema.String,
-  answerFormat: Schema.String,
 })
 
 /** Decode a JSON column, or `None` when it is missing or misshapen. Cards without Notes still render their scheduling row. */

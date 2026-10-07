@@ -373,10 +373,6 @@ export const ReviewQueue = S.Struct({
   reviewedToday: S.Number,
   /** New Cards introduced today. */
   newToday: S.Number,
-  /** New Cards the day's limit still allows, after this queue. */
-  newRemaining: S.Number,
-  /** Review Cards the day's limit still allows, after this queue. */
-  dueRemaining: S.Number,
   /** Total new Cards waiting, before the day's limit. */
   totalNew: S.Number,
   /** Total review Cards waiting, before the day's limit. */

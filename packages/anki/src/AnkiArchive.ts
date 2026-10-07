@@ -1,7 +1,6 @@
 import { Context, Effect, Layer, Stream } from 'effect'
 import type * as Scope from 'effect/Scope'
 import type { AnkiCard, AnkiMediaEntry, AnkiNote } from './AnkiContent'
-import type { AnkiDiagnostic } from './AnkiDiagnostic'
 import type { AnkiOpenError, AnkiReadError } from './AnkiErrors'
 import { AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'
 import type { AnkiManifest } from './AnkiManifest'
@@ -59,16 +58,13 @@ export type ArchiveReadStage =
  *
  * The manifest answers how big the archive is without reading it. Notes, Cards,
  * and Media stream, one item at a time, so an archive of any size imports
- * without holding all of it at once. Diagnostics never stop a read: the handle
- * collects what the reader worked around so the caller can decide what to tell
- * the Learner.
+ * without holding all of it at once.
  */
 export interface OpenedArchive {
   readonly manifest: Effect.Effect<AnkiManifest, AnkiReadError>
   readonly notes: Stream.Stream<AnkiNote, AnkiReadError>
   readonly cards: Stream.Stream<AnkiCard, AnkiReadError>
   readonly media: Stream.Stream<OpenedMedia, AnkiReadError>
-  readonly diagnostics: Effect.Effect<ReadonlyArray<AnkiDiagnostic>, never>
 }
 
 /** Opens an `.apkg` archive and hands back a handle that reads it. */
@@ -239,7 +235,6 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
             notes: streamNotes(sql),
             cards: streamCards(sql),
             media,
-            diagnostics: Effect.succeed([]),
           }
         })
       return AnkiArchive.of({ open })

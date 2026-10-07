@@ -51,13 +51,15 @@ const backHref = (model: Model): string =>
  * streak. Nothing renders until the Query backing the chip has data, so a
  * loading screen keeps a bare wordmark row instead of a wrong number.
  */
+const overviewDue = (model: Model): string | undefined =>
+  Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
+    onNone: () => undefined,
+    onSome: (overview) => `${overview.dueNow} due`,
+  })
+
 const topChip = (model: Model): string | undefined =>
   AppRoute.match(model.route, {
-    Home: () =>
-      Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
-        onNone: () => undefined,
-        onSome: (overview) => `${overview.dueNow} due`,
-      }),
+    Home: () => overviewDue(model),
     Decks: () =>
       Option.match(AsyncData.getData(decksQuery.read(model.decks)), {
         onNone: () => undefined,
@@ -68,11 +70,7 @@ const topChip = (model: Model): string | undefined =>
         onNone: () => undefined,
         onSome: (detail) => `${detail.summary.dueCount + detail.summary.newCount} to review`,
       }),
-    Review: () =>
-      Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
-        onNone: () => undefined,
-        onSome: (overview) => `${overview.dueNow} due`,
-      }),
+    Review: () => overviewDue(model),
     ReviewDeck: ({ deckId }) => topChip({ ...model, route: AppRoute.DeckDetail({ deckId }) }),
     Settings: () =>
       Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
@@ -84,24 +82,26 @@ const topChip = (model: Model): string | undefined =>
   })
 
 /** The screen name in the top bar: the deck's name on its pages, the route name elsewhere. */
-const topTitle = (model: Model): string =>
-  AppRoute.match(model.route, {
-    Home: () => routeTitle(model.route),
-    Decks: () => routeTitle(model.route),
+const topTitle = (model: Model): string => {
+  const fallback = routeTitle(model.route)
+  return AppRoute.match(model.route, {
+    Home: () => fallback,
+    Decks: () => fallback,
     DeckDetail: ({ deckId }) =>
       Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
-        onNone: () => routeTitle(model.route),
+        onNone: () => fallback,
         onSome: (detail) => detail.summary.name,
       }),
-    Review: () => routeTitle(model.route),
+    Review: () => fallback,
     ReviewDeck: ({ deckId }) =>
       Option.match(AsyncData.getData(deckDetailQuery.read(model.deckDetail, { deckId })), {
-        onNone: () => routeTitle(model.route),
+        onNone: () => fallback,
         onSome: (detail) => detail.summary.name,
       }),
-    Settings: () => routeTitle(model.route),
-    NotFound: () => routeTitle(model.route),
+    Settings: () => fallback,
+    NotFound: () => fallback,
   })
+}
 
 const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
   const chip = topChip(model)

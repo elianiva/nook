@@ -11,10 +11,9 @@
  */
 
 import { Schema as S, pipe } from 'effect'
-import { defineRouteUnion, int, literal, root, slash, string } from 'foldkit/route'
+import { defineRouteUnion } from 'foldkit/route'
 import * as Route from 'foldkit/route'
 import { DeckId } from '@nook/api'
-import { Url } from 'foldkit/url'
 
 export const AppRoute = defineRouteUnion({
   Home: {},
@@ -102,6 +101,3 @@ export const tabToRoute = (tab: NavTab): AppRoute =>
     : tab === 'settings'
       ? AppRoute.Settings({})
       : AppRoute.Home({})
-
-export { Url }
-export { root, literal, slash, string, int }

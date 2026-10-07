@@ -25,8 +25,6 @@ export const nativeSelectIconClass =
 
 export const nativeSelectOptionClass = 'bg-[Canvas] text-[CanvasText]'
 
-export const nativeSelectOptGroupClass = 'bg-[Canvas] text-[CanvasText]'
-
 export const nativeSelectLabelClass = 'px-1.5 py-1 text-xs text-muted-foreground'
 export const nativeSelectDescriptionClass = 'text-sm text-muted-foreground'
 export const nativeSelectFieldWrapperClass = 'flex w-full flex-col gap-1.5'
@@ -144,19 +142,4 @@ export const nativeSelectOption = <M>(
       ...(config.isDisabled === true ? [h.Disabled(true)] : []),
     ],
     [config.label],
-  )
-
-/** Helper to render an `<optgroup>` with correct data-slot and Canvas colors. */
-export const nativeSelectOptGroup = <M>(
-  config: Readonly<{ label: string; className?: string }>,
-  children: ReadonlyArray<Html | string>,
-  h: HtmlBuilder<M>,
-): Html =>
-  h.optgroup(
-    [
-      h.DataAttribute('slot', 'native-select-optgroup'),
-      h.Class(cn(nativeSelectOptGroupClass, config.className)),
-      h.Attribute('label', config.label),
-    ],
-    [...children],
   )

@@ -20,7 +20,7 @@ import { textarea } from '@/components/ui/textarea'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
-import { errorPanel, loadingHero, loadingRows } from './load-state'
+import { errorPanel, fieldError, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
 import { limitsTextFromSummary } from './model'
 import type { DeckManage, Model } from './model'
@@ -311,17 +311,7 @@ const limitsForm = (
 ): ReadonlyArray<Child> => [
   ...Option.match(state.limitsError, {
     onNone: () => [] as ReadonlyArray<Child>,
-    onSome: (error) => [
-      h.div(
-        [
-          h.Class(
-            'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
-          ),
-          h.Role('alert'),
-        ],
-        [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
-      ),
-    ],
+    onSome: (error) => [fieldError(error, h)],
   }),
   limitField(
     'deck-new-per-day',
@@ -486,17 +476,7 @@ const manageSection = (
         : []),
       ...Option.match(state.error, {
         onNone: () => [] as ReadonlyArray<Child>,
-        onSome: (error) => [
-          h.div(
-            [
-              h.Class(
-                'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
-              ),
-              h.Role('alert'),
-            ],
-            [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
-          ),
-        ],
+        onSome: (error) => [fieldError(error, h)],
       }),
       ...(state.editing ? renameForm(id, state, h) : [renameRow(detail, state.saving, h)]),
       ...(state.editingLimits

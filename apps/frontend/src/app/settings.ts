@@ -26,7 +26,7 @@
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, Download, RotateCcw, Save } from 'lucide'
+import { Download, RotateCcw, Save } from 'lucide'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
 import { switch_ } from '@/components/ui/switch'
 import { textarea } from '@/components/ui/textarea'
@@ -36,6 +36,7 @@ import { themeKeys, themeMeta } from '@/lib/theme'
 import { Message } from './model'
 import type { HintSlot, Model, SettingsDraft } from './model'
 import { hint } from './hints'
+import { fieldError } from './load-state'
 
 type Child = Html | string
 
@@ -275,15 +276,7 @@ const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mes
 const errorBanner = (draft: SettingsDraft, h: HtmlBuilder<Message>): Child =>
   Option.match(draft.weightsError, {
     onNone: () => h.empty,
-    onSome: (error) =>
-      h.div(
-        [
-          h.Class(
-            'flex items-start gap-2 rounded-[10px] border-0 bg-white px-3 py-2 text-xs text-destructive',
-          ),
-        ],
-        [icon(h, CircleAlert, 'size-4 shrink-0'), h.span([], [error])],
-      ),
+    onSome: (error) => fieldError(error, h),
   })
 
 const saveBar = (h: HtmlBuilder<Message>): Html =>

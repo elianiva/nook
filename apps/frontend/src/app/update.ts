@@ -173,6 +173,13 @@ const toInt = (value: string, fallback: number): number => {
   return value.trim() === '' || !Number.isInteger(parsed) ? fallback : parsed
 }
 
+/** Parses a limit field: blank means `null` (follow Settings), else a whole number at least `min`. */
+const parseLimit = (value: string, min: number): number | null | undefined => {
+  if (value.trim() === '') return null
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= min ? parsed : undefined
+}
+
 const settingsFromDraft = (model: Model) => {
   const weights = model.settingsDraft.weightsText.split(',').map((part) => Number(part.trim()))
   return {
@@ -421,16 +428,6 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     },
 
     GradeAccepted: ({ id }) => ({
-      model: modifyFields(model, {
-        review: () => ({
-          ...model.review,
-          pending: model.review.pending.filter((entry) => entry.id !== id),
-          offline: model.review.offline.filter((entry) => entry.id !== id),
-        }),
-      }),
-    }),
-
-    FlushedOfflineGrade: ({ id }) => ({
       model: modifyFields(model, {
         review: () => ({
           ...model.review,
@@ -1001,11 +998,6 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     // else must be a whole number in range. Bad input stays on the device
     // with a sentence, like the blank deck name.
     ClickedSaveDeckLimits: ({ deckId }) => {
-      const parseLimit = (value: string, min: number): number | null | undefined => {
-        if (value.trim() === '') return null
-        const parsed = Number(value)
-        return Number.isInteger(parsed) && parsed >= min ? parsed : undefined
-      }
       const newPerDay = parseLimit(model.deckManage.newPerDay, 0)
       const reviewsPerDay = parseLimit(model.deckManage.reviewsPerDay, 0)
       const lapseMinutes = parseLimit(model.deckManage.lapseMinutes, 1)

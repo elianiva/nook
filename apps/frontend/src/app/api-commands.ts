@@ -17,6 +17,7 @@ import { Command } from 'foldkit'
 import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard } from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { NookRpc } from '@/lib/rpc'
+import { learnerTimezone as timezone } from '@/lib/timezone'
 import { Message as MessageConstructors } from './model'
 import type { LoadRetry } from './model'
 
@@ -43,17 +44,6 @@ const fromCachedCards = (cards: unknown): Option.Option<ReadonlyArray<ReviewCard
 
 const loadFailed = (error: string, retry: LoadRetry) =>
   MessageConstructors.LoadFailed({ error, retry })
-
-/** The learner timezone, for the day boundary. The server defaults to UTC without it. */
-const timezone = (): string | undefined => {
-  try {
-    if (typeof Intl === 'undefined') return undefined
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    return zone !== undefined && zone !== '' ? zone : undefined
-  } catch {
-    return undefined
-  }
-}
 
 export const FetchSettings = Command.define('FetchSettings', {
   messages: [MessageConstructors.GotSettings, MessageConstructors.LoadFailed],
@@ -103,8 +93,6 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
           lapseMinutes: queue.lapseMinutes,
           reviewedToday: queue.reviewedToday,
           newToday: queue.newToday,
-          newRemaining: queue.newRemaining,
-          dueRemaining: queue.dueRemaining,
           totalNew: queue.totalNew,
           totalDue: queue.totalDue,
           newCapped: queue.newCapped,
@@ -230,7 +218,6 @@ export const PersistReviewQueue = Command.define('PersistReviewQueue', {
           dayStartUtc,
           lapseMinutes,
           cachedAt: Date.now(),
-          grades: [],
         }).pipe(
           // Warm the media cache with the queued cards' images and audio, so a
           // reload mid-queue offline still renders them. Best-effort: a missing
@@ -293,8 +280,6 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
               // replaces them when it lands.
               reviewedToday: 0,
               newToday: 0,
-              newRemaining: 0,
-              dueRemaining: 0,
               totalNew: cards.length,
               totalDue: 0,
               newCapped: false,
