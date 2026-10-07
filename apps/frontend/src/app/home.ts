@@ -29,7 +29,7 @@ type Child = Html | string
 const dueTone = (due: number): string =>
   due === 0 ? 'text-muted-foreground' : due >= 100 ? 'text-destructive' : 'text-foreground'
 
-const lastStudied = (deck: DeckSummary): string =>
+export const lastStudied = (deck: DeckSummary): string =>
   Option.match(deck.lastStudiedAt, {
     onNone: () => 'Not studied yet',
     onSome: (at) => {

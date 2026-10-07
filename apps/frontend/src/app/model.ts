@@ -339,8 +339,6 @@ export const Model = S.Struct({
   decks: decksQuery.Model,
   /** The deck detail KeyedQuery, retained per deck id. */
   deckDetail: deckDetailQuery.Model,
-  /** Search text on the decks page. */
-  decksQuery: S.String,
   /** The review screen's queue and cursor. */
   review: ReviewState,
   settings: AppSettings,
@@ -367,7 +365,6 @@ export const seedModel = (url: Url.Url): Model => ({
   overview: overviewQuery.init(),
   decks: decksQuery.init(),
   deckDetail: deckDetailQuery.init(),
-  decksQuery: '',
   review: idleReview,
   settings: DEFAULT_SETTINGS,
   settingsDraft: draftFromSettings(DEFAULT_SETTINGS),
@@ -401,8 +398,6 @@ export const Message = defineMessageUnion({
   LoadFailed: { error: S.String, retry: LoadRetry },
   /** The Learner pressed retry on the notice banner. */
   ClickedRetry: {},
-  /** Decks page search text. */
-  TypedDecksQuery: { value: S.String },
   /** The Learner pressed a Start action: one Deck's queue, or every Deck's. */
   StartedReview: { deckId: S.Option(DeckId) },
   /** The backend answered with the Cards to review, already rendered. */

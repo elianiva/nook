@@ -339,10 +339,6 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         onSome: (notice) => ({ model, commands: retryCommandsFor(model, notice.retry) }),
       }),
 
-    TypedDecksQuery: ({ value }) => ({
-      model: modifyFields(model, { decksQuery: () => value }),
-    }),
-
     // A Start action is a navigation: the review route fetches its own queue.
     StartedReview: ({ deckId }) => {
       const path = Option.match(deckId, {

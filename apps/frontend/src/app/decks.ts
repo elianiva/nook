@@ -1,43 +1,31 @@
 /**
- * Decks page: the full deck list with search and an import entry point.
+ * Decks page: sections plus a dark Import footer.
  *
- * Each row is the same `DeckSummary` projection as on Home — counts plus the
- * next Review. Card previews live on each deck's own page instead. Search
- * filters locally on name and description; the backend will accept the same
- * query string later.
+ * Decks with reviews due group into a `Needs attention` basket; clean decks
+ * stay in a plain `Up to date` grid. Each card links to its own deck page.
+ * The Import entry ends the page as one dark footer button, and the Import
+ * panel shows above the sections while a run is in flight.
  */
 
 import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { CircleAlert, Inbox, Search, Upload } from 'lucide'
+import { ChevronRight, CircleAlert, Inbox, Plus, Upload } from 'lucide'
 import { Empty } from '@/components/ui/empty'
-import { input } from '@/components/ui/input'
 import { button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { switch_ } from '@/components/ui/switch'
 import { icon } from '@/lib/icons'
 import type { DeckSummary } from '@nook/api'
 import type { ImportPreview, ImportProgress, ImportReadStage } from '@/lib/import-worker-protocol'
-import { deckRow } from './home'
+import { lastStudied } from './home'
 import { errorPanel, loadingRows } from './load-state'
 import { Message } from './model'
 import type { ImportState, Model } from './model'
 import { decksQuery } from './queries'
+import { routeToUrl } from './routes'
 
 type Child = Html | string
-
-export const visibleDecks = (
-  decks: ReadonlyArray<DeckSummary>,
-  query: string,
-): ReadonlyArray<DeckSummary> => {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return decks
-  return decks.filter(
-    (deck) =>
-      deck.name.toLowerCase().includes(needle) || deck.description.toLowerCase().includes(needle),
-  )
-}
 
 const formatCount = (count: number): string => count.toLocaleString()
 
@@ -347,99 +335,161 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
   )
 }
 
-const deckList = (
-  all: ReadonlyArray<DeckSummary>,
-  query: string,
-  h: HtmlBuilder<Message>,
-): ReadonlyArray<Child> => {
-  const decks = visibleDecks(all, query)
-  return [
-    h.div(
-      [h.Class('text-xs text-muted-foreground')],
-      [
-        `${decks.length} of ${all.length} decks · ${all.reduce((sum, deck) => sum + deck.dueCount, 0)} due total`,
-      ],
-    ),
-    ...(decks.length === 0
-      ? [
-          Empty<Message>(
-            {},
+const sectionHead = (label: string, h: HtmlBuilder<Message>): Html =>
+  h.h2(
+    [h.Class('mt-1.5 text-xs font-bold tracking-[1.2px] text-muted-foreground uppercase')],
+    [label],
+  )
+
+/** One deck card. Due decks get white cards with a pink pill; clean decks stay grey. */
+const deckCard = (deck: DeckSummary, variant: 'due' | 'clean', h: HtmlBuilder<Message>): Html => {
+  const initial = deck.name.trim().charAt(0) || '?'
+  return h.a(
+    [
+      h.Href(routeToUrl({ _tag: 'DeckDetail', deckId: deck.id })),
+      // Hover and keyboard focus warm the detail Query, so the deck page
+      // opens with data while its refresh runs.
+      h.OnMouseEnter(Message.PrefetchedDeckDetail({ deckId: deck.id })),
+      h.OnFocus(Message.PrefetchedDeckDetail({ deckId: deck.id })),
+    ],
+    [
+      h.div(
+        [
+          h.Class(
+            variant === 'due'
+              ? 'flex min-w-0 flex-col gap-1.5 rounded-[16px] border-0 bg-white p-3'
+              : 'flex min-w-0 flex-col gap-1.5 rounded-[16px] border-0 bg-[var(--theme-block)] p-3',
+          ),
+        ],
+        [
+          h.div(
             [
-              Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
-              Empty.title<Message>(
-                {},
-                [all.length === 0 ? 'No decks yet' : 'No matching decks'],
-                h,
-              ),
-              Empty.description<Message>(
-                {},
-                [
-                  all.length === 0
-                    ? 'Import an .apkg archive to start reviewing.'
-                    : `Nothing matches “${query.trim()}”.`,
-                ],
-                h,
+              h.Class(
+                variant === 'due'
+                  ? 'flex size-[34px] shrink-0 items-center justify-center rounded-[10px] bg-[var(--theme-block)] text-sm font-extrabold text-[var(--theme-ink)]'
+                  : 'flex size-[34px] shrink-0 items-center justify-center rounded-[10px] bg-white text-sm font-extrabold text-[var(--theme-ink)]',
               ),
             ],
-            h,
+            [initial],
           ),
-        ]
-      : decks.map((deck) => deckRow(deck, h))),
+          h.div([h.Class('truncate text-[13px] font-bold')], [deck.name]),
+          h.div(
+            [h.Class('text-[11px] text-[var(--theme-sub)]')],
+            [`${deck.dueCount} due · ${deck.newCount} new`],
+          ),
+          ...(variant === 'due'
+            ? [
+                Progress<Message>(
+                  {
+                    value: deck.retention7d,
+                    className:
+                      'mt-1 [&_[data-slot=progress-track]]:h-[5px] [&_[data-slot=progress-track]]:bg-[var(--theme-bar-idle)] [&_[data-slot=progress-indicator]]:bg-[var(--theme-tint)]',
+                  },
+                  h,
+                ),
+              ]
+            : []),
+          h.div(
+            [h.Class('mt-0.5 flex items-center justify-between')],
+            [
+              h.span(
+                [
+                  h.Class(
+                    variant === 'due'
+                      ? 'rounded-full bg-[var(--theme-tint)] px-2 py-0.5 text-[11px] font-extrabold text-[var(--theme-ink)] tabular-nums'
+                      : 'rounded-full bg-[var(--theme-bar-idle)] px-2 py-0.5 text-[11px] font-extrabold text-[var(--theme-sub)] tabular-nums',
+                  ),
+                ],
+                [`${deck.dueCount} due`],
+              ),
+              icon(h, ChevronRight, 'size-4 text-[var(--theme-sub)]'),
+            ],
+          ),
+          ...(variant === 'clean'
+            ? [h.div([h.Class('text-[11px] text-[var(--theme-sub)]')], [lastStudied(deck)])]
+            : []),
+        ],
+      ),
+    ],
+  )
+}
+
+/** The Import entry: one dark footer button that ends the page. */
+const importFooter = (model: Model, h: HtmlBuilder<Message>): Html =>
+  button<Message>(
+    {
+      onClick: Message.ClickedImport(),
+      isDisabled: model.importState.active,
+      size: 'lg',
+      className:
+        'h-12 w-full rounded-[14px] bg-[var(--theme-ink)] text-sm font-bold text-white shadow-none hover:bg-[var(--theme-ink)]/90',
+      attributes: [h.AriaLabel('Import deck')],
+    },
+    [icon(h, Plus, 'size-4'), 'Import a deck…'],
+    h,
+  )
+
+const deckSections = (
+  all: ReadonlyArray<DeckSummary>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => {
+  const due = all.filter((deck) => deck.dueCount > 0)
+  const clean = all.filter((deck) => deck.dueCount === 0)
+  return [
+    ...(due.length === 0
+      ? []
+      : [
+          sectionHead('Needs attention', h),
+          h.div(
+            [h.Class('flex flex-col gap-2.5 rounded-[18px] border-0 bg-[var(--theme-block)] p-3')],
+            [
+              h.div(
+                [h.Class('grid grid-cols-2 gap-2.5')],
+                due.map((deck) => deckCard(deck, 'due', h)),
+              ),
+            ],
+          ),
+        ]),
+    ...(clean.length === 0
+      ? []
+      : [
+          sectionHead('Up to date', h),
+          h.div(
+            [h.Class('grid grid-cols-2 gap-2.5')],
+            clean.map((deck) => deckCard(deck, 'clean', h)),
+          ),
+        ]),
   ]
+}
+
+const deckList = (
+  all: ReadonlyArray<DeckSummary>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Child> => {
+  if (all.length === 0) {
+    return [
+      Empty<Message>(
+        {},
+        [
+          Empty.media<Message>({ variant: 'icon' }, [icon(h, Inbox, 'size-4')], h),
+          Empty.title<Message>({}, ['No decks yet'], h),
+          Empty.description<Message>({}, ['Import an .apkg archive to start reviewing.'], h),
+        ],
+        h,
+      ),
+    ]
+  }
+  return deckSections(all, h)
 }
 
 export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const decksAsync = decksQuery.read(model.decks)
   return [
-    h.div(
-      [h.Class('flex gap-2')],
-      [
-        h.div(
-          [h.Class('relative flex-1')],
-          [
-            h.div(
-              [
-                h.Class(
-                  'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground',
-                ),
-              ],
-              [icon(h, Search, 'size-4')],
-            ),
-            input<Message>(
-              {
-                id: 'decks-search',
-                label: 'Search decks',
-                labelClass: 'sr-only',
-                wrapperClass: 'gap-0',
-                placeholder: 'Search decks…',
-                value: model.decksQuery,
-                onInput: (value) => Message.TypedDecksQuery({ value }),
-                className:
-                  'h-11 rounded-[14px] border-0 bg-[var(--theme-block)] pl-9 text-base shadow-none',
-              },
-              h,
-            ),
-          ],
-        ),
-        button<Message>(
-          {
-            onClick: Message.ClickedImport(),
-            isDisabled: model.importState.active,
-            size: 'icon-lg',
-            className:
-              'h-11 w-11 rounded-[14px] border-0 bg-[var(--theme-block)] text-[var(--theme-ink)] shadow-none',
-            attributes: [h.AriaLabel('Import deck')],
-          },
-          [icon(h, Upload, 'size-4')],
-          h,
-        ),
-      ],
-    ),
     importPanel(model, h),
     ...AsyncData.matchData(decksAsync, {
       onEmpty: () => [loadingRows('Loading decks…', h)],
       onFailure: (error) => [errorPanel(error, Message.ClickedRetryDecks(), h)],
-      onData: (all) => deckList(all, model.decksQuery, h),
+      onData: (all) => [...deckList(all, h), importFooter(model, h)],
     }),
   ]
 }
