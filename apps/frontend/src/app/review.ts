@@ -21,6 +21,7 @@ import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { LEECH_LAPSE_THRESHOLD } from '@nook/api'
 import type { Grade, ReviewCard } from '@nook/api'
 import { Message } from './model'
 import type { Model } from './model'
@@ -81,6 +82,7 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
   const graded = review.graded
   const saving = review.pending.length
   const queued = review.offline.length
+  const leechCard = Option.getOrNull(review.leechSuspendedCard)
   const nothingDue = graded === 0 && review.cards.length === 0
   // The queue caps by the limits: a capped queue stops although Cards stay.
   // Name the remainder from the queue's totals minus what it served, so
@@ -123,6 +125,23 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
               ],
               h,
             ),
+            ...(leechCard === null
+              ? []
+              : [
+                  h.p(
+                    [h.Class('text-center text-[11px] text-amber-700'), h.Role('status')],
+                    [
+                      `Leech suspended after ${review.leechSuspendedReviewLapses} failed reviews (Anki threshold: ${LEECH_LAPSE_THRESHOLD}). History is kept. `,
+                      h.a(
+                        [
+                          h.Href(routeToUrl({ _tag: 'DeckDetail', deckId: leechCard.deckId })),
+                          h.Class('font-semibold text-primary hover:underline'),
+                        ],
+                        ['Open deck to restore'],
+                      ),
+                    ],
+                  ),
+                ]),
             ...(saving === 0
               ? []
               : [h.p([h.Class('text-[11px] text-muted-foreground')], [`Saving ${saving}…`])]),
@@ -255,6 +274,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   const tapToReveal = model.settings.behaviour.tapToReveal
   const suspensionPending = Option.isSome(review.suspensionPending)
   const suspensionError = Option.getOrNull(review.suspensionError)
+  const leechSuspendedCard = Option.getOrNull(review.leechSuspendedCard)
 
   const error = Option.match(review.error, {
     onNone: () => null,
@@ -327,6 +347,25 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                     [h.Class('pb-2 text-center text-[11px] text-muted-foreground')],
                     [
                       `${requeued} lapsed ${requeued === 1 ? 'Card returns' : 'Cards return'} later this session.`,
+                    ],
+                  ),
+                ]),
+            ...(leechSuspendedCard === null
+              ? []
+              : [
+                  h.p(
+                    [h.Class('pb-2 text-center text-[11px] text-amber-700'), h.Role('status')],
+                    [
+                      `Leech suspended after ${review.leechSuspendedReviewLapses} failed reviews (Anki threshold: ${LEECH_LAPSE_THRESHOLD}). History is kept. `,
+                      h.a(
+                        [
+                          h.Href(
+                            routeToUrl({ _tag: 'DeckDetail', deckId: leechSuspendedCard.deckId }),
+                          ),
+                          h.Class('font-semibold text-primary hover:underline'),
+                        ],
+                        ['Open deck to restore'],
+                      ),
                     ],
                   ),
                 ]),

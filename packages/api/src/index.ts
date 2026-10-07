@@ -45,6 +45,10 @@ export type NoteTypeId = typeof NoteTypeId.Type
 export const CardState = S.Literals(['new', 'learning', 'review', 'relearning'])
 export type CardState = typeof CardState.Type
 
+/** Anki-inspired leech trigger: eight failed reviews, then every four more. */
+export const LEECH_LAPSE_THRESHOLD = 8
+export const LEECH_LAPSE_WARNING_INTERVAL = LEECH_LAPSE_THRESHOLD / 2
+
 /** One recallable item. Deck-detail rows carry a plain-text `preview` of the prompt side; full bodies still arrive one at a time in the review queue. */
 export const Card = S.Struct({
   id: CardId,
@@ -62,6 +66,8 @@ export const Card = S.Struct({
   suspended: S.Boolean,
   /** Number of Again grades, used to identify leeches. */
   lapses: S.Number,
+  /** Failed reviews while the Card was in review mode; excludes learning steps. */
+  reviewLapses: S.Number,
   /** Plain-text prompt preview for the deck page's Card rows. Empty when the Card has no readable text (media-only). */
   preview: S.optional(S.String).pipe(S.withDecodingDefault(Effect.succeed(''))),
 })
@@ -416,11 +422,15 @@ export const ReviewAccepted = S.Struct({
   dueInDays: S.Number,
   stability: S.Number,
   difficulty: S.Number,
+  /** Failed reviews while the Card was in review mode. */
+  reviewLapses: S.Number,
   intervalDays: S.Number,
   /** ISO 8601 UTC instant the Card comes back, for the client's countdown. */
   dueAt: S.String,
   /** Whether the Card returns later this session, after `lapseMinutes`. Only on `Again`. */
   requeueInSession: S.Boolean,
+  /** This grade reached an Anki-style leech warning point and suspended the Card. */
+  leechSuspended: S.Boolean,
 })
 export type ReviewAccepted = typeof ReviewAccepted.Type
 
@@ -469,6 +479,7 @@ export const ExportCard = S.Struct({
   dueAt: S.NullOr(S.String),
   reps: S.Number,
   lapses: S.Number,
+  reviewLapses: S.Number,
   lastReviewedAt: S.NullOr(S.String),
 })
 export type ExportCard = typeof ExportCard.Type

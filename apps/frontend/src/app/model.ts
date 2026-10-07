@@ -180,6 +180,9 @@ export const ReviewState = S.Struct({
   suspensionPending: S.Option(CardId),
   /** The last suspend failure, shown without advancing the current Card. */
   suspensionError: S.Option(S.String),
+  /** Most recent automatically suspended leech, with its review count. */
+  leechSuspendedCard: S.Option(ReviewCard),
+  leechSuspendedReviewLapses: S.Number,
   /** Why the last grade failed, as one sentence for the Learner. */
   error: S.Option(S.String),
   /** Why the session ended with no Cards: truly empty, or stopped by a limit. */
@@ -214,6 +217,8 @@ export const idleReview: ReviewState = {
   offline: [],
   suspensionPending: Option.none(),
   suspensionError: Option.none(),
+  leechSuspendedCard: Option.none(),
+  leechSuspendedReviewLapses: 0,
   error: Option.none(),
   doneKind: 'empty',
   bypassDueLimit: false,

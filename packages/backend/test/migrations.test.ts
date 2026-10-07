@@ -16,6 +16,7 @@ describe('migrations stay append-only', () => {
       '0004_review.sql',
       '0005_day_boundary.sql',
       '0006_deck_limits.sql',
+      '0007_leeches.sql',
     ])
   })
 })

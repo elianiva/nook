@@ -1,5 +1,6 @@
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
+import * as Sql from 'effect/sql/SqlClient'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { ReviewsRpc, CardId, DeckId } from '@nook/api'
@@ -17,6 +18,64 @@ const showcaseDeck = DeckId.make('deck-showcase-japanese')
 const query = { deckId: showcaseDeck, timezone: 'UTC' } as const
 
 layer(TestLayers)('review session behaviour', (it) => {
+  it.effect('suspends review-mode leeches at eight lapses and records the idempotent result', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(ReviewsRpc)
+      const sql = yield* Sql.SqlClient
+      const target = (yield* client.reviewsQueue(query)).cards.find(
+        (card) => card.state === 'review',
+      )
+      assert.isDefined(target)
+      if (target === undefined) return
+      yield* sql`UPDATE cards SET review_lapses = 7 WHERE id = ${target.cardId}`
+
+      const graded = yield* client.reviewsGrade({
+        id: 'review-leech-threshold',
+        cardId: target.cardId,
+        grade: 'Again',
+      })
+      expect(graded.reviewLapses).toBe(8)
+      expect(graded.leechSuspended).toBe(true)
+
+      const replayed = yield* client.reviewsGrade({
+        id: 'review-leech-threshold',
+        cardId: target.cardId,
+        grade: 'Again',
+      })
+      expect(replayed.leechSuspended).toBe(true)
+      expect(replayed.reviewLapses).toBe(8)
+
+      const rows = yield* sql`SELECT suspended, review_lapses AS "reviewLapses"
+        FROM cards WHERE id = ${target.cardId}`
+      expect((rows as ReadonlyArray<{ suspended: number; reviewLapses: number }>)[0]).toEqual({
+        suspended: 1,
+        reviewLapses: 8,
+      })
+      const after = yield* client.reviewsQueue(query)
+      expect(after.cards.some((card) => card.cardId === target.cardId)).toBe(false)
+
+      yield* client.reviewsUndo({ cardId: target.cardId })
+      const undoneRows = yield* sql`SELECT suspended, review_lapses AS "reviewLapses"
+        FROM cards WHERE id = ${target.cardId}`
+      expect((undoneRows as ReadonlyArray<{ suspended: number; reviewLapses: number }>)[0]).toEqual({
+        suspended: 0,
+        reviewLapses: 7,
+      })
+      const restored = yield* client.reviewsQueue(query)
+      expect(restored.cards.some((card) => card.cardId === target.cardId)).toBe(true)
+
+      yield* sql`UPDATE cards SET review_lapses = 11 WHERE id = ${target.cardId}`
+      const repeatedWarning = yield* client.reviewsGrade({
+        id: 'review-leech-repeat-warning',
+        cardId: target.cardId,
+        grade: 'Again',
+      })
+      expect(repeatedWarning.reviewLapses).toBe(12)
+      expect(repeatedWarning.leechSuspended).toBe(true)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('re-queues an Again Card in-session and undoes a grade', () =>
     Effect.gen(function* () {
       yield* migrate

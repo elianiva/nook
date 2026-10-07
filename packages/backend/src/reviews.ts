@@ -29,6 +29,8 @@ import {
   CardNotFound,
   CollectionExport,
   DeckId,
+  LEECH_LAPSE_THRESHOLD,
+  LEECH_LAPSE_WARNING_INTERVAL,
   ReviewsRpc,
   StorageUnavailable,
 } from '@nook/api'
@@ -91,6 +93,8 @@ const CardRow = Schema.Struct({
   difficulty: Schema.Number,
   reps: Schema.Number,
   lapses: Schema.Number,
+  reviewLapses: Schema.Number,
+  suspended: Schema.Number,
   dueInDays: Schema.Number,
   dueAt: Schema.NullOr(Schema.String),
   noteId: Schema.NullOr(Schema.String),
@@ -122,7 +126,13 @@ const LastReviewRow = Schema.Struct({
   id: Schema.String,
   cardId: Schema.String,
   grade: Schema.Literals(['Again', 'Hard', 'Good', 'Easy']),
+  leechSuspended: Schema.Number,
 })
+
+/** Anki's default leech point plus recurring half-threshold warnings. */
+const isLeechWarning = (reviewLapses: number): boolean =>
+  reviewLapses >= LEECH_LAPSE_THRESHOLD &&
+  (reviewLapses - LEECH_LAPSE_THRESHOLD) % LEECH_LAPSE_WARNING_INTERVAL === 0
 
 /** Renders one queue row into a Card the browser can show. */
 const toReviewCard = (row: typeof QueueRow.Type): Effect.Effect<ReviewCard, Schema.SchemaError> =>
@@ -219,6 +229,7 @@ export class Reviews extends Context.Service<
         Effect.gen(function* () {
           const rows = yield* sql`SELECT id AS "cardId", deck_id AS "deckId", state, stability,
             difficulty, COALESCE(reps, 0) AS reps, COALESCE(lapses, 0) AS lapses,
+            COALESCE(review_lapses, 0) AS "reviewLapses", suspended,
             COALESCE(CAST(julianday(due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             due_at AS "dueAt", note_id AS "noteId", introduced_day AS "introducedDay",
             buried_until AS "buriedUntil",
@@ -353,10 +364,14 @@ export class Reviews extends Context.Service<
           const card = yield* readCard(submission.cardId)
           if (card === undefined) return yield* new CardNotFound({ cardId: submission.cardId })
 
-          const replayRows =
-            yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE id = ${submission.id}`
-          const replay = yield* decodeRows(CountRow, replayRows)
-          if ((replay[0]?.n ?? 0) > 0) {
+          const replayRows = yield* sql`SELECT leech_suspended AS "leechSuspended"
+            FROM reviews WHERE id = ${submission.id}`
+          const replay = yield* decodeRows(
+            Schema.Struct({ leechSuspended: Schema.Number }),
+            replayRows,
+          )
+          const replayed = replay[0]
+          if (replayed !== undefined) {
             // The grade already landed; report the Card as it stands.
             return {
               cardId: submission.cardId,
@@ -365,9 +380,11 @@ export class Reviews extends Context.Service<
               dueInDays: card.dueInDays,
               stability: card.stability,
               difficulty: card.difficulty,
+              reviewLapses: card.reviewLapses,
               intervalDays: card.dueInDays,
               dueAt: card.dueAt ?? new Date().toISOString(),
               requeueInSession: false,
+              leechSuspended: replayed.leechSuspended === 1,
             } satisfies ReviewAccepted
           }
 
@@ -403,6 +420,10 @@ export class Reviews extends Context.Service<
           )
           const interval = scheduled.intervalDays
           const requeueInSession = submission.grade === 'Again'
+          const reviewLapses =
+            card.reviewLapses + (card.state === 'review' && submission.grade === 'Again' ? 1 : 0)
+          const leechSuspended =
+            card.state === 'review' && submission.grade === 'Again' && isLeechWarning(reviewLapses)
           // `Again` re-queues later this session, after `lapseMinutes`: the
           // Card buries until then so the queue skips it until it is due.
           // Passing grades bury until the next boundary at the earliest — a
@@ -420,17 +441,21 @@ export class Reviews extends Context.Service<
           // session.
           const nextDay = dueInstantUtc(boundary, 1, now, lapseMinutes)
           const statements = [
-            sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
+            sql`INSERT INTO reviews (id, card_id, grade, reviewed_at, leech_suspended)
               VALUES (${submission.id}, ${submission.cardId}, ${submission.grade},
-              strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
+              strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ${leechSuspended ? 1 : 0})`,
             sql`INSERT INTO review_snapshots (review_id, card_id, state, stability, difficulty,
-              due_in_days, due_at, reps, lapses, introduced_day, last_reviewed_at, buried_until)
+              due_in_days, due_at, reps, lapses, introduced_day, last_reviewed_at, buried_until,
+              review_lapses, suspended)
               VALUES (${submission.id}, ${submission.cardId}, ${card.state}, ${card.stability},
               ${card.difficulty}, ${card.dueInDays}, ${card.dueAt}, ${card.reps}, ${card.lapses},
-              ${card.introducedDay}, ${card.lastReviewedAt}, ${card.buriedUntil})`,
+              ${card.introducedDay}, ${card.lastReviewedAt}, ${card.buriedUntil},
+              ${card.reviewLapses}, ${card.suspended})`,
             sql`UPDATE cards SET state = ${scheduled.state}, stability = ${scheduled.stability},
               difficulty = ${scheduled.difficulty}, due_in_days = ${requeueInSession ? 0 : interval},
               due_at = ${dueAt},
+              review_lapses = ${reviewLapses},
+              suspended = CASE WHEN ${leechSuspended ? 1 : 0} = 1 THEN 1 ELSE suspended END,
               buried_until = ${buriedUntil}, buried_sibling_of = NULL,
               introduced_day = CASE WHEN state = 'new' THEN ${todayKey} ELSE introduced_day END,
               reps = ${scheduled.reps}, lapses = ${scheduled.lapses},
@@ -458,9 +483,11 @@ export class Reviews extends Context.Service<
             dueInDays: interval,
             stability: scheduled.stability,
             difficulty: scheduled.difficulty,
+            reviewLapses,
             intervalDays: interval,
             dueAt,
             requeueInSession,
+            leechSuspended,
           } satisfies ReviewAccepted
         }).pipe(Effect.withSpan('Reviews.grade'), (self) =>
           withStorageErrorPassThrough(self, 'save the review'),
@@ -482,7 +509,8 @@ export class Reviews extends Context.Service<
           const card = yield* readCard(input.cardId)
           if (card === undefined) return yield* new CardNotFound({ cardId: input.cardId })
 
-          const lastRows = yield* sql`SELECT id, card_id AS "cardId", grade FROM reviews
+          const lastRows = yield* sql`SELECT id, card_id AS "cardId", grade,
+            leech_suspended AS "leechSuspended" FROM reviews
             WHERE card_id = ${input.cardId} ORDER BY reviewed_at DESC, rowid DESC LIMIT 1`
           const last = yield* decodeRows(LastReviewRow, lastRows)
           const latest = last[0]
@@ -491,7 +519,8 @@ export class Reviews extends Context.Service<
           const snapshotRows = yield* sql`SELECT state, stability, difficulty,
             due_in_days AS "dueInDays", due_at AS "dueAt", reps, lapses,
             introduced_day AS "introducedDay", last_reviewed_at AS "lastReviewedAt",
-            buried_until AS "buriedUntil" FROM review_snapshots WHERE review_id = ${latest.id}`
+            buried_until AS "buriedUntil", review_lapses AS "reviewLapses", suspended
+            FROM review_snapshots WHERE review_id = ${latest.id}`
           const snapshots = yield* decodeRows(
             Schema.Struct({
               state: CardStateRow,
@@ -504,6 +533,8 @@ export class Reviews extends Context.Service<
               introducedDay: Schema.NullOr(Schema.String),
               lastReviewedAt: Schema.NullOr(Schema.String),
               buriedUntil: Schema.NullOr(Schema.String),
+              reviewLapses: Schema.Number,
+              suspended: Schema.NullOr(Schema.Number),
             }),
             snapshotRows,
           )
@@ -518,6 +549,9 @@ export class Reviews extends Context.Service<
               due_at = ${snapshot.dueAt},
               buried_until = ${snapshot.buriedUntil}, buried_sibling_of = NULL,
               introduced_day = ${snapshot.introducedDay},
+              review_lapses = ${snapshot.reviewLapses},
+              suspended = CASE WHEN ${latest.leechSuspended} = 1
+                THEN COALESCE(${snapshot.suspended}, suspended) ELSE suspended END,
               reps = ${snapshot.reps}, lapses = ${snapshot.lapses},
               last_reviewed_at = ${snapshot.lastReviewedAt},
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
@@ -570,7 +604,8 @@ export class Reviews extends Context.Service<
           const cardRows = yield* sql`SELECT id, deck_id AS "deckId", note_id AS "noteId",
               template_ord AS "templateOrd", suspended, state, stability, difficulty,
               due_at AS "dueAt", COALESCE(reps, 0) AS reps, COALESCE(lapses, 0) AS lapses,
-              last_reviewed_at AS "lastReviewedAt" FROM cards ORDER BY rowid`
+              last_reviewed_at AS "lastReviewedAt", COALESCE(review_lapses, 0) AS "reviewLapses"
+              FROM cards ORDER BY rowid`
           const rawCards = yield* decodeRows(
             Schema.Struct({
               id: Schema.String,
@@ -584,6 +619,7 @@ export class Reviews extends Context.Service<
               dueAt: Schema.NullOr(Schema.String),
               reps: Schema.Number,
               lapses: Schema.Number,
+              reviewLapses: Schema.Number,
               lastReviewedAt: Schema.NullOr(Schema.String),
             }),
             cardRows,
@@ -630,6 +666,7 @@ export class Reviews extends Context.Service<
             dueAt: card.dueAt,
             reps: card.reps,
             lapses: card.lapses,
+            reviewLapses: card.reviewLapses,
             lastReviewedAt: card.lastReviewedAt,
           }))
           const decksOut: Array<ExportDeck> = decks.map((deck) => ({ ...deck }))

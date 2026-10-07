@@ -108,6 +108,46 @@ describe('review session', () => {
     expect(Option.isNone(saved.model.review.suspensionPending)).toBe(true)
   })
 
+  it('removes a newly suspended leech from the in-session Again requeue', () => {
+    const graded = update(reviewing([card('c1'), card('c2')]), Message.ClickedGrade({ grade: 'Again' }))
+    const entry = graded.model.review.pending[0]
+    expect(entry).toBeDefined()
+    if (entry === undefined) return
+
+    const accepted = update(
+      graded.model,
+      Message.GradeAccepted({
+        id: entry.id,
+        accepted: {
+          cardId: entry.cardId,
+          grade: 'Again',
+          state: 'relearning',
+          dueInDays: 0,
+          stability: 1,
+          difficulty: 5,
+          reviewLapses: 8,
+          intervalDays: 0,
+          dueAt: '2026-10-05T04:10:00Z',
+          requeueInSession: true,
+          leechSuspended: true,
+        },
+      }),
+    )
+    expect(accepted.model.review.cards.map((card) => card.cardId)).toEqual(['c2'])
+    expect(accepted.model.review.requeue).toEqual([])
+    expect(accepted.model.review.index).toBe(0)
+    expect(accepted.model.review.leechSuspendedCard).toEqual(Option.some(card('c1')))
+    expect(accepted.model.review.leechSuspendedReviewLapses).toBe(8)
+
+    const undone = update(
+      accepted.model,
+      Message.UndoneGrade({ cardId: CardId.make('c1') }),
+    )
+    expect(undone.model.review.cards.map((entry) => entry.cardId)).toEqual(['c1', 'c2'])
+    expect(undone.model.review.index).toBe(0)
+    expect(Option.isNone(undone.model.review.leechSuspendedCard)).toBe(true)
+  })
+
   it('ends the session after the re-queued Card is graded', () => {
     let model = reviewing([card('c1')])
     model = update(model, Message.ClickedGrade({ grade: 'Again' })).model

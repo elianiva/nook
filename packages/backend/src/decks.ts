@@ -48,6 +48,7 @@ const CardRow = Schema.Struct({
   state: Schema.Literals(['new', 'learning', 'review', 'relearning']),
   suspended: Schema.Number,
   lapses: Schema.Number,
+  reviewLapses: Schema.Number,
   templateOrd: Schema.Number,
   noteFields: Schema.NullOr(Schema.String),
   noteTags: Schema.NullOr(Schema.String),
@@ -127,6 +128,7 @@ const toCard = (row: typeof CardRow.Type): Card => ({
   state: row.state,
   suspended: row.suspended === 1,
   lapses: row.lapses,
+  reviewLapses: row.reviewLapses,
   preview: previewRow(row),
 })
 
@@ -306,6 +308,7 @@ export class Decks extends Context.Service<
             yield* sql`SELECT c.id, c.deck_id AS "deckId", c.due_at AS "dueAt",
             COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             c.stability, c.difficulty, c.state, c.suspended, COALESCE(c.lapses, 0) AS lapses,
+            COALESCE(c.review_lapses, 0) AS "reviewLapses",
             c.template_ord AS "templateOrd",
             n.fields AS "noteFields", n.tags AS "noteTags",
             nt.name AS "noteTypeName", nt.kind AS "noteTypeKind", nt.css AS "noteTypeCss",
@@ -423,6 +426,7 @@ export class Decks extends Context.Service<
             sql`DELETE FROM reviews WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
             sql`UPDATE cards SET state = 'new', stability = 0, difficulty = 1,
               due_in_days = 0, due_at = NULL, reps = 0, lapses = 0,
+              review_lapses = 0,
               introduced_day = NULL, buried_until = NULL, buried_sibling_of = NULL,
               last_reviewed_at = NULL,
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE deck_id = ${id}`,

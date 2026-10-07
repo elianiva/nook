@@ -549,15 +549,47 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       return gradeCurrent(model, 'Good')
     },
 
-    GradeAccepted: ({ id }) => ({
-      model: modifyFields(model, {
-        review: () => ({
-          ...model.review,
-          pending: model.review.pending.filter((entry) => entry.id !== id),
-          offline: model.review.offline.filter((entry) => entry.id !== id),
+    GradeAccepted: ({ id, accepted }) => {
+      const review = model.review
+      const entry =
+        review.pending.find((pending) => pending.id === id) ??
+        review.offline.find((pending) => pending.id === id)
+      if (entry === undefined) return { model }
+      const leechCard = accepted.leechSuspended
+        ? (review.cards.find((card) => card.cardId === accepted.cardId) ??
+          review.requeue.find((card) => card.cardId === accepted.cardId))
+        : undefined
+      const removedBefore = accepted.leechSuspended
+        ? review.cards
+            .slice(0, review.index)
+            .filter((card) => card.cardId === accepted.cardId).length
+        : 0
+      const cards = accepted.leechSuspended
+        ? review.cards.filter((card) => card.cardId !== accepted.cardId)
+        : review.cards
+      const index = Math.max(0, review.index - removedBefore)
+      return {
+        model: modifyFields(model, {
+          review: () => ({
+            ...review,
+            cards,
+            index,
+            phase:
+              review.phase === 'reviewing' && index >= cards.length ? 'done' : review.phase,
+            requeue: accepted.leechSuspended
+              ? review.requeue.filter((card) => card.cardId !== accepted.cardId)
+              : review.requeue,
+            pending: review.pending.filter((pending) => pending.id !== id),
+            offline: review.offline.filter((pending) => pending.id !== id),
+            leechSuspendedCard:
+              leechCard === undefined ? review.leechSuspendedCard : Option.some(leechCard),
+            leechSuspendedReviewLapses: accepted.leechSuspended
+              ? accepted.reviewLapses
+              : review.leechSuspendedReviewLapses,
+          }),
         }),
-      }),
-    }),
+      }
+    },
 
     ClickedUndoGrade: () => {
       const last = model.review.lastGrade
@@ -569,23 +601,35 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       const review = model.review
       const last = review.lastGrade
       if (Option.isNone(last) || last.value.cardId !== cardId) return { model }
+      const restoredLeech = Option.match(review.leechSuspendedCard, {
+        onNone: () => undefined,
+        onSome: (card) => (card.cardId === cardId ? card : undefined),
+      })
       // The undone Card steps back to the front: drop its re-queued copy
       // when `Again` appended one, and show it again unrevealed.
       const cards =
-        last.value.grade === 'Again'
-          ? review.cards.filter((card, index) => index !== review.cards.length - 1)
-          : review.cards
+        restoredLeech !== undefined
+          ? [
+              ...review.cards.slice(0, review.index),
+              restoredLeech,
+              ...review.cards.slice(review.index),
+            ]
+          : last.value.grade === 'Again'
+            ? review.cards.filter((card, index) => index !== review.cards.length - 1)
+            : review.cards
       return {
         model: modifyFields(model, {
           review: () => ({
             ...review,
             cards,
-            index: Math.max(0, review.index - 1),
+            index: restoredLeech === undefined ? Math.max(0, review.index - 1) : review.index,
             revealed: false,
             requeue: review.requeue.filter((card) => card.cardId !== cardId),
             pending: review.pending.filter((entry) => entry.cardId !== cardId),
             graded: Math.max(0, review.graded - 1),
             lastGrade: Option.none(),
+            leechSuspendedCard: Option.none(),
+            leechSuspendedReviewLapses: 0,
             undone: true,
             phase: 'reviewing' as const,
             error: Option.none(),

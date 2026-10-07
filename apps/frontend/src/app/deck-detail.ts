@@ -19,6 +19,7 @@ import { input } from '@/components/ui/input'
 import { textarea } from '@/components/ui/textarea'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { LEECH_LAPSE_THRESHOLD } from '@nook/api'
 import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
 import { errorPanel, fieldError, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
@@ -73,6 +74,7 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
     onNone: () => null,
     onSome: ({ cardId, message }) => (cardId === card.id ? message : null),
   })
+  const leech = card.reviewLapses >= LEECH_LAPSE_THRESHOLD
   return h.div(
     [
       h.Class(
@@ -103,7 +105,10 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
         ],
         [
           badge<Message>({ variant: stateVariant(card.state) }, [card.state], h),
-          ...(card.suspended ? [badge<Message>({ variant: 'secondary' }, ['paused'], h)] : []),
+          ...(leech ? [badge<Message>({ variant: 'destructive' }, ['Leech'], h)] : []),
+          ...(card.suspended && !leech
+            ? [badge<Message>({ variant: 'secondary' }, ['paused'], h)]
+            : []),
           h.span([], [`stability ${card.stability.toFixed(1)}d`]),
           h.span([], ['·']),
           h.span([], [`difficulty ${card.difficulty.toFixed(1)}/10`]),
@@ -274,6 +279,9 @@ const cardsSection = (
 ): Html => {
   const open = manage?.cardsOpen ?? false
   const suspendedCount = detail.cards.filter((card) => card.suspended).length
+  const leechCount = detail.cards.filter(
+    (card) => card.reviewLapses >= LEECH_LAPSE_THRESHOLD,
+  ).length
   return h.div(
     [h.Class('flex flex-col gap-2 rounded-[20px] border-0 bg-[var(--theme-block)] p-4')],
     [
@@ -292,7 +300,7 @@ const cardsSection = (
               h.span(
                 [h.Class('text-xs text-muted-foreground')],
                 [
-                  `${detail.cards.length} ${detail.cards.length === 1 ? 'Card' : 'Cards'}${suspendedCount === 0 ? '' : ` · ${suspendedCount} suspended`}${open ? '' : ' · hidden'}`,
+                  `${detail.cards.length} ${detail.cards.length === 1 ? 'Card' : 'Cards'}${suspendedCount === 0 ? '' : ` · ${suspendedCount} suspended`}${leechCount === 0 ? '' : ` · ${leechCount} leeches`}${open ? '' : ' · hidden'}`,
                 ],
               ),
             ],
