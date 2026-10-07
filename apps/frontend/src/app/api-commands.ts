@@ -191,6 +191,25 @@ export const SetCardSuspended = Command.define('SetCardSuspended', {
     ),
 })
 
+export const FetchCardHistory = Command.define('FetchCardHistory', {
+  args: { cardId: CardId },
+  messages: [MessageConstructors.GotCardHistory, MessageConstructors.CardHistoryFailed],
+  execute: ({ cardId }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.reviewsHistory({ cardId })),
+      Effect.map((history) => MessageConstructors.GotCardHistory({ cardId, history })),
+      Effect.catch(() =>
+        Effect.succeed(
+          MessageConstructors.CardHistoryFailed({
+            cardId,
+            error: 'Could not load this Card’s review history. Check the connection and retry.',
+          }),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
 export const UndoGrade = Command.define('UndoGrade', {
   args: { cardId: CardId },
   messages: [MessageConstructors.UndoneGrade, MessageConstructors.UndoFailed],

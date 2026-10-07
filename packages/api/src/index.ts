@@ -455,6 +455,34 @@ export const UndoAccepted = S.Struct({
 })
 export type UndoAccepted = typeof UndoAccepted.Type
 
+/** One saved scheduling state shown beside a historical grade. */
+export const ReviewScheduleSnapshot = S.Struct({
+  state: CardState,
+  stability: S.Number,
+  difficulty: S.Number,
+  dueInDays: S.Number,
+  dueAt: S.NullOr(S.String),
+})
+export type ReviewScheduleSnapshot = typeof ReviewScheduleSnapshot.Type
+
+/** A Card's grade event and the scheduler state immediately before/after it. */
+export const CardReviewEvent = S.Struct({
+  id: S.String,
+  grade: Grade,
+  reviewedAt: S.String,
+  before: S.NullOr(ReviewScheduleSnapshot),
+  after: S.NullOr(ReviewScheduleSnapshot),
+  leechSuspended: S.Boolean,
+})
+export type CardReviewEvent = typeof CardReviewEvent.Type
+
+/** The newest 100 events for one Card, plus the full event count. */
+export const CardReviewHistory = S.Struct({
+  events: S.Array(CardReviewEvent),
+  total: S.Number,
+})
+export type CardReviewHistory = typeof CardReviewHistory.Type
+
 /** One row of the exported collection: the Note content a Card renders. */
 export const ExportNote = S.Struct({
   id: S.String,
@@ -651,6 +679,11 @@ export class ReviewsRpc extends RpcGroup.make(
   Rpc.make('reviewsUndo', {
     payload: UndoReview,
     success: UndoAccepted,
+    error: S.Union([CardNotFound, StorageUnavailable]),
+  }),
+  Rpc.make('reviewsHistory', {
+    payload: { cardId: CardId },
+    success: CardReviewHistory,
     error: S.Union([CardNotFound, StorageUnavailable]),
   }),
   Rpc.make('reviewsExport', {

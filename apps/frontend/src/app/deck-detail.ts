@@ -20,7 +20,7 @@ import { textarea } from '@/components/ui/textarea'
 import { icon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { LEECH_LAPSE_THRESHOLD } from '@nook/api'
-import type { Card as CardData, DeckDetail, DeckId } from '@nook/api'
+import type { Card as CardData, CardReviewEvent, DeckDetail, DeckId, CardId } from '@nook/api'
 import { errorPanel, fieldError, loadingHero, loadingRows } from './load-state'
 import { Message } from './model'
 import { limitsTextFromSummary } from './model'
@@ -63,6 +63,104 @@ const dueLabel = (card: CardData): string => {
 const dueClass = (dueInDays: number): string =>
   dueInDays <= 0 ? 'text-destructive' : 'text-muted-foreground'
 
+const scheduleText = (schedule: CardReviewEvent['before']): string => {
+  if (schedule === null) return 'Schedule snapshot unavailable.'
+  const at = schedule.dueAt === null ? null : new Date(schedule.dueAt)
+  const due =
+    at === null
+      ? 'not scheduled'
+      : Number.isNaN(at.getTime())
+        ? schedule.dueAt
+        : at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return `${schedule.state} · due ${due} · stability ${schedule.stability.toFixed(1)}d · difficulty ${schedule.difficulty.toFixed(1)}`
+}
+
+const historyEventRow = (event: CardReviewEvent, h: HtmlBuilder<Message>): Html => {
+  const at = new Date(event.reviewedAt)
+  const date = Number.isNaN(at.getTime())
+    ? event.reviewedAt
+    : at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return h.div(
+    [h.Class('flex flex-col gap-1 rounded-[10px] bg-white px-3 py-2')],
+    [
+      h.div(
+        [h.Class('flex flex-wrap items-center gap-2')],
+        [
+          badge<Message>(
+            { variant: event.grade === 'Again' ? 'destructive' : 'secondary' },
+            [event.grade],
+            h,
+          ),
+          h.span([h.Class('text-[11px] text-muted-foreground')], [date]),
+          ...(event.leechSuspended
+            ? [badge<Message>({ variant: 'destructive' }, ['Leech suspended'], h)]
+            : []),
+        ],
+      ),
+      h.p([h.Class('text-[11px] text-muted-foreground')], [`Before · ${scheduleText(event.before)}`]),
+      h.p([h.Class('text-[11px] text-[var(--theme-ink)]')], [`After · ${scheduleText(event.after)}`]),
+    ],
+  )
+}
+
+const cardHistoryPanel = (
+  cardId: CardId,
+  model: Model,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const error = Option.getOrNull(model.cardHistoryError)
+  return h.div(
+    [
+      h.Class(
+        'col-span-2 flex max-h-72 flex-col gap-2 overflow-y-auto rounded-[10px] bg-white/70 p-2',
+      ),
+      h.Role('region'),
+      h.AriaLabel('Card review history'),
+    ],
+    [
+      ...(model.cardHistoryLoading && model.cardHistory.length === 0
+        ? [
+            h.p(
+              [h.Class('text-xs text-muted-foreground'), h.Role('status')],
+              ['Loading review history…'],
+            ),
+          ]
+        : []),
+      ...(error === null
+        ? []
+        : [
+            h.div(
+              [h.Class('flex items-center gap-2'), h.Role('alert')],
+              [
+                h.p([h.Class('min-w-0 flex-1 text-xs text-destructive')], [error]),
+                button<Message>(
+                  {
+                    onClick: Message.ClickedRetryCardHistory({ cardId }),
+                    size: 'sm',
+                    isDisabled: model.cardHistoryLoading,
+                  },
+                  ['Retry'],
+                  h,
+                ),
+              ],
+            ),
+          ]),
+      ...(!model.cardHistoryLoading && model.cardHistory.length === 0 && error === null
+        ? [h.p([h.Class('text-xs text-muted-foreground')], ['No saved reviews for this Card yet.'])]
+        : []),
+      ...(model.cardHistoryTotal > model.cardHistory.length
+        ? [
+            h.p(
+              [h.Class('text-[10px] text-muted-foreground')],
+              [`Showing the latest ${model.cardHistory.length} of ${model.cardHistoryTotal} reviews.`],
+            ),
+          ]
+        : []),
+      ...model.cardHistory.map((event) => historyEventRow(event, h)),
+    ],
+  )
+}
+
 const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Message>): Html => {
   // `preview` is optional on the wire for older caches; the decoder defaults it to `''`.
   const preview = card.preview ?? ''
@@ -75,6 +173,7 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
     onSome: ({ cardId, message }) => (cardId === card.id ? message : null),
   })
   const leech = card.reviewLapses >= LEECH_LAPSE_THRESHOLD
+  const historyOpen = Option.getOrNull(model.cardHistoryCard) === card.id
   return h.div(
     [
       h.Class(
@@ -112,6 +211,16 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
           h.span([], [`stability ${card.stability.toFixed(1)}d`]),
           h.span([], ['·']),
           h.span([], [`difficulty ${card.difficulty.toFixed(1)}/10`]),
+          button<Message>(
+            {
+              onClick: Message.ClickedCardHistory({ cardId: card.id }),
+              size: 'sm',
+              className: 'h-7 px-2',
+              attributes: [h.AriaExpanded(historyOpen ? 'true' : 'false')],
+            },
+            [historyOpen ? 'Hide history' : 'History'],
+            h,
+          ),
           ...(card.suspended
             ? [
                 button<Message>(
@@ -136,6 +245,7 @@ const cardRow = (card: CardData, index: number, model: Model, h: HtmlBuilder<Mes
               [actionError],
             ),
           ]),
+      ...(historyOpen ? [cardHistoryPanel(card.id, model, h)] : []),
     ],
   )
 }

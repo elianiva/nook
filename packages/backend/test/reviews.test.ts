@@ -51,6 +51,22 @@ layer(TestLayers)('reviews over sqlite', (it) => {
       expect(graded.state).toBe('review')
       expect(graded.intervalDays).toBeGreaterThanOrEqual(1)
 
+      const history = yield* client.reviewsHistory({ cardId: fresh.cardId })
+      expect(history.total).toBe(1)
+      expect(history.events).toHaveLength(1)
+      expect(history.events[0]).toMatchObject({
+        id: 'review-test-1',
+        grade: 'Good',
+        before: { state: 'new' },
+        after: {
+          state: graded.state,
+          dueInDays: graded.dueInDays,
+          stability: graded.stability,
+          difficulty: graded.difficulty,
+          dueAt: graded.dueAt,
+        },
+      })
+
       // The graded new Card leaves the queue.
       const after = yield* client.reviewsQueue({ deckId: showcaseDeck, timezone: 'UTC' })
       expect(after.cards.length).toBe(5)

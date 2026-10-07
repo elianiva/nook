@@ -20,6 +20,8 @@ import { Navigation } from 'foldkit'
 import { Url } from 'foldkit'
 import {
   AppSettings,
+  CardReviewEvent,
+  CardReviewHistory,
   CardId,
   DEFAULT_SETTINGS,
   DeckDetail,
@@ -438,6 +440,12 @@ export const Model = S.Struct({
   /** Card-level suspension mutation shown in the expanded deck list. */
   cardSuspensionPending: S.Option(CardId),
   cardSuspensionError: S.Option(S.Struct({ cardId: CardId, message: S.String })),
+  /** Per-card grade history currently opened from the deck's card list. */
+  cardHistoryCard: S.Option(CardId),
+  cardHistoryLoading: S.Boolean,
+  cardHistory: S.Array(CardReviewEvent),
+  cardHistoryTotal: S.Number,
+  cardHistoryError: S.Option(S.String),
   /** The picked Mochi theme, mirrored from storage so the swatch ring moves on
    *  pick. Local-only; the DOM attribute and `localStorage` stay authoritative
    *  for paint, and a reload re-reads them. */
@@ -466,6 +474,11 @@ export const seedModel = (url: Url.Url): Model => ({
   settingsRollback: Option.none(),
   cardSuspensionPending: Option.none(),
   cardSuspensionError: Option.none(),
+  cardHistoryCard: Option.none(),
+  cardHistoryLoading: false,
+  cardHistory: [],
+  cardHistoryTotal: 0,
+  cardHistoryError: Option.none(),
   theme: readTheme(),
   hints: initHints(),
   notice: Option.none(),
@@ -520,6 +533,14 @@ export const Message = defineMessageUnion({
   ClickedSuspendCurrentCard: {},
   /** The Learner restored a suspended Card from its deck page. */
   ClickedRestoreCard: { cardId: CardId },
+  /** The Learner opened a Card's review history from its deck row. */
+  ClickedCardHistory: { cardId: CardId },
+  /** The Learner retried a Card history request that failed. */
+  ClickedRetryCardHistory: { cardId: CardId },
+  /** The backend answered with the Card's newest saved grade events. */
+  GotCardHistory: { cardId: CardId, history: CardReviewHistory },
+  /** The Card history could not be read. */
+  CardHistoryFailed: { cardId: CardId, error: S.String },
   /** Suspension changed on the server; review history and schedule are intact. */
   CardSuspensionSaved: {
     cardId: CardId,

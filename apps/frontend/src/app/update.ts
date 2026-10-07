@@ -21,6 +21,7 @@ import { NavigateInternal, NavigateToPath } from './commands'
 import {
   DownloadFile,
   FetchExport,
+  FetchCardHistory,
   FetchReviewQueue,
   FetchSettings,
   LoadCachedQueue,
@@ -402,6 +403,11 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         deckManage: idleDeckManage,
         cardSuspensionPending: Option.none(),
         cardSuspensionError: Option.none(),
+        cardHistoryCard: Option.none(),
+        cardHistoryLoading: false,
+        cardHistory: [],
+        cardHistoryTotal: 0,
+        cardHistoryError: Option.none(),
       })
     },
 
@@ -616,6 +622,65 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       }),
       commands: [SetCardSuspended({ cardId, suspended: false, origin: 'deck' })],
     }),
+
+    ClickedCardHistory: ({ cardId }) => {
+      const selected = Option.getOrNull(model.cardHistoryCard)
+      if (selected === cardId) {
+        return {
+          model: {
+            ...model,
+            cardHistoryCard: Option.none(),
+            cardHistoryLoading: false,
+            cardHistory: [],
+            cardHistoryTotal: 0,
+            cardHistoryError: Option.none(),
+          },
+        }
+      }
+      return {
+        model: {
+          ...model,
+          cardHistoryCard: Option.some(cardId),
+          cardHistoryLoading: true,
+          cardHistory: [],
+          cardHistoryTotal: 0,
+          cardHistoryError: Option.none(),
+        },
+        commands: [FetchCardHistory({ cardId })],
+      }
+    },
+
+    ClickedRetryCardHistory: ({ cardId }) =>
+      Option.getOrNull(model.cardHistoryCard) !== cardId
+        ? { model }
+        : {
+            model: { ...model, cardHistoryLoading: true, cardHistoryError: Option.none() },
+            commands: [FetchCardHistory({ cardId })],
+          },
+
+    GotCardHistory: ({ cardId, history }) =>
+      Option.getOrNull(model.cardHistoryCard) !== cardId
+        ? { model }
+        : {
+            model: {
+              ...model,
+              cardHistoryLoading: false,
+              cardHistory: history.events,
+              cardHistoryTotal: history.total,
+              cardHistoryError: Option.none(),
+            },
+          },
+
+    CardHistoryFailed: ({ cardId, error }) =>
+      Option.getOrNull(model.cardHistoryCard) !== cardId
+        ? { model }
+        : {
+            model: {
+              ...model,
+              cardHistoryLoading: false,
+              cardHistoryError: Option.some(error),
+            },
+          },
 
     CardSuspensionSaved: ({ cardId, suspended, origin }) => {
       if (origin === 'review') {

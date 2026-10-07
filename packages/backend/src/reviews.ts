@@ -45,6 +45,7 @@ import type {
   ReviewSubmission,
   UndoAccepted,
 } from '@nook/api'
+import type { CardReviewHistory, ReviewScheduleSnapshot } from '@nook/api'
 import { runStatements } from './batch'
 import { dayStartUtc, dueInstantUtc, resolveTimezone, reviewDayKey } from './day-boundary'
 import { scheduleReview } from './fsrs'
@@ -57,6 +58,9 @@ const CARD_SCOPE = '#nook-card'
 
 /** How many rendered Cards one queue carries. ADR 0001 sizes the device's prefetch at this. */
 const QUEUE_LIMIT = 200
+
+/** How many grade events a Card history request returns, newest first. */
+const HISTORY_LIMIT = 100
 
 /** Where the browser loads a Media file from. */
 const mediaUrl = (name: string): string => `/api/media/${encodeURIComponent(name)}`
@@ -195,6 +199,9 @@ export class Reviews extends Context.Service<
       submission: ReviewSubmission,
     ): Effect.Effect<ReviewAccepted, CardNotFound | StorageUnavailable>
     undo(input: { cardId: CardId }): Effect.Effect<UndoAccepted, CardNotFound | StorageUnavailable>
+    history(input: {
+      cardId: CardId
+    }): Effect.Effect<CardReviewHistory, CardNotFound | StorageUnavailable>
     exportCollection(): Effect.Effect<CollectionExport, StorageUnavailable>
   }
 >()('nook/backend/Reviews') {
@@ -441,9 +448,11 @@ export class Reviews extends Context.Service<
           // session.
           const nextDay = dueInstantUtc(boundary, 1, now, lapseMinutes)
           const statements = [
-            sql`INSERT INTO reviews (id, card_id, grade, reviewed_at, leech_suspended)
+            sql`INSERT INTO reviews (id, card_id, grade, reviewed_at, leech_suspended,
+              state_after, stability_after, difficulty_after, due_in_days_after, due_at_after)
               VALUES (${submission.id}, ${submission.cardId}, ${submission.grade},
-              strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ${leechSuspended ? 1 : 0})`,
+              strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ${leechSuspended ? 1 : 0},
+              ${scheduled.state}, ${scheduled.stability}, ${scheduled.difficulty}, ${interval}, ${dueAt})`,
             sql`INSERT INTO review_snapshots (review_id, card_id, state, stability, difficulty,
               due_in_days, due_at, reps, lapses, introduced_day, last_reviewed_at, buried_until,
               review_lapses, suspended)
@@ -573,6 +582,86 @@ export class Reviews extends Context.Service<
         )
 
       /**
+       * The newest grade events for one Card. Before-state comes from the
+       * atomic undo snapshot; after-state is saved with the grade. Older
+       * history without either record remains visible with an unknown state.
+       */
+      const history = (input: {
+        cardId: CardId
+      }): Effect.Effect<CardReviewHistory, CardNotFound | StorageUnavailable> =>
+        Effect.gen(function* () {
+          const card = yield* readCard(input.cardId)
+          if (card === undefined) return yield* new CardNotFound({ cardId: input.cardId })
+
+          const countRows = yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${input.cardId}`
+          const total = (yield* decodeRows(CountRow, countRows))[0]?.n ?? 0
+          const eventRows = yield* sql`SELECT r.id, r.grade, r.reviewed_at AS "reviewedAt",
+            s.state AS "beforeState", s.stability AS "beforeStability",
+            s.difficulty AS "beforeDifficulty", s.due_in_days AS "beforeDueInDays",
+            s.due_at AS "beforeDueAt", r.state_after AS "afterState",
+            r.stability_after AS "afterStability", r.difficulty_after AS "afterDifficulty",
+            r.due_in_days_after AS "afterDueInDays", r.due_at_after AS "afterDueAt",
+            r.leech_suspended AS "leechSuspended"
+            FROM reviews r LEFT JOIN review_snapshots s ON s.review_id = r.id
+            WHERE r.card_id = ${input.cardId}
+            ORDER BY r.reviewed_at DESC, r.rowid DESC LIMIT ${HISTORY_LIMIT}`
+          const rows = yield* decodeRows(
+            Schema.Struct({
+              id: Schema.String,
+              grade: Schema.Literals(['Again', 'Hard', 'Good', 'Easy']),
+              reviewedAt: Schema.String,
+              beforeState: Schema.NullOr(CardStateRow),
+              beforeStability: Schema.NullOr(Schema.Number),
+              beforeDifficulty: Schema.NullOr(Schema.Number),
+              beforeDueInDays: Schema.NullOr(Schema.Number),
+              beforeDueAt: Schema.NullOr(Schema.String),
+              afterState: Schema.NullOr(CardStateRow),
+              afterStability: Schema.NullOr(Schema.Number),
+              afterDifficulty: Schema.NullOr(Schema.Number),
+              afterDueInDays: Schema.NullOr(Schema.Number),
+              afterDueAt: Schema.NullOr(Schema.String),
+              leechSuspended: Schema.Number,
+            }),
+            eventRows,
+          )
+          const schedule = (
+            state: typeof CardStateRow.Type | null,
+            stability: number | null,
+            difficulty: number | null,
+            dueInDays: number | null,
+            dueAt: string | null,
+          ): ReviewScheduleSnapshot | null =>
+            state === null || stability === null || difficulty === null || dueInDays === null
+              ? null
+              : { state, stability, difficulty, dueInDays, dueAt }
+          return {
+            total,
+            events: rows.map((row) => ({
+              id: row.id,
+              grade: row.grade,
+              reviewedAt: row.reviewedAt,
+              before: schedule(
+                row.beforeState,
+                row.beforeStability,
+                row.beforeDifficulty,
+                row.beforeDueInDays,
+                row.beforeDueAt,
+              ),
+              after: schedule(
+                row.afterState,
+                row.afterStability,
+                row.afterDifficulty,
+                row.afterDueInDays,
+                row.afterDueAt,
+              ),
+              leechSuspended: row.leechSuspended === 1,
+            })),
+          } satisfies CardReviewHistory
+        }).pipe(Effect.withSpan('Reviews.history'), (self) =>
+          withStorageErrorPassThrough(self, 'load Card review history'),
+        )
+
+      /**
        * The whole collection as plain rows: Decks, Notes, Cards with scheduling
        * state, and the Review log. The browser downloads it as one JSON file.
        * Media files stay in R2; the export names what it cannot carry.
@@ -682,7 +771,7 @@ export class Reviews extends Context.Service<
           withStorageErrorPassThrough(self, 'export the collection'),
         )
 
-      return Reviews.of({ queue, grade, undo, exportCollection })
+      return Reviews.of({ queue, grade, undo, history, exportCollection })
     }),
   )
 }
@@ -695,6 +784,7 @@ export const ReviewsHandlers = ReviewsRpc.toLayer(
         reviews.queue({ deckId: Option.fromUndefinedOr(deckId), timezone, bypassDueLimit }),
       reviewsGrade: (payload) => reviews.grade(payload),
       reviewsUndo: ({ cardId }) => reviews.undo({ cardId }),
+      reviewsHistory: ({ cardId }) => reviews.history({ cardId }),
       reviewsExport: () => reviews.exportCollection(),
     })
   }),

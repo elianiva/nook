@@ -198,6 +198,23 @@ describe('deck manage', () => {
     expect(Option.isSome(restored.model.cardSuspensionPending)).toBe(true)
   })
 
+  it('loads one card history on demand and ignores a late response after closing it', () => {
+    const cardId = CardId.make('card-a')
+    const opened = update(cached('Deck'), Message.ClickedCardHistory({ cardId }))
+    expect(names(opened)).toEqual(['FetchCardHistory'])
+    expect(opened.model.cardHistoryLoading).toBe(true)
+    expect(opened.model.cardHistoryCard).toEqual(Option.some(cardId))
+
+    const closed = update(opened.model, Message.ClickedCardHistory({ cardId }))
+    expect(Option.isNone(closed.model.cardHistoryCard)).toBe(true)
+    const late = update(
+      closed.model,
+      Message.GotCardHistory({ cardId, history: { total: 0, events: [] } }),
+    )
+    expect(Option.isNone(late.model.cardHistoryCard)).toBe(true)
+    expect(late.model.cardHistory).toEqual([])
+  })
+
   it('resets the manage draft when the route changes', () => {
     const edited = update(
       seedModel(url('/decks/deck-a')),
