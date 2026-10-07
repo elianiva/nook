@@ -13,6 +13,22 @@ const TestLayers = DecksHandlers.pipe(Layer.provideMerge(Decks.layer), Layer.pro
 const showcaseDeck = DeckId.make('deck-showcase-japanese')
 
 layer(TestLayers)('deck management over sqlite', (it) => {
+  it.effect('serves a plain-text prompt preview per card', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(DecksRpc)
+
+      const detail = yield* client.decksGetById({ deckId: showcaseDeck })
+      expect(detail.cards.length).toBe(8)
+      const previews = new Map(detail.cards.map((card) => [card.id, card.preview]))
+      // Basic note: the prompt side only, never the answer.
+      expect(previews.get('card-showcase-01')).toBe('おはよう')
+      // Cloze note: surrounding text with the hidden answer replaced by its hint.
+      expect(previews.get('card-showcase-07')).toContain('東京は')
+      expect(previews.get('card-showcase-07')).not.toContain('日本の首都')
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('renames a deck and trims the fields', () =>
     Effect.gen(function* () {
       yield* migrate

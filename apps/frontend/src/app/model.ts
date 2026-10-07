@@ -9,8 +9,8 @@
  * Data-volume contract (mirrors `@nook/api`):
  * - home/decks hold `DeckSummary` rows only — counts plus the next Review,
  *   never Card bodies
- * - the deck page holds one `DeckDetail`: its summary plus scheduling-state
- *   rows for its own Cards, retained per deck id
+ * - the deck page holds one `DeckDetail`: its summary plus per-Card rows
+ *   with prompt previews, retained per deck id
  * - settings holds `AppSettings`, edited locally until Save
  */
 

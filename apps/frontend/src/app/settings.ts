@@ -298,7 +298,8 @@ const saveBar = (h: HtmlBuilder<Message>): Html =>
         {
           onClick: Message.ClickedResetSettings(),
           size: 'lg',
-          className: 'h-11 border-0 bg-[var(--theme-block)] px-4 shadow-none',
+          className:
+            'h-11 border-0 bg-[var(--theme-block)] px-4 text-[var(--theme-ink)] shadow-none',
           attributes: [h.AriaLabel('Reset changes')],
         },
         [icon(h, RotateCcw, 'size-4')],
@@ -376,7 +377,8 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
               {
                 onClick: Message.ClickedExport(),
                 size: 'lg',
-                className: 'h-9 w-full border-0 bg-white text-sm shadow-none',
+                className:
+                  'h-9 w-full border-0 bg-white text-sm text-[var(--theme-ink)] shadow-none',
               },
               [icon(h, Download, 'size-4', 'inline-start'), 'Export collection as JSON'],
               h,

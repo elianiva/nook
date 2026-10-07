@@ -2,8 +2,9 @@
  * Decks page: the full deck list with search and an import entry point.
  *
  * Each row is the same `DeckSummary` projection as on Home — counts plus the
- * next Review, never Card bodies. Search filters locally on name and
- * description; the backend will accept the same query string later.
+ * next Review. Card previews live on each deck's own page instead. Search
+ * filters locally on name and description; the backend will accept the same
+ * query string later.
  */
 
 import { AsyncData } from 'foldkit'
@@ -425,7 +426,8 @@ export const decksView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<
             onClick: Message.ClickedImport(),
             isDisabled: model.importState.active,
             size: 'icon-lg',
-            className: 'h-11 w-11 rounded-[14px] border-0 bg-[var(--theme-block)] shadow-none',
+            className:
+              'h-11 w-11 rounded-[14px] border-0 bg-[var(--theme-block)] text-[var(--theme-ink)] shadow-none',
             attributes: [h.AriaLabel('Import deck')],
           },
           [icon(h, Upload, 'size-4')],

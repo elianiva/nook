@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@effect/vitest'
-import { renderCard, scopeCss } from '../src/Render'
+import { previewCard, renderCard, scopeCss } from '../src/Render'
 import type { RenderNoteType } from '../src/Render'
 
 const basic: RenderNoteType = {
@@ -183,6 +183,56 @@ describe('renderCard', () => {
       mediaUrl: (name) => `/api/media/${name}`,
     })
     expect(card.question).toBe('<img src="https://example.com/cat.jpg">')
+  })
+})
+
+describe('previewCard', () => {
+  it('renders the prompt side as one plain-text line', () => {
+    const preview = previewCard({
+      noteType: basic,
+      note: { fields: ['おはよう', 'Good morning'], tags: [] },
+      templateOrd: 0,
+      deckName: 'Japanese::Vocab',
+    })
+    expect(preview).toBe('おはよう')
+  })
+
+  it('strips markup and collapses whitespace', () => {
+    const preview = previewCard({
+      noteType: basic,
+      note: { fields: ['<b>bold</b><br>  spaced', 'Back'], tags: [] },
+      templateOrd: 0,
+      deckName: 'Deck',
+    })
+    expect(preview).toBe('bold spaced')
+  })
+
+  it('reads empty for media-only prompts without leaking the answer', () => {
+    const preview = previewCard({
+      noteType: basic,
+      note: { fields: ['[sound:hello.mp3]', 'Good morning'], tags: [] },
+      templateOrd: 0,
+      deckName: 'Deck',
+    })
+    expect(preview).toBe('')
+  })
+
+  it('shows the cloze hint where the question hides the answer', () => {
+    const cloze: RenderNoteType = {
+      name: 'Cloze',
+      kind: 'cloze',
+      css: '',
+      fields: [{ name: 'Text', ord: 0 }],
+      templates: [{ name: 'Cloze', ord: 0, questionFormat: '{{cloze:Text}}', answerFormat: '' }],
+    }
+    const preview = previewCard({
+      noteType: cloze,
+      note: { fields: ['東京は{{c1::日本の首都}}です。'], tags: [] },
+      templateOrd: 0,
+      deckName: 'Deck',
+    })
+    expect(preview).toContain('東京は')
+    expect(preview).not.toContain('日本の首都')
   })
 })
 

@@ -22,11 +22,13 @@
  *   dozens to low hundreds of Cards
  * - `DeckSummary` is the list-screen projection: counts plus the next
  *   Review only, never full Card bodies
+ * - the deck page carries a plain-text prompt preview per Card; full bodies
+ *   still arrive one at a time in the review queue
  * - the review queue serves one Card at a time; the browser never holds the
  *   whole collection
  */
 
-import { Schema as S } from 'effect'
+import { Effect, Schema as S } from 'effect'
 import { Rpc, RpcGroup } from 'effect/rpc'
 
 /** Stable identifiers. Branded so a Deck id cannot flow where a Card id is expected. */
@@ -43,7 +45,7 @@ export type NoteTypeId = typeof NoteTypeId.Type
 export const CardState = S.Literals(['new', 'learning', 'review', 'relearning'])
 export type CardState = typeof CardState.Type
 
-/** One recallable item. The list screens never carry prompt/answer bodies — those arrive one at a time in the review queue. */
+/** One recallable item. Deck-detail rows carry a plain-text `preview` of the prompt side; full bodies still arrive one at a time in the review queue. */
 export const Card = S.Struct({
   id: CardId,
   deckId: DeckId,
@@ -56,6 +58,8 @@ export const Card = S.Struct({
   /** Current FSRS difficulty, 1–10. Owned by FSRS; shown, never edited directly. */
   difficulty: S.Number,
   state: CardState,
+  /** Plain-text prompt preview for the deck page's Card rows. Empty when the Card has no readable text (media-only). */
+  preview: S.optional(S.String).pipe(S.withDecodingDefault(Effect.succeed(''))),
 })
 export type Card = typeof Card.Type
 
@@ -77,7 +81,7 @@ export const DeckSummary = S.Struct({
 })
 export type DeckSummary = typeof DeckSummary.Type
 
-/** One Deck with enough Card detail for its own page: the summary plus per-Card rows. Bodies stay out; the table shows scheduling state only. */
+/** One Deck with enough Card detail for its own page: the summary plus per-Card rows with prompt previews. Full bodies still arrive one at a time in the review queue. */
 export const DeckDetail = S.Struct({
   summary: DeckSummary,
   cards: S.Array(Card),

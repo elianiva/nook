@@ -410,6 +410,27 @@ export const renderCard = (input: RenderInput): RenderedCard => {
   }
 }
 
+/**
+ * A Card's prompt side as plain text, for list rows that cannot host rendered HTML.
+ *
+ * Renders the question side with `renderCard`, then strips tags and collapses
+ * whitespace, so a Note Type's markup, cloze spans, and audio tags become one
+ * readable line. Media with no text alternative reads as empty; callers fall
+ * back to the answer side in that case.
+ */
+export const previewCard = (input: RenderInput): string =>
+  renderCard(input)
+    .question.replace(/<audio\b[^>]*>.*?<\/audio>/gis, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 /** Finds the `}` that closes the `{` at `open`, honouring nested braces. */
 const findMatchingBrace = (css: string, open: number): number => {
   let depth = 0

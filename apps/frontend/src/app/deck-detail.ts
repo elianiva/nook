@@ -1,11 +1,10 @@
 /**
- * Deck page: one Deck's summary plus its scheduling-state table.
+ * Deck page: one Deck's summary plus its Card list.
  *
- * The header carries the counts and a Start action; the table lists the
- * Deck's Cards as scheduling rows (state, due, stability, difficulty) —
- * never prompt/answer bodies. The read is the deck-detail KeyedQuery, so an
- * unknown id renders its not-found state and a known Deck keeps its last
- * answer while a refresh runs.
+ * The header carries the counts and a Start action; the list shows each
+ * Card's prompt preview with its scheduling state underneath. The read is
+ * the deck-detail KeyedQuery, so an unknown id renders its not-found state
+ * and a known Deck keeps its last answer while a refresh runs.
  */
 
 import { AsyncData } from 'foldkit'
@@ -62,23 +61,26 @@ const dueLabel = (card: CardData): string => {
 const dueClass = (dueInDays: number): string =>
   dueInDays <= 0 ? 'text-destructive' : 'text-muted-foreground'
 
-const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =>
-  h.div(
+const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html => {
+  // `preview` is optional on the wire for older caches; the decoder defaults it to `''`.
+  const preview = card.preview ?? ''
+  return h.div(
     [
       h.Class(
         'grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 rounded-[14px] border-0 bg-[var(--theme-block)] px-3 py-2.5',
       ),
     ],
     [
-      h.div(
-        [h.Class('flex items-center gap-2')],
-        [
-          badge<Message>({ variant: stateVariant(card.state) }, [card.state], h),
-          h.span([h.Class('font-mono text-xs text-muted-foreground')], [`#${index + 1}`]),
-        ],
+      h.span(
+        [h.Class('min-w-0 flex-1 truncate text-sm font-semibold')],
+        [preview === '' ? `Card ${index + 1}` : preview],
       ),
       h.span(
-        [h.Class(cn('text-right text-xs font-medium tabular-nums', dueClass(card.dueInDays)))],
+        [
+          h.Class(
+            cn('shrink-0 text-right text-xs font-medium tabular-nums', dueClass(card.dueInDays)),
+          ),
+        ],
         [dueLabel(card)],
       ),
       h.div(
@@ -88,6 +90,7 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
           ),
         ],
         [
+          badge<Message>({ variant: stateVariant(card.state) }, [card.state], h),
           h.span([], [`stability ${card.stability.toFixed(1)}d`]),
           h.span([], ['·']),
           h.span([], [`difficulty ${card.difficulty.toFixed(1)}/10`]),
@@ -95,6 +98,7 @@ const cardRow = (card: CardData, index: number, h: HtmlBuilder<Message>): Html =
       ),
     ],
   )
+}
 
 const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html =>
   h.div(

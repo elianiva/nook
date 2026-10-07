@@ -1,5 +1,6 @@
 import { Context, Effect, Layer, Option, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
+import { previewCard } from '@nook/anki/render'
 import { CardId, DecksRpc, DeckId, DeckNotFound, StorageUnavailable } from '@nook/api'
 import type { Card, DeckDetail, DeckRename, DeckSummary } from '@nook/api'
 import { runStatements } from './batch'
@@ -18,7 +19,7 @@ const DeckRow = Schema.Struct({
   retention7d: Schema.Number,
 })
 
-/** One row of the `cards` table, enough for the scheduling-state table. */
+/** One row of the `cards` table, plus its Note and Note Type for the prompt preview. */
 const CardRow = Schema.Struct({
   id: Schema.String,
   deckId: Schema.String,
@@ -27,7 +28,62 @@ const CardRow = Schema.Struct({
   stability: Schema.Number,
   difficulty: Schema.Number,
   state: Schema.Literals(['new', 'learning', 'review', 'relearning']),
+  templateOrd: Schema.Number,
+  noteFields: Schema.NullOr(Schema.String),
+  noteTags: Schema.NullOr(Schema.String),
+  noteTypeName: Schema.NullOr(Schema.String),
+  noteTypeKind: Schema.NullOr(Schema.Literals(['normal', 'cloze'])),
+  noteTypeCss: Schema.NullOr(Schema.String),
+  noteTypeFields: Schema.NullOr(Schema.String),
+  noteTypeTemplates: Schema.NullOr(Schema.String),
+  deckName: Schema.NullOr(Schema.String),
 })
+
+/** One Field or Template as the Note Type's JSON column stores it. */
+const StoredField = Schema.Struct({ ord: Schema.Number, name: Schema.String })
+const StoredTemplate = Schema.Struct({
+  ord: Schema.Number,
+  name: Schema.String,
+  questionFormat: Schema.String,
+  answerFormat: Schema.String,
+})
+
+/** Decode a JSON column, or `None` when it is missing or misshapen. Cards without Notes still render their scheduling row. */
+const decodeJsonArray = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  column: string | null,
+): Option.Option<S['Type']> => {
+  if (column === null) return Option.none()
+  const decoded = Schema.decodeUnknownOption(Schema.fromJsonString(schema))(column)
+  return Option.isNone(decoded) ? Option.none() : decoded
+}
+
+/** Plain-text prompt preview for one detail row. Empty when the Card has no Note or no readable text. */
+const previewRow = (row: typeof CardRow.Type): string => {
+  if (row.noteTypeKind === null || row.noteTypeFields === null || row.noteTypeTemplates === null) {
+    return ''
+  }
+  const fields = decodeJsonArray(Schema.Array(StoredField), row.noteTypeFields)
+  const templates = decodeJsonArray(Schema.Array(StoredTemplate), row.noteTypeTemplates)
+  const noteFields = decodeJsonArray(Schema.Array(Schema.String), row.noteFields)
+  const noteTags = decodeJsonArray(Schema.Array(Schema.String), row.noteTags)
+  if (Option.isNone(fields) || Option.isNone(templates) || Option.isNone(noteFields)) return ''
+  return previewCard({
+    noteType: {
+      name: row.noteTypeName ?? '',
+      kind: row.noteTypeKind,
+      css: row.noteTypeCss ?? '',
+      fields: fields.value,
+      templates: templates.value,
+    },
+    note: {
+      fields: noteFields.value,
+      tags: Option.getOrElse(noteTags, () => [] as ReadonlyArray<string>),
+    },
+    templateOrd: row.templateOrd,
+    deckName: row.deckName ?? '',
+  })
+}
 
 const toSummary = (row: typeof DeckRow.Type): DeckSummary => ({
   id: DeckId.make(row.id),
@@ -48,6 +104,7 @@ const toCard = (row: typeof CardRow.Type): Card => ({
   stability: row.stability,
   difficulty: row.difficulty,
   state: row.state,
+  preview: previewRow(row),
 })
 
 /**
@@ -116,9 +173,17 @@ export class Decks extends Context.Service<
           const summaries = yield* decodeRows(DeckRow, summaryRows)
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
-          const cardRows = yield* sql`SELECT id, deck_id AS "deckId", due_at AS "dueAt",
-            COALESCE(CAST(julianday(due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
-            stability, difficulty, state FROM cards WHERE deck_id = ${id} ORDER BY rowid LIMIT 200`
+          const cardRows = yield* sql`SELECT c.id, c.deck_id AS "deckId", c.due_at AS "dueAt",
+            COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
+            c.stability, c.difficulty, c.state, c.template_ord AS "templateOrd",
+            n.fields AS "noteFields", n.tags AS "noteTags",
+            nt.name AS "noteTypeName", nt.kind AS "noteTypeKind", nt.css AS "noteTypeCss",
+            nt.fields AS "noteTypeFields", nt.templates AS "noteTypeTemplates",
+            d.name AS "deckName"
+            FROM cards c LEFT JOIN notes n ON n.id = c.note_id
+            LEFT JOIN note_types nt ON nt.id = n.note_type_id
+            LEFT JOIN decks d ON d.id = c.deck_id
+            WHERE c.deck_id = ${id} ORDER BY c.rowid LIMIT 200`
           const cards = yield* decodeRows(CardRow, cardRows)
           return { summary: toSummary(summary), cards: cards.map(toCard) } satisfies DeckDetail
         })
