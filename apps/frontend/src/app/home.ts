@@ -171,22 +171,13 @@ const statCell = (label: string, value: string, sub: string, h: HtmlBuilder<Mess
     ],
   )
 
-const stats = (
-  overview: Overview,
-  decks: ReadonlyArray<DeckSummary>,
-  h: HtmlBuilder<Message>,
-): Html =>
+const stats = (overview: Overview, h: HtmlBuilder<Message>): Html =>
   h.div(
     [h.Class('flex gap-2')],
     [
       statCell('Reviewed', String(overview.reviewedToday), 'today', h),
       statCell('Streak', `${overview.streakDays}d`, 'in a row', h),
-      statCell(
-        'Retention',
-        `${decks.length === 0 ? 0 : Math.round(decks.reduce((sum, deck) => sum + deck.retention7d, 0) / decks.length)}%`,
-        '7-day avg',
-        h,
-      ),
+      statCell('Retention', `${overview.retention7d}%`, '7-day avg', h),
     ],
   )
 
@@ -273,16 +264,13 @@ const deckList = (
 export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const overviewAsync = overviewQuery.read(model.overview)
   const decksAsync = decksQuery.read(model.decks)
-  // The retention stat reads the deck list. Use whatever the decks Query holds,
-  // or nothing while it is still loading.
-  const decks = AsyncData.getOrElse(() => [] as ReadonlyArray<DeckSummary>)(decksAsync)
   return [
     ...AsyncData.matchData(overviewAsync, {
       onEmpty: () => [loadingHero('Loading the overview…', h)],
       onFailure: (error) => [errorPanel(error, Message.ClickedRetryOverview(), h)],
       onData: (overview) => [
         hero(overview, h),
-        stats(overview, decks, h),
+        stats(overview, h),
         activity(overview, h),
         streakNote(overview, h),
       ],

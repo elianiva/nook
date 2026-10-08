@@ -83,6 +83,7 @@ describe('Query wiring', () => {
             value: {
               dueNow: 3,
               reviewedToday: 1,
+              retention7d: 75,
               streakDays: 2,
               todayProgress: 25,
               activity14d: [],
@@ -100,6 +101,7 @@ describe('Query wiring', () => {
       Option.some({
         dueNow: 3,
         reviewedToday: 1,
+        retention7d: 75,
         streakDays: 2,
         todayProgress: 25,
         activity14d: [],
@@ -121,6 +123,7 @@ describe('Query wiring', () => {
             value: {
               dueNow: 99,
               reviewedToday: 0,
+              retention7d: 0,
               streakDays: 0,
               todayProgress: 0,
               activity14d: [],
@@ -138,6 +141,7 @@ describe('Query wiring', () => {
     const overviewValue = {
       dueNow: 0,
       reviewedToday: 0,
+      retention7d: 0,
       streakDays: 0,
       todayProgress: 0,
       activity14d: [],
@@ -192,6 +196,7 @@ describe('Query wiring', () => {
     const fresh = {
       dueNow: 5,
       reviewedToday: 2,
+      retention7d: 80,
       streakDays: 1,
       todayProgress: 40,
       activity14d: [1],

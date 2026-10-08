@@ -1,6 +1,12 @@
 import { describe, expect, it } from '@effect/vitest'
 import { Arbitrary, Schema } from 'effect'
-import { dayKeyInTimezone, dayStartUtc, dueInstantUtc, reviewDayKey } from '../src/day-boundary'
+import {
+  dayKeyInTimezone,
+  dayStartUtc,
+  dayStartUtcForKey,
+  dueInstantUtc,
+  reviewDayKey,
+} from '../src/day-boundary'
 
 const DAY_MS = 86_400_000
 const natural = Arbitrary.schema(Schema.Natural)
@@ -33,6 +39,11 @@ describe('dayStartUtc', () => {
   it('falls back to UTC midnight arithmetic without a timezone shift', () => {
     expect(dayStartUtc('UTC', 4, new Date('2026-10-05T10:00:00Z'))).toBe('2026-10-05T04:00:00Z')
     expect(dayStartUtc('UTC', 4, new Date('2026-10-05T02:00:00Z'))).toBe('2026-10-04T04:00:00Z')
+  })
+
+  it('uses each historical day’s timezone offset across daylight-saving changes', () => {
+    expect(dayStartUtcForKey('America/New_York', 4, '2026-10-31')).toBe('2026-10-31T08:00:00Z')
+    expect(dayStartUtcForKey('America/New_York', 4, '2026-11-01')).toBe('2026-11-01T09:00:00Z')
   })
 
   it.prop(

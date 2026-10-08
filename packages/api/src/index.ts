@@ -147,6 +147,8 @@ export const Overview = S.Struct({
   dueNow: S.Number,
   /** Cards reviewed today. */
   reviewedToday: S.Number,
+  /** Share of Reviews in the last 7 days that were not Again, 0–100. */
+  retention7d: S.Number,
   /** Day streak. */
   streakDays: S.Number,
   /** Share of due Cards cleared today, 0–100. */

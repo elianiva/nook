@@ -83,6 +83,26 @@ export const dayStartUtc = (timezone: string, rolloverHour: number, instant: Dat
 }
 
 /**
+ * The UTC instant a named learner-day starts at, including its timezone's
+ * offset on that date. This is useful when building historical day buckets:
+ * subtracting 24 hours from an instant is not calendar-day arithmetic across
+ * daylight-saving transitions.
+ */
+export const dayStartUtcForKey = (
+  timezone: string,
+  rolloverHour: number,
+  dayKey: string,
+): string => {
+  const [year, month, day] = dayKey.split('-').map(Number)
+  const localStartMs = Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1, rolloverHour)
+  let utcMs = localStartMs
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    utcMs = localStartMs - offsetMinutesAt(timezone, new Date(utcMs)) * 60_000
+  }
+  return toIsoUtc(new Date(utcMs))
+}
+
+/**
  * The day key a grade belongs to: the learner-day it was reviewed in.
  * Reviews before rollover count toward the previous day.
  */

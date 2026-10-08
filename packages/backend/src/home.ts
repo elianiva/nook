@@ -2,11 +2,39 @@ import { Context, Effect, Layer, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { HomeRpc, StorageUnavailable } from '@nook/api'
 import type { Overview } from '@nook/api'
-import { dayStartUtc, resolveTimezone } from './day-boundary'
+import { dayStartUtc, dayStartUtcForKey, resolveTimezone, reviewDayKey } from './day-boundary'
 import { decodeRows, withStorageErrorPassThrough, CountRow } from './storage-error'
 
-const DayRow = Schema.Struct({ day: Schema.String, count: Schema.Number })
 const SettingsRow = Schema.Struct({ dayRolloverHour: Schema.Number })
+
+const learnerDayActivity = (
+  sql: Sql.SqlClient,
+  timezone: string,
+  rolloverHour: number,
+  days: ReadonlyArray<string>,
+) => {
+  const earliestDay = days[0]
+  if (earliestDay === undefined) return Effect.succeed([] as ReadonlyArray<number>)
+  const counts = sql.csv(
+    days.map((day, index) => {
+      const date = new Date(`${day}T00:00:00Z`)
+      date.setUTCDate(date.getUTCDate() + 1)
+      const nextDay = date.toISOString().slice(0, 10)
+      const start = dayStartUtcForKey(timezone, rolloverHour, day)
+      const end = dayStartUtcForKey(timezone, rolloverHour, nextDay)
+      return sql`COUNT(CASE WHEN julianday(reviewed_at) >= julianday(${start})
+        AND julianday(reviewed_at) < julianday(${end}) THEN 1 END)
+        AS ${sql(`day${index}`)}`
+    }),
+  )
+  const earliestStart = dayStartUtcForKey(timezone, rolloverHour, earliestDay)
+  const Row = Schema.Record(Schema.String, Schema.Number)
+  return sql`SELECT ${counts} FROM reviews
+    WHERE julianday(reviewed_at) >= julianday(${earliestStart})`.pipe(
+    Effect.flatMap((values) => decodeRows(Row, values)),
+    Effect.map((rows) => days.map((_, index) => rows[0]?.[`day${index}`] ?? 0)),
+  )
+}
 
 /**
  * The overview reads through the `SqlClient` the layer closes over, so the
@@ -42,37 +70,71 @@ export class Home extends Context.Service<
           const timezone = resolveTimezone(input?.timezone)
           const now = new Date()
           const boundary = dayStartUtc(timezone, rolloverHour, now)
+          const todayKey = reviewDayKey(timezone, rolloverHour, now)
 
           const dueValues = yield* sql`SELECT COUNT(*) AS n FROM cards WHERE state != 'new'
+              AND suspended = 0 AND note_id IS NOT NULL
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`
           const dueRows = yield* decodeRows(CountRow, dueValues)
-          const reviewedValues = yield* sql`SELECT COUNT(*) AS n FROM reviews
-            WHERE reviewed_at >= ${boundary}`
+          const reviewedValues = yield* sql`SELECT COUNT(DISTINCT card_id) AS n FROM reviews
+            WHERE julianday(reviewed_at) >= julianday(${boundary})`
           const reviewedRows = yield* decodeRows(CountRow, reviewedValues)
-          const dayValues = yield* sql`WITH RECURSIVE days(n) AS (
-              SELECT 0 UNION ALL SELECT n + 1 FROM days WHERE n < 13
-            )
-            SELECT date(${boundary}, '-' || n || ' days') AS day,
-              (SELECT COUNT(*) FROM reviews
-                WHERE date(reviewed_at) = date(${boundary}, '-' || n || ' days')) AS count
-            FROM days ORDER BY day`
-          const dayRows = yield* decodeRows(DayRow, dayValues)
+          const retentionValues = yield* sql`SELECT COALESCE(ROUND(
+              100.0 * SUM(CASE WHEN grade != 'Again' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)
+            ), 0) AS n FROM reviews
+            WHERE julianday(reviewed_at) >= julianday('now', '-7 days')`
+          const retentionRows = yield* decodeRows(CountRow, retentionValues)
+          const today = new Date(`${todayKey}T00:00:00Z`)
+          const activityDayKeys = Array.from({ length: 14 }, (_, index) => {
+            const date = new Date(today)
+            date.setUTCDate(date.getUTCDate() - (13 - index))
+            return date.toISOString().slice(0, 10)
+          })
+          const dayRows = yield* learnerDayActivity(sql, timezone, rolloverHour, activityDayKeys)
           const dueNow = dueRows[0]?.n ?? 0
           const reviewedToday = reviewedRows[0]?.n ?? 0
-          const activity14d = dayRows.map((row) => row.count)
+          const retention7d = retentionRows[0]?.n ?? 0
+          const activity14d = dayRows
           const todayProgress =
             dueNow + reviewedToday === 0
               ? 100
               : Math.min(100, Math.round((reviewedToday / (dueNow + reviewedToday)) * 100))
           let streakDays = 0
-          for (let index = activity14d.length - 1; index >= 0; index -= 1) {
-            if ((activity14d[index] ?? 0) > 0) streakDays += 1
-            else break
+          let index = activity14d.length - 1
+          let streakReachedStart = false
+          // An untouched day does not break an ongoing streak until its day
+          // is over; count from yesterday when no Reviews happened today.
+          if ((activity14d[index] ?? 0) === 0) index -= 1
+          for (; index >= 0; index -= 1) {
+            if ((activity14d[index] ?? 0) === 0) break
+            streakDays += 1
+            streakReachedStart = index === 0
+          }
+          let oldestActivityDay = activityDayKeys[0]
+          while (streakReachedStart && oldestActivityDay !== undefined) {
+            const firstOlderDay = new Date(`${oldestActivityDay}T00:00:00Z`)
+            firstOlderDay.setUTCDate(firstOlderDay.getUTCDate() - 14)
+            const olderDayKeys = Array.from({ length: 14 }, (_, offset) => {
+              const date = new Date(firstOlderDay)
+              date.setUTCDate(date.getUTCDate() + offset)
+              return date.toISOString().slice(0, 10)
+            })
+            const olderDays = yield* learnerDayActivity(sql, timezone, rolloverHour, olderDayKeys)
+            streakReachedStart = true
+            for (let olderIndex = olderDays.length - 1; olderIndex >= 0; olderIndex -= 1) {
+              if ((olderDays[olderIndex] ?? 0) === 0) {
+                streakReachedStart = false
+                break
+              }
+              streakDays += 1
+            }
+            oldestActivityDay = olderDayKeys[0]
           }
           return {
             dueNow,
             reviewedToday,
+            retention7d,
             streakDays,
             todayProgress,
             activity14d,
