@@ -15,7 +15,7 @@
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { Check, Download, Inbox, Undo2 } from 'lucide'
+import { Check, Download, Inbox, Pause, Undo2 } from 'lucide'
 import { button } from '@/components/ui/button'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
@@ -29,24 +29,23 @@ import { routeToUrl } from './routes'
 
 type Child = Html | string
 
-/** The four Grades, in FSRS's order, each with its own solid colour. */
-const GRADES: ReadonlyArray<{ grade: Grade; className: string }> = [
+/** The four Grades, in FSRS's order, with a quiet color cue for each. */
+const GRADES: ReadonlyArray<{ grade: Grade; accentClassName: string }> = [
   {
     grade: 'Again',
-    className:
-      'border-0 bg-destructive text-destructive-foreground shadow-none hover:bg-destructive/90',
+    accentClassName: 'bg-destructive',
   },
   {
     grade: 'Hard',
-    className: 'border-0 bg-orange-500 text-white shadow-none hover:bg-orange-500/90',
+    accentClassName: 'bg-orange-500',
   },
   {
     grade: 'Good',
-    className: 'border-0 bg-primary text-primary-foreground shadow-none hover:bg-primary/90',
+    accentClassName: 'bg-primary',
   },
   {
     grade: 'Easy',
-    className: 'border-0 bg-emerald-500 text-white shadow-none hover:bg-emerald-500/90',
+    accentClassName: 'bg-emerald-500',
   },
 ]
 
@@ -227,18 +226,25 @@ const cardBody = (card: ReviewCard, revealed: boolean, h: HtmlBuilder<Message>):
 const gradeRow = (h: HtmlBuilder<Message>, disabled: boolean): Html =>
   h.div(
     [h.Class('flex gap-2')],
-    GRADES.map(({ grade, className }) =>
+    GRADES.map(({ grade, accentClassName }) =>
       button<Message>(
         {
           onClick: Message.ClickedGrade({ grade }),
           size: '2xl',
           isDisabled: disabled,
-          className: cn(
-            'flex-1 flex-col gap-0 select-none transition-transform active:scale-[0.97]',
-            className,
-          ),
+          className:
+            'flex-1 flex-col gap-1 rounded-xl border border-border bg-background text-foreground shadow-none hover:bg-[var(--theme-block)] select-none transition-transform active:scale-[0.97]',
         },
-        [grade],
+        [
+          h.span(
+            [
+              h.Class(cn('grade-accent h-[3px] w-5 rounded-full', accentClassName)),
+              h.AriaHidden(true),
+            ],
+            [],
+          ),
+          grade,
+        ],
         h,
       ),
     ),
@@ -370,39 +376,18 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                     ],
                   ),
                 ]),
-            h.div(
-              [h.Class('flex gap-2')],
-              [
-                h.div(
-                  [h.Class('flex-1')],
-                  [
-                    review.revealed
-                      ? gradeRow(h, suspensionPending)
-                      : button<Message>(
-                          {
-                            onClick: Message.RevealedAnswer(),
-                            size: 'xl',
-                            isDisabled: suspensionPending,
-                            className:
-                              'w-full select-none transition-transform active:scale-[0.99]',
-                          },
-                          ['Show answer'],
-                          h,
-                        ),
-                  ],
-                ),
-                button<Message>(
+            review.revealed
+              ? gradeRow(h, suspensionPending)
+              : button<Message>(
                   {
-                    onClick: Message.ClickedUndoGrade(),
+                    onClick: Message.RevealedAnswer(),
                     size: 'xl',
-                    className: 'shrink-0 select-none px-3',
-                    isDisabled: !canUndo,
+                    isDisabled: suspensionPending,
+                    className: 'w-full select-none transition-transform active:scale-[0.99]',
                   },
-                  [icon(h, Undo2, 'size-4')],
+                  ['Show answer'],
                   h,
                 ),
-              ],
-            ),
             ...(suspensionError === null
               ? []
               : [
@@ -411,15 +396,35 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                     [suspensionError],
                   ),
                 ]),
-            button<Message>(
-              {
-                onClick: Message.ClickedSuspendCurrentCard(),
-                size: 'sm',
-                isDisabled: suspensionPending,
-                className: 'self-center',
-              },
-              [suspensionPending ? 'Suspending…' : 'Suspend card'],
-              h,
+            h.div(
+              [h.Class('mt-2 flex items-center justify-between gap-2')],
+              [
+                button<Message>(
+                  {
+                    onClick: Message.ClickedUndoGrade(),
+                    variant: 'ghost',
+                    size: 'icon-lg',
+                    isDisabled: !canUndo,
+                    className:
+                      'rounded-xl bg-[var(--theme-block)] text-[var(--theme-ink)] hover:bg-[var(--theme-bar-idle)]',
+                    attributes: [h.AriaLabel('Undo grade')],
+                  },
+                  [icon(h, Undo2, 'size-4')],
+                  h,
+                ),
+                button<Message>(
+                  {
+                    onClick: Message.ClickedSuspendCurrentCard(),
+                    variant: 'ghost',
+                    size: 'lg',
+                    isDisabled: suspensionPending,
+                    className:
+                      'gap-2 rounded-xl bg-[var(--theme-block)] px-3 text-[var(--theme-ink)] hover:bg-[var(--theme-bar-idle)]',
+                  },
+                  [icon(h, Pause, 'size-3.5'), suspensionPending ? 'Suspending…' : 'Suspend card'],
+                  h,
+                ),
+              ],
             ),
             h.p(
               [h.Class('hidden pt-2 text-center text-[11px] text-muted-foreground sm:block')],
