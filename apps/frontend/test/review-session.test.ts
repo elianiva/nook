@@ -43,10 +43,15 @@ const cardWithDueAt = Arbitrary.all({
 }).pipe(Arbitrary.map(({ card, dueAt }) => ({ ...card, dueAt: Option.some(dueAt) })))
 
 const reviewing = (cards: ReadonlyArray<ReviewCardData>): Model => {
-  const started = seedModel(url('/review'))
+  const started = update(
+    seedModel(url('/review')),
+    Message.RestoredQueuedGrades({ grades: [] }),
+  ).model
   const queued = update(
     started,
     Message.GotReviewQueue({
+      sessionId: '',
+      source: 'server',
       cards: [...cards],
       dayStartUtc: '2026-10-05T04:00:00Z',
       lapseMinutes: 10,
@@ -68,6 +73,216 @@ describe('review session', () => {
     expect(names(init(url('/review')))).toContain('FetchReviewQueue')
   })
 
+  it('ignores queue responses from a previous review session', () => {
+    const first = init(url('/review'))
+    const oldSessionId = first.model.review.queueSessionId
+    const leftReview = update(first.model, Message.ChangedUrl({ url: url('/') })).model
+    const nextReview = update(leftReview, Message.ChangedUrl({ url: url('/review') })).model
+    expect(nextReview.review.queueSessionId).not.toBe(oldSessionId)
+
+    const lateResponse = update(
+      nextReview,
+      Message.GotReviewQueue({
+        sessionId: oldSessionId,
+        source: 'server',
+        cards: [card('already-reviewed')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 1,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    )
+    expect(lateResponse.model.review.cards).toEqual([])
+    expect(lateResponse.model.review.queueStatus).toBe('loading')
+  })
+
+  it('keeps the active session id while showing cache before the fresh queue', () => {
+    const loaded = init(url('/review'))
+    const sessionId = loaded.model.review.queueSessionId
+    const cached = update(
+      loaded.model,
+      Message.GotReviewQueue({
+        sessionId,
+        source: 'cache',
+        cards: [card('cached-card')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 0,
+        newToday: 0,
+        totalNew: 1,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    )
+    expect(cached.model.review.queueSessionId).toBe(sessionId)
+
+    const fresh = update(
+      cached.model,
+      Message.GotReviewQueue({
+        sessionId,
+        source: 'server',
+        cards: [],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 1,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    )
+    expect(fresh.model.review.queueSessionId).toBe(sessionId)
+    expect(fresh.model.review.queueStatus).toBe('ready')
+    expect(fresh.model.review.cards).toEqual([])
+  })
+
+  it('replaces a stale cached queue with an empty server queue and ignores late cache data', () => {
+    const started = update(
+      seedModel(url('/review')),
+      Message.RestoredQueuedGrades({ grades: [] }),
+    ).model
+    const cached = update(
+      started,
+      Message.GotReviewQueue({
+        sessionId: '',
+        source: 'cache',
+        cards: [card('already-reviewed')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 0,
+        newToday: 0,
+        totalNew: 1,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    ).model
+    expect(cached.review.phase).toBe('reviewing')
+    expect(cached.review.queueStatus).toBe('loading')
+    const earlyReveal = update(cached, Message.RevealedAnswer()).model
+    expect(earlyReveal.review.revealed).toBe(false)
+
+    const checked = update(
+      cached,
+      Message.GotReviewQueue({
+        sessionId: '',
+        source: 'server',
+        cards: [],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 1,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    )
+    expect(checked.model.review.phase).toBe('done')
+    expect(checked.model.review.cards).toEqual([])
+    expect(checked.model.review.queueStatus).toBe('ready')
+    expect(names(checked)).toEqual(['PersistReviewQueue'])
+    expect(checked.commands?.[0]).toMatchObject({ args: { cards: [] } })
+
+    const lateCache = update(
+      checked.model,
+      Message.GotReviewQueue({
+        sessionId: '',
+        source: 'cache',
+        cards: [card('already-reviewed')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 0,
+        newToday: 0,
+        totalNew: 1,
+        totalDue: 0,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    ).model
+    expect(lateCache.review.cards).toEqual([])
+  })
+
+  it('allows a cached queue only after the fresh check fails offline', () => {
+    const started = update(
+      seedModel(url('/review')),
+      Message.RestoredQueuedGrades({ grades: [] }),
+    ).model
+    const cached = update(
+      started,
+      Message.GotReviewQueue({
+        sessionId: '',
+        source: 'cache',
+        cards: [card('c1')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 0,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 1,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    ).model
+    const offline = update(
+      cached,
+      Message.LoadFailed({ error: 'offline', retry: 'reviewQueue' }),
+    ).model
+    const revealed = update(offline, Message.RevealedAnswer()).model
+    expect(revealed.review.revealed).toBe(true)
+    expect(names(update(revealed, Message.ClickedGrade({ grade: 'Good' })))).toEqual([
+      'SaveQueuedGrade',
+      'PersistReviewQueue',
+    ])
+  })
+
+  it('removes a fetched Card if its earlier offline grade restores afterward', () => {
+    const queued = {
+      id: 'offline-grade',
+      cardId: CardId.make('c1'),
+      grade: 'Good' as const,
+      seq: 0,
+      persisted: true,
+    }
+    const fetched = update(
+      seedModel(url('/review')),
+      Message.GotReviewQueue({
+        sessionId: '',
+        source: 'server',
+        cards: [card('c1'), card('c2')],
+        dayStartUtc: '2026-10-05T04:00:00Z',
+        lapseMinutes: 10,
+        reviewedToday: 0,
+        newToday: 0,
+        totalNew: 0,
+        totalDue: 2,
+        newCapped: false,
+        dueCapped: false,
+        beyondLimit: false,
+      }),
+    ).model
+    expect(fetched.queuedGradesRestored).toBe(false)
+    expect(update(fetched, Message.RevealedAnswer()).model.review.revealed).toBe(false)
+
+    const restored = update(fetched, Message.RestoredQueuedGrades({ grades: [queued] }))
+    expect(restored.model.queuedGradesRestored).toBe(true)
+    expect(restored.model.review.cards.map((entry) => entry.cardId)).toEqual(['c2'])
+    expect(names(restored)).toEqual(['SubmitGrade', 'PersistReviewQueue'])
+  })
+
   it('re-queues an Again Card at the end of the queue', () => {
     const model = reviewing([card('c1'), card('c2')])
     const graded = update(model, Message.ClickedGrade({ grade: 'Again' }))
@@ -75,7 +290,9 @@ describe('review session', () => {
     expect(graded.model.review.cards[2]?.cardId).toBe('c1')
     expect(graded.model.review.requeue.length).toBe(1)
     expect(graded.model.review.phase).toBe('reviewing')
-    expect(names(graded)).toEqual(['SubmitGrade'])
+    expect(names(graded)).toEqual(['SaveQueuedGrade', 'PersistReviewQueue'])
+    const savedQueue = graded.commands?.find((command) => command.name === 'PersistReviewQueue')
+    expect(savedQueue).toMatchObject({ args: { cards: [{ cardId: 'c2' }, { cardId: 'c1' }] } })
   })
 
   it('does not re-queue a passing grade', () => {
@@ -117,8 +334,11 @@ describe('review session', () => {
     expect(entry).toBeDefined()
     if (entry === undefined) return
 
+    const saved = update(graded.model, Message.QueuedGradeSaved({ id: entry.id }))
+    expect(names(saved)).toEqual(['SubmitGrade'])
+
     const accepted = update(
-      graded.model,
+      saved.model,
       Message.GradeAccepted({
         id: entry.id,
         accepted: {
@@ -163,6 +383,32 @@ describe('review session', () => {
     const first = model.review.cards[model.review.index]
     model = update(model, Message.ClickedGrade({ grade: 'Good' })).model
     expect(model.review.graded).toBe(1)
+    expect(names(update(model, Message.ClickedUndoGrade()))).toEqual([])
+    const id = model.queuedGrades[0]?.id
+    expect(id).toBeDefined()
+    if (id === undefined) return
+    model = update(model, Message.QueuedGradeSaved({ id })).model
+    const accepted = update(
+      model,
+      Message.GradeAccepted({
+        id,
+        accepted: {
+          cardId: CardId.make('c1'),
+          grade: 'Good',
+          state: 'review',
+          dueInDays: 1,
+          stability: 2,
+          difficulty: 5,
+          reviewLapses: 0,
+          intervalDays: 1,
+          dueAt: '2026-10-06T04:00:00Z',
+          requeueInSession: false,
+          leechSuspended: false,
+        },
+      }),
+    )
+    model = accepted.model
+    expect(names(update(model, Message.ClickedUndoGrade()))).toEqual(['UndoGrade'])
 
     const undone = update(
       model,
@@ -180,10 +426,9 @@ describe('review session', () => {
     const id = graded.model.review.pending[0]?.id
     expect(id).toBeDefined()
     if (id === undefined) return
-    const failed = update(
-      graded.model,
-      Message.GradeFailed({ id, error: 'offline', durable: true }),
-    )
+    const saved = update(graded.model, Message.QueuedGradeSaved({ id }))
+    expect(names(saved)).toEqual(['SubmitGrade'])
+    const failed = update(saved.model, Message.GradeFailed({ id, error: 'offline', durable: true }))
     expect(failed.model.review.offline.length).toBe(1)
     expect(failed.model.review.graded).toBe(1)
     expect(failed.model.queuedGrades).toHaveLength(1)
@@ -211,17 +456,124 @@ describe('review session', () => {
     expect(failed.model.queuedGrades.map((entry) => entry.id)).toEqual([id])
 
     const retried = update(failed.model, Message.ClickedRetryGrades())
+    expect(names(retried)).toEqual(['SaveQueuedGrade'])
+    expect(names(update(retried.model, Message.QueuedGradeSaved({ id })))).toEqual(['SubmitGrade'])
+  })
+
+  it('drains grades in durable order and never lets a later grade pass a failed head', () => {
+    const first = update(
+      reviewing([card('c1'), card('c2')]),
+      Message.ClickedGrade({ grade: 'Again' }),
+    )
+    const firstEntry = first.model.queuedGrades[0]
+    expect(firstEntry?.seq).toBe(0)
+    if (firstEntry === undefined) return
+
+    const firstSaved = update(first.model, Message.QueuedGradeSaved({ id: firstEntry.id }))
+    expect(names(firstSaved)).toEqual(['SubmitGrade'])
+    expect(firstSaved.model.gradeInFlight).toEqual(Option.some(firstEntry.id))
+
+    const secondRevealed = update(firstSaved.model, Message.RevealedAnswer()).model
+    const second = update(secondRevealed, Message.ClickedGrade({ grade: 'Good' }))
+    const secondEntry = second.model.queuedGrades[1]
+    expect(secondEntry?.seq).toBe(1)
+    if (secondEntry === undefined) return
+
+    const secondSaved = update(second.model, Message.QueuedGradeSaved({ id: secondEntry.id }))
+    expect(names(secondSaved)).toEqual([])
+    expect(secondSaved.model.queuedGrades.map((entry) => entry.id)).toEqual([
+      firstEntry.id,
+      secondEntry.id,
+    ])
+
+    const failed = update(
+      secondSaved.model,
+      Message.GradeFailed({ id: firstEntry.id, error: 'offline', durable: true }),
+    )
+    expect(failed.model.gradeBlocked).toBe(true)
+    const retried = update(failed.model, Message.ClickedRetryGrades())
     expect(names(retried)).toEqual(['SubmitGrade'])
+
+    const firstAccepted = update(
+      retried.model,
+      Message.GradeAccepted({
+        id: firstEntry.id,
+        accepted: {
+          cardId: firstEntry.cardId,
+          grade: firstEntry.grade,
+          state: 'relearning',
+          dueInDays: 0,
+          stability: 1,
+          difficulty: 5,
+          reviewLapses: 1,
+          intervalDays: 0,
+          dueAt: '2026-10-05T04:10:00Z',
+          requeueInSession: true,
+          leechSuspended: false,
+        },
+      }),
+    )
+    expect(firstAccepted.model.queuedGrades.map((entry) => entry.id)).toEqual([secondEntry.id])
+    expect(names(firstAccepted)).toEqual(['SubmitGrade'])
+    expect(firstAccepted.commands?.[0]).toMatchObject({
+      args: { id: secondEntry.id, cardId: secondEntry.cardId, grade: 'Good' },
+    })
+  })
+
+  it('restores an outbox in sequence order rather than IndexedDB key order', () => {
+    const restored = update(
+      seedModel(url('/review')),
+      Message.RestoredQueuedGrades({
+        grades: [
+          {
+            id: 'grade-z',
+            cardId: CardId.make('c3'),
+            grade: 'Easy',
+            seq: 2,
+            persisted: true,
+          },
+          {
+            id: 'grade-a',
+            cardId: CardId.make('c1'),
+            grade: 'Again',
+            seq: 0,
+            persisted: true,
+          },
+          {
+            id: 'grade-m',
+            cardId: CardId.make('c2'),
+            grade: 'Good',
+            seq: 1,
+            persisted: true,
+          },
+        ],
+      }),
+    )
+
+    expect(restored.model.queuedGrades.map((entry) => entry.id)).toEqual([
+      'grade-a',
+      'grade-m',
+      'grade-z',
+    ])
+    expect(names(restored)).toEqual(['SubmitGrade'])
+    expect(restored.commands?.[0]).toMatchObject({ args: { id: 'grade-a', grade: 'Again' } })
   })
 
   it('restores and retries grades from the durable outbox at boot', () => {
-    const queued = { id: 'grade-1', cardId: CardId.make('c1'), grade: 'Good' as const }
+    const queued = {
+      id: 'grade-1',
+      cardId: CardId.make('c1'),
+      grade: 'Good' as const,
+      seq: 0,
+      persisted: true,
+    }
     const restored = update(
       seedModel(url('/review')),
       Message.RestoredQueuedGrades({ grades: [queued] }),
     )
     expect(restored.model.queuedGrades).toEqual([queued])
-    expect(restored.model.review.offline).toEqual([queued])
+    expect(restored.model.review.pending).toEqual([queued])
+    expect(restored.model.review.offline).toEqual([])
     expect(names(restored)).toEqual(['SubmitGrade'])
 
     const accepted = update(
@@ -249,9 +601,15 @@ describe('review session', () => {
 
   it('continues with due cards only when the learner bypasses the daily cap', () => {
     const due = card('c1')
-    const model = update(
+    const started = update(
       seedModel(url('/review')),
+      Message.RestoredQueuedGrades({ grades: [] }),
+    ).model
+    const model = update(
+      started,
       Message.GotReviewQueue({
+        sessionId: '',
+        source: 'server',
         cards: [due],
         dayStartUtc: '2026-10-05T04:00:00Z',
         lapseMinutes: 10,
@@ -275,7 +633,10 @@ describe('review session', () => {
     const added = update(
       continued.model,
       Message.GotReviewQueue({
-        cards: [card('c2')],
+        sessionId: continued.model.review.queueSessionId,
+        source: 'server',
+        // The bypass response can overlap the current session's queue.
+        cards: [card('c1'), card('c2')],
         dayStartUtc: '2026-10-05T04:00:00Z',
         lapseMinutes: 10,
         reviewedToday: 1,

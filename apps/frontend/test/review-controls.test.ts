@@ -24,10 +24,15 @@ const card = (id: string): ReviewCard => ({
 })
 
 const reviewing = (): Model => {
-  const started = seedModel(url('/review'))
+  const started = update(
+    seedModel(url('/review')),
+    Message.RestoredQueuedGrades({ grades: [] }),
+  ).model
   const queued = update(
     started,
     Message.GotReviewQueue({
+      sessionId: '',
+      source: 'server',
       cards: [card('card-a'), card('card-b')],
       dayStartUtc: '2026-10-05T04:00:00Z',
       lapseMinutes: 10,
@@ -42,6 +47,25 @@ const reviewing = (): Model => {
   ).model
   return update(queued, Message.RevealedAnswer()).model
 }
+
+const checkingCachedQueue = (): Model =>
+  update(
+    update(seedModel(url('/review')), Message.RestoredQueuedGrades({ grades: [] })).model,
+    Message.GotReviewQueue({
+      sessionId: '',
+      source: 'cache',
+      cards: [card('cached-card')],
+      dayStartUtc: '2026-10-05T04:00:00Z',
+      lapseMinutes: 10,
+      reviewedToday: 0,
+      newToday: 0,
+      totalNew: 0,
+      totalDue: 1,
+      newCapped: false,
+      dueCapped: false,
+      beyondLimit: false,
+    }),
+  ).model
 
 const view = (model: Model, h: HtmlBuilder<Message>) => h.div([], reviewView(model, h))
 
@@ -76,6 +100,35 @@ it('renders quiet grade accents with neutral Undo and Suspend actions', () => {
       const undoClasses = Option.getOrElse(attr(undo.value, 'class'), () => '')
       expect(undoClasses).toContain('bg-[var(--theme-block)]')
       expect(undoClasses).toContain('border-0')
+    }),
+  )
+})
+
+it('keeps cached review actions disabled until the fresh queue check settles', () => {
+  scene(
+    { update, view },
+    given(checkingCachedQueue()),
+    tap(({ html }) => {
+      const showAnswer = getByRole('button', { name: 'Show answer' })(html)
+      expect(Option.isSome(showAnswer)).toBe(true)
+      if (Option.isNone(showAnswer)) throw new Error('Show answer button is missing')
+      expect(attr(showAnswer.value, 'aria-disabled')).toEqual(Option.some('true'))
+    }),
+  )
+})
+
+it('keeps Undo disabled until the queued grade is confirmed', () => {
+  const graded = update(reviewing(), Message.ClickedGrade({ grade: 'Good' })).model
+  expect(Option.isSome(graded.review.lastGrade)).toBe(true)
+
+  scene(
+    { update, view },
+    given(graded),
+    tap(({ html }) => {
+      const undo = getByRole('button', { name: 'Undo grade' })(html)
+      expect(Option.isSome(undo)).toBe(true)
+      if (Option.isNone(undo)) throw new Error('Undo grade button is missing')
+      expect(attr(undo.value, 'aria-disabled')).toEqual(Option.some('true'))
     }),
   )
 })

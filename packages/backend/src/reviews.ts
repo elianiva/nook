@@ -7,8 +7,11 @@
  * asks for a queue and gets rendered Cards back.
  *
  * A grade is one append-only row in the Review log (ADR 0002) plus the Card's
- * derived scheduling state, written in one `db.batch` (ADR 0003). A replayed
- * submission id is ignored, so a dropped response cannot double-apply a grade.
+ * derived scheduling state, written in one `db.batch` (ADR 0003). Replaying the
+ * same submission id is idempotent. Distinct concurrent submissions for one
+ * Card are not ordered here: both can read the same before-state and the last
+ * batch can overwrite the other's schedule. The client serializes grades in
+ * one tab; cross-tab ordering needs a server-side Card revision guard.
  *
  * The learner day starts at `dayRolloverHour` in the learner timezone, not at
  * UTC midnight: the per-day counts count Reviews since that boundary, while

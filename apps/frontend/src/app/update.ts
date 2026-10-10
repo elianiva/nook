@@ -16,7 +16,7 @@ import { Navigation, Update } from 'foldkit'
 import { AsyncData } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
-import type { DeckDetail, DeckId, DeckLimits, DeckSummary, Grade } from '@nook/api'
+import type { DeckDetail, DeckId, DeckLimits, DeckSummary, Grade, ReviewCard } from '@nook/api'
 import { NavigateInternal, NavigateToPath } from './commands'
 import {
   DownloadFile,
@@ -33,6 +33,7 @@ import {
   RenameDeck,
   ResetDeck,
   SaveDeckLimits,
+  SaveQueuedGrade,
   SaveSettings,
   SetCardSuspended,
   SubmitGrade,
@@ -77,6 +78,21 @@ const deckDetail = deckDetailQuery.lift<Model, Message>({
   toParentMessage: (message) => Message.GotDeckDetailMessage({ message }),
 })
 
+const reviewRouteLoads = (
+  model: Model,
+  deckId: Option.Option<DeckId>,
+): Update.Return<Model, Message> => {
+  const sessionId = crypto.randomUUID()
+  return {
+    model: { ...model, review: { ...idleReview, queueSessionId: sessionId } },
+    commands: [
+      LoadCachedQueue({ deckId, sessionId }),
+      FetchReviewQueue({ deckId, bypassDueLimit: false, sessionId }),
+      FetchSettings(),
+    ],
+  }
+}
+
 /**
  * The reads a route starts. A Query loads when it is missing and refreshes when
  * it has data, so returning to a screen shows its last answer while a fresh one
@@ -90,22 +106,8 @@ const routeLoads = (model: Model): Update.Return<Model, Message> =>
       Update.combine<Model, Message>(model, [overview.revalidateOrLoad, decks.revalidateOrLoad]),
     Decks: () => decks.revalidateOrLoad(model),
     DeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
-    Review: () => ({
-      model,
-      commands: [
-        LoadCachedQueue({ deckId: Option.none() }),
-        FetchReviewQueue({ deckId: Option.none(), bypassDueLimit: false }),
-        FetchSettings(),
-      ],
-    }),
-    ReviewDeck: ({ deckId }) => ({
-      model,
-      commands: [
-        LoadCachedQueue({ deckId: Option.some(deckId) }),
-        FetchReviewQueue({ deckId: Option.some(deckId), bypassDueLimit: false }),
-        FetchSettings(),
-      ],
-    }),
+    Review: () => reviewRouteLoads(model, Option.none()),
+    ReviewDeck: ({ deckId }) => reviewRouteLoads(model, Option.some(deckId)),
     Settings: () => ({
       model: {
         ...model,
@@ -156,16 +158,24 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
       const route = model.route
       if (route._tag === 'ReviewDeck') {
         return [
-          LoadCachedQueue({ deckId: Option.some(route.deckId) }),
+          LoadCachedQueue({
+            deckId: Option.some(route.deckId),
+            sessionId: model.review.queueSessionId,
+          }),
           FetchReviewQueue({
             deckId: Option.some(route.deckId),
             bypassDueLimit: model.review.bypassDueLimit,
+            sessionId: model.review.queueSessionId,
           }),
         ]
       }
       return [
-        LoadCachedQueue({ deckId: Option.none() }),
-        FetchReviewQueue({ deckId: Option.none(), bypassDueLimit: model.review.bypassDueLimit }),
+        LoadCachedQueue({ deckId: Option.none(), sessionId: model.review.queueSessionId }),
+        FetchReviewQueue({
+          deckId: Option.none(),
+          bypassDueLimit: model.review.bypassDueLimit,
+          sessionId: model.review.queueSessionId,
+        }),
       ]
     }
     case 'settings':
@@ -181,6 +191,38 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
     }
     case 'collectionExport':
       return [FetchExport()]
+  }
+}
+
+/** Submit only the durable queue head; a failed head must never be overtaken.
+ * This serializes one tab. The backend still needs a per-Card guard for races
+ * between separate tabs.
+ */
+const runQueuedGrade = (model: Model): Update.Return<Model, Message> => {
+  const head = model.queuedGrades[0]
+  if (head === undefined || Option.isSome(model.gradeInFlight) || model.gradeBlocked) {
+    return { model }
+  }
+
+  const review = {
+    ...model.review,
+    pending: model.review.pending.some((entry) => entry.id === head.id)
+      ? model.review.pending
+      : [...model.review.pending, head],
+    offline: model.review.offline.filter((entry) => entry.id !== head.id),
+  }
+  if (!head.persisted) {
+    return {
+      model: { ...model, review },
+      commands: [
+        SaveQueuedGrade({ id: head.id, cardId: head.cardId, grade: head.grade, seq: head.seq }),
+      ],
+    }
+  }
+
+  return {
+    model: { ...model, review, gradeInFlight: Option.some(head.id) },
+    commands: [SubmitGrade({ id: head.id, cardId: head.cardId, grade: head.grade })],
   }
 }
 
@@ -345,8 +387,23 @@ const restoreDeckCache = (model: Model, snapshot: DeckCacheSnapshot): Model => {
   return restored
 }
 
+/** Keep the unreviewed tail available if this tab reloads while offline. */
+const persistReviewProgress = (model: Model, cards: ReadonlyArray<ReviewCard>, warmMedia = false) =>
+  Option.match(model.review.dayStartUtc, {
+    onNone: () => [],
+    onSome: (dayStartUtc) => [
+      PersistReviewQueue({
+        deckId: model.route._tag === 'ReviewDeck' ? Option.some(model.route.deckId) : Option.none(),
+        cards: [...cards],
+        dayStartUtc,
+        lapseMinutes: model.review.lapseMinutes,
+        warmMedia,
+      }),
+    ],
+  })
+
 /**
- * Applies a Grade on screen and sends it.
+ * Applies a Grade on screen and queues it for durable, ordered submission.
  *
  * The screen advances before the request lands, so grading never waits for the
  * network. The Grade rides in `pending` until the server confirms it, and a
@@ -359,10 +416,17 @@ const restoreDeckCache = (model: Model, snapshot: DeckCacheSnapshot): Model => {
 const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message> => {
   const review = model.review
   const card = review.cards[review.index]
-  if (card === undefined || !review.revealed || Option.isSome(review.suspensionPending)) {
+  if (
+    card === undefined ||
+    !review.revealed ||
+    review.queueStatus === 'loading' ||
+    !model.queuedGradesRestored ||
+    Option.isSome(review.suspensionPending)
+  ) {
     return { model }
   }
-  const entry = { id: crypto.randomUUID(), cardId: card.cardId, grade }
+  const seq = Math.max(-1, ...model.queuedGrades.map((entry) => entry.seq)) + 1
+  const entry = { id: crypto.randomUUID(), cardId: card.cardId, grade, seq, persisted: false }
   const requeue = grade === 'Again' ? [...review.requeue, card] : review.requeue
   const cards = grade === 'Again' ? [...review.cards, card] : review.cards
   const index = review.index + 1
@@ -386,7 +450,10 @@ const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message>
         queuedGrades: () => [...model.queuedGrades, entry],
       }),
     ),
-    commands: [SubmitGrade(entry)],
+    commands: [
+      SaveQueuedGrade({ id: entry.id, cardId: entry.cardId, grade: entry.grade, seq: entry.seq }),
+      ...persistReviewProgress(model, cards.slice(index)),
+    ],
   }
 }
 
@@ -484,21 +551,63 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     RestoredQueuedGrades: ({ grades }) => {
       const known = new Set(model.queuedGrades.map((entry) => entry.id))
-      const restored = grades.filter((entry) => !known.has(entry.id))
-      const queuedGrades = [...model.queuedGrades, ...restored]
+      const restored = grades
+        .filter((entry) => !known.has(entry.id))
+        .map((entry) => ({ ...entry, persisted: true }))
+      const queuedGrades = [...model.queuedGrades, ...restored].toSorted(
+        (a, b) => a.seq - b.seq || a.id.localeCompare(b.id),
+      )
       const pendingIds = new Set(model.review.pending.map((entry) => entry.id))
       const offline = queuedGrades.filter((entry) => !pendingIds.has(entry.id))
-      return {
-        model: {
-          ...model,
-          queuedGrades,
-          review: { ...model.review, offline },
+      const queuedCardIds = new Set(queuedGrades.map((entry) => entry.cardId))
+      const cards = model.review.cards.filter((card) => !queuedCardIds.has(card.cardId))
+      const index = Math.min(model.review.index, cards.length)
+      const phase =
+        model.review.queueStatus === 'loading' && cards.length === 0
+          ? 'loading'
+          : cards.length === 0
+            ? 'done'
+            : 'reviewing'
+      const next: Model = {
+        ...model,
+        queuedGrades,
+        queuedGradesRestored: true,
+        review: {
+          ...model.review,
+          cards,
+          index,
+          phase,
+          queueServedDue: cards.filter((card) => card.state !== 'new').length,
+          queueServedNew: cards.filter((card) => card.state === 'new').length,
+          offline,
         },
-        commands: restored.map((entry) => SubmitGrade(entry)),
+      }
+      const draining = runQueuedGrade(next)
+      return {
+        model: draining.model,
+        commands: [
+          ...(draining.commands ?? []),
+          ...persistReviewProgress(model, cards.slice(index), true),
+        ],
       }
     },
 
-    LoadFailed: ({ error, retry }) => {
+    QueuedGradeSaved: ({ id }) => {
+      const queuedGrades = model.queuedGrades.map((entry) =>
+        entry.id === id ? { ...entry, persisted: true } : entry,
+      )
+      if (queuedGrades.every((entry) => entry.id !== id)) return { model }
+      return runQueuedGrade({ ...model, queuedGrades })
+    },
+
+    LoadFailed: ({ error, retry, sessionId }) => {
+      if (
+        retry === 'reviewQueue' &&
+        sessionId !== undefined &&
+        sessionId !== model.review.queueSessionId
+      ) {
+        return { model }
+      }
       let next = model
       if (retry === 'saveSettings' && Option.isSome(model.settingsRollback)) {
         next = {
@@ -511,8 +620,18 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       return {
         model: modifyFields(next, {
           notice: () => Option.some({ message: error, retry }),
-          ...(retry === 'reviewQueue' && model.review.bypassDueLimit
-            ? { review: () => ({ ...model.review, phase: 'done' as const }) }
+          ...(retry === 'reviewQueue'
+            ? {
+                review: () => ({
+                  ...model.review,
+                  queueStatus: 'offline' as const,
+                  phase:
+                    model.review.bypassDueLimit ||
+                    (model.review.phase === 'loading' && model.review.cards.length === 0)
+                      ? ('done' as const)
+                      : model.review.phase,
+                }),
+              }
             : {}),
         }),
       }
@@ -527,7 +646,15 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
                 model: beginSettingsSave(model),
                 commands: [SaveSettings({ settings: settingsFromDraft(model) })],
               }
-            : { model, commands: retryCommandsFor(model, notice.retry) },
+            : {
+                model:
+                  notice.retry === 'reviewQueue'
+                    ? modifyFields(clearNotice(model), {
+                        review: () => ({ ...model.review, queueStatus: 'loading' }),
+                      })
+                    : model,
+                commands: retryCommandsFor(model, notice.retry),
+              },
       }),
 
     // A Start action is a navigation: the review route fetches its own queue.
@@ -540,6 +667,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     },
 
     GotReviewQueue: ({
+      source,
+      sessionId,
       cards,
       dayStartUtc,
       lapseMinutes,
@@ -551,12 +680,47 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       dueCapped,
       beyondLimit,
     }) => {
+      if (sessionId !== model.review.queueSessionId) return { model }
+      // Do not let a late cache response replace a fresh answer. Controls stay
+      // locked while the initial server check runs, so a fresh answer cannot
+      // reset a session that has already started.
+      if (source === 'cache' && (model.review.queueStatus === 'ready' || model.review.graded > 0)) {
+        return { model }
+      }
+      if (source === 'server' && !beyondLimit && model.review.queueStatus === 'ready') {
+        return { model }
+      }
       const route = model.route
       const deckId = route._tag === 'ReviewDeck' ? Option.some(route.deckId) : Option.none()
+      if (source === 'cache') {
+        return {
+          model: modifyFields(model, {
+            review: () => ({
+              ...idleReview,
+              queueSessionId: sessionId,
+              queueStatus: model.review.queueStatus,
+              offline: model.queuedGrades,
+              phase: cards.length === 0 ? 'done' : 'reviewing',
+              cards: [...cards],
+              dayStartUtc: Option.some(dayStartUtc),
+              lapseMinutes,
+              queueServedDue: cards.filter((card) => card.state !== 'new').length,
+              queueServedNew: cards.filter((card) => card.state === 'new').length,
+            }),
+          }),
+        }
+      }
       // The queue is empty for two reasons: nothing waits, or a limit
       // stopped everything. Only a capped empty queue is a limit stop — a
       // short fetch (fewer Cards than the limit allows) is just empty.
       const limitStopped = cards.length === 0 && (newCapped || dueCapped || totalNew + totalDue > 0)
+      const queuedGradeCardIds = new Set(model.queuedGrades.map((entry) => entry.cardId))
+      const seenCardIds = new Set(beyondLimit ? model.review.cards.map((card) => card.cardId) : [])
+      const currentCards = cards.filter((card) => {
+        if (queuedGradeCardIds.has(card.cardId) || seenCardIds.has(card.cardId)) return false
+        seenCardIds.add(card.cardId)
+        return true
+      })
       const queueCounts = {
         queueTotalDue: totalDue,
         queueTotalNew: totalNew,
@@ -564,25 +728,25 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         queueNewToday: newToday,
         queueNewCapped: newCapped,
         queueDueCapped: dueCapped,
-        queueServedDue: cards.filter((card) => card.state !== 'new').length,
-        queueServedNew: cards.filter((card) => card.state === 'new').length,
+        queueServedDue: currentCards.filter((card) => card.state !== 'new').length,
+        queueServedNew: currentCards.filter((card) => card.state === 'new').length,
       }
       return {
         model: clearNotice(
           modifyFields(model, {
-            // A cached queue answers first; the network answer replaces it
-            // only when it carries Cards, so offline Cards never flash away.
             review: () =>
               beyondLimit
                 ? {
                     ...model.review,
-                    cards: [...model.review.cards, ...cards],
+                    queueStatus: 'ready',
+                    cards: [...model.review.cards, ...currentCards],
                     index: model.review.cards.length,
                     revealed: false,
-                    phase: cards.length === 0 ? 'done' : 'reviewing',
+                    phase: currentCards.length === 0 ? 'done' : 'reviewing',
                     dayStartUtc: Option.some(dayStartUtc),
                     lapseMinutes,
-                    doneKind: cards.length === 0 && (newCapped || dueCapped) ? 'limits' : 'empty',
+                    doneKind:
+                      currentCards.length === 0 && (newCapped || dueCapped) ? 'limits' : 'empty',
                     bypassDueLimit: true,
                     queueTotalDue: totalDue,
                     queueTotalNew: 0,
@@ -592,34 +756,48 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
                     queueDueCapped: dueCapped,
                     queueServedDue:
                       model.review.queueServedDue +
-                      cards.filter((card) => card.state !== 'new').length,
+                      currentCards.filter((card) => card.state !== 'new').length,
                     queueServedNew: model.review.queueServedNew,
                   }
-                : cards.length === 0 && model.review.cards.length > 0
-                  ? model.review
-                  : {
-                      ...idleReview,
-                      offline: model.queuedGrades,
-                      phase: cards.length === 0 ? 'done' : 'reviewing',
-                      cards: [...cards],
-                      dayStartUtc: Option.some(dayStartUtc),
-                      lapseMinutes,
-                      doneKind: limitStopped ? 'limits' : 'empty',
-                      bypassDueLimit: false,
-                      ...queueCounts,
-                    },
+                : {
+                    ...idleReview,
+                    queueSessionId: sessionId,
+                    queueStatus: 'ready',
+                    offline: model.queuedGrades,
+                    phase: currentCards.length === 0 ? 'done' : 'reviewing',
+                    cards: [...currentCards],
+                    dayStartUtc: Option.some(dayStartUtc),
+                    lapseMinutes,
+                    doneKind: limitStopped ? 'limits' : 'empty',
+                    bypassDueLimit: false,
+                    ...queueCounts,
+                  },
           }),
         ),
-        commands:
-          cards.length === 0 || beyondLimit
-            ? []
-            : [PersistReviewQueue({ deckId, cards: [...cards], dayStartUtc, lapseMinutes })],
+        commands: model.queuedGradesRestored
+          ? [
+              PersistReviewQueue({
+                deckId,
+                cards: beyondLimit
+                  ? [...model.review.cards.slice(model.review.index), ...currentCards]
+                  : [...currentCards],
+                dayStartUtc,
+                lapseMinutes,
+                warmMedia: true,
+              }),
+            ]
+          : [],
       }
     },
 
-    RevealedAnswer: () => ({
-      model: modifyFields(model, { review: () => ({ ...model.review, revealed: true }) }),
-    }),
+    CachedReviewQueueMiss: () => ({ model }),
+
+    RevealedAnswer: () =>
+      model.review.queueStatus === 'loading' || !model.queuedGradesRestored
+        ? { model }
+        : {
+            model: modifyFields(model, { review: () => ({ ...model.review, revealed: true }) }),
+          },
 
     ClickedGrade: ({ grade }) => gradeCurrent(model, grade),
 
@@ -627,6 +805,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       const card = model.review.cards[model.review.index]
       if (
         model.review.phase !== 'reviewing' ||
+        model.review.queueStatus === 'loading' ||
+        !model.queuedGradesRestored ||
         card === undefined ||
         Option.isSome(model.review.suspensionPending)
       ) {
@@ -731,6 +911,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
               suspensionError: Option.none(),
             }),
           }),
+          commands: persistReviewProgress(model, cards.slice(index)),
         }
       }
       if (origin === 'deck' && model.route._tag === 'DeckDetail') {
@@ -773,7 +954,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     // Space reveals, then grades Good: the one-hand rhythm.
     PressedSpace: () => {
       const review = model.review
-      if (review.phase !== 'reviewing') return { model }
+      if (
+        review.phase !== 'reviewing' ||
+        review.queueStatus === 'loading' ||
+        !model.queuedGradesRestored
+      ) {
+        return { model }
+      }
       if (!review.revealed) {
         return { model: modifyFields(model, { review: () => ({ ...review, revealed: true }) }) }
       }
@@ -785,8 +972,16 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       const queuedGrades = model.queuedGrades.filter((entry) => entry.id !== id)
       const entry =
         review.pending.find((pending) => pending.id === id) ??
-        review.offline.find((pending) => pending.id === id)
-      if (entry === undefined) return { model: { ...model, queuedGrades } }
+        review.offline.find((pending) => pending.id === id) ??
+        model.queuedGrades.find((pending) => pending.id === id)
+      const wasInFlight = Option.getOrNull(model.gradeInFlight) === id
+      const base = {
+        ...model,
+        queuedGrades,
+        gradeInFlight: wasInFlight ? Option.none<string>() : model.gradeInFlight,
+        gradeBlocked: wasInFlight ? false : model.gradeBlocked,
+      }
+      if (entry === undefined) return runQueuedGrade(base)
       const leechCard = accepted.leechSuspended
         ? (review.cards.find((card) => card.cardId === accepted.cardId) ??
           review.requeue.find((card) => card.cardId === accepted.cardId))
@@ -799,39 +994,61 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         ? review.cards.filter((card) => card.cardId !== accepted.cardId)
         : review.cards
       const index = Math.max(0, review.index - removedBefore)
+      const nextReview = {
+        ...review,
+        cards,
+        index,
+        phase:
+          review.phase === 'reviewing' && index >= cards.length ? ('done' as const) : review.phase,
+        requeue: accepted.leechSuspended
+          ? review.requeue.filter((card) => card.cardId !== accepted.cardId)
+          : review.requeue,
+        pending: review.pending.filter((pending) => pending.id !== id),
+        offline: review.offline.filter((pending) => pending.id !== id),
+        leechSuspendedCard:
+          leechCard === undefined ? review.leechSuspendedCard : Option.some(leechCard),
+        leechSuspendedReviewLapses: accepted.leechSuspended
+          ? accepted.reviewLapses
+          : review.leechSuspendedReviewLapses,
+      }
+      const next = modifyFields(base, {
+        review: () => nextReview,
+      })
+      const draining = runQueuedGrade(next)
       return {
-        model: modifyFields(model, {
-          queuedGrades: () => queuedGrades,
-          review: () => ({
-            ...review,
-            cards,
-            index,
-            phase: review.phase === 'reviewing' && index >= cards.length ? 'done' : review.phase,
-            requeue: accepted.leechSuspended
-              ? review.requeue.filter((card) => card.cardId !== accepted.cardId)
-              : review.requeue,
-            pending: review.pending.filter((pending) => pending.id !== id),
-            offline: review.offline.filter((pending) => pending.id !== id),
-            leechSuspendedCard:
-              leechCard === undefined ? review.leechSuspendedCard : Option.some(leechCard),
-            leechSuspendedReviewLapses: accepted.leechSuspended
-              ? accepted.reviewLapses
-              : review.leechSuspendedReviewLapses,
-          }),
-        }),
+        model: draining.model,
+        commands: [
+          ...(accepted.leechSuspended && Option.isSome(review.dayStartUtc)
+            ? persistReviewProgress(model, cards.slice(index))
+            : []),
+          ...(draining.commands ?? []),
+        ],
       }
     },
 
     ClickedUndoGrade: () => {
       const last = model.review.lastGrade
-      if (Option.isNone(last)) return { model }
+      if (
+        Option.isNone(last) ||
+        model.queuedGrades.length > 0 ||
+        Option.isSome(model.gradeInFlight)
+      ) {
+        return { model }
+      }
       return { model, commands: [UndoGrade({ cardId: last.value.cardId })] }
     },
 
     UndoneGrade: ({ cardId }) => {
       const review = model.review
       const last = review.lastGrade
-      if (Option.isNone(last) || last.value.cardId !== cardId) return { model }
+      if (
+        Option.isNone(last) ||
+        last.value.cardId !== cardId ||
+        model.queuedGrades.length > 0 ||
+        Option.isSome(model.gradeInFlight)
+      ) {
+        return { model }
+      }
       const restoredLeech = Option.match(review.leechSuspendedCard, {
         onNone: () => undefined,
         onSome: (card) => (card.cardId === cardId ? card : undefined),
@@ -848,12 +1065,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           : last.value.grade === 'Again'
             ? review.cards.filter((card, index) => index !== review.cards.length - 1)
             : review.cards
+      const index = restoredLeech === undefined ? Math.max(0, review.index - 1) : review.index
       return {
         model: modifyFields(model, {
           review: () => ({
             ...review,
             cards,
-            index: restoredLeech === undefined ? Math.max(0, review.index - 1) : review.index,
+            index,
             revealed: false,
             requeue: review.requeue.filter((card) => card.cardId !== cardId),
             pending: review.pending.filter((entry) => entry.cardId !== cardId),
@@ -866,6 +1084,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             error: Option.none(),
           }),
         }),
+        commands: persistReviewProgress(model, cards.slice(index)),
       }
     },
 
@@ -903,35 +1122,41 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     PersistedReviewQueue: () => ({ model }),
 
     GradeFailed: ({ id, error, durable }) => {
-      // Offline or dropped: the grade stays applied on screen and waits in
-      // `offline` for the network, leaving `pending` so Retry sends it once.
-      // Its id is stable, so the flush cannot double-apply it (ADR 0002).
-      const waiting = model.review.pending.find((entry) => entry.id === id)
+      const queued = model.queuedGrades.find((entry) => entry.id === id)
+      if (queued === undefined) return { model }
       const alreadyOffline = model.review.offline.some((entry) => entry.id === id)
-      if (waiting === undefined && !alreadyOffline) return { model }
-      const persisted = durable || alreadyOffline
+      const persisted = durable || queued.persisted
+      const offlineEntry = { ...queued, persisted }
+      const queuedGrades = model.queuedGrades.map((entry) =>
+        entry.id === id ? offlineEntry : entry,
+      )
       return {
-        model: modifyFields(model, {
-          review: () => ({
+        model: {
+          ...model,
+          queuedGrades,
+          gradeInFlight:
+            Option.getOrNull(model.gradeInFlight) === id ? Option.none() : model.gradeInFlight,
+          gradeBlocked: true,
+          review: {
             ...model.review,
             pending: model.review.pending.filter((entry) => entry.id !== id),
             offline: persisted
-              ? alreadyOffline || waiting === undefined
-                ? model.review.offline
-                : [...model.review.offline, waiting]
+              ? alreadyOffline
+                ? model.review.offline.map((entry) => (entry.id === id ? offlineEntry : entry))
+                : [...model.review.offline, offlineEntry]
               : model.review.offline.filter((entry) => entry.id !== id),
             error: Option.some(error),
-          }),
-        }),
+          },
+        },
       }
     },
 
-    ClickedRetryGrades: () => ({
-      model: modifyFields(model, {
-        review: () => ({ ...model.review, error: Option.none() }),
+    ClickedRetryGrades: () =>
+      runQueuedGrade({
+        ...model,
+        gradeBlocked: false,
+        review: { ...model.review, error: Option.none() },
       }),
-      commands: model.queuedGrades.map((entry) => SubmitGrade(entry)),
-    }),
 
     ClickedContinuePastDueLimit: () => {
       if (
@@ -952,21 +1177,26 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
             error: Option.none(),
           }),
         }),
-        commands: [FetchReviewQueue({ deckId, bypassDueLimit: true })],
+        commands: [
+          FetchReviewQueue({
+            deckId,
+            bypassDueLimit: true,
+            sessionId: model.review.queueSessionId,
+          }),
+        ],
       }
     },
 
     RegainedNetwork: () => {
-      const queued = model.queuedGrades
-      const refreshed = revalidateVisible(
-        modifyFields(model, {
-          review: () => ({ ...model.review, error: Option.none() }),
-        }),
-      )
-      if (queued.length === 0) return refreshed
+      const refreshed = revalidateVisible({
+        ...model,
+        gradeBlocked: false,
+        review: { ...model.review, error: Option.none() },
+      })
+      const draining = runQueuedGrade(refreshed.model)
       return {
-        model: refreshed.model,
-        commands: [...(refreshed.commands ?? []), ...queued.map((entry) => SubmitGrade(entry))],
+        model: draining.model,
+        commands: [...(refreshed.commands ?? []), ...(draining.commands ?? [])],
       }
     },
 

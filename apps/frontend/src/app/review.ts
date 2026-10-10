@@ -266,7 +266,7 @@ const errorBanner = (error: string, h: HtmlBuilder<Message>): Html =>
 
 export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const review = model.review
-  if (review.phase === 'loading') return loadingView(h)
+  if (!model.queuedGradesRestored || review.phase === 'loading') return loadingView(h)
   if (review.phase === 'done') return doneView(model, h)
 
   const card = review.cards[review.index]
@@ -276,7 +276,10 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   const answered = review.index + (review.revealed ? 1 : 0)
   const percent = total === 0 ? 0 : Math.round((answered / total) * 100)
   const saving = review.pending.length
-  const canUndo = Option.isSome(review.lastGrade)
+  const canUndo =
+    Option.isSome(review.lastGrade) &&
+    model.queuedGrades.length === 0 &&
+    Option.isNone(model.gradeInFlight)
   const requeued = review.requeue.length
   const tapToReveal = model.settings.behaviour.tapToReveal
   const suspensionPending = Option.isSome(review.suspensionPending)
@@ -307,17 +310,21 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
               [
                 h.span([], [`Card ${review.index + 1} of ${total}`]),
                 h.span(
-                  review.offline.length > 0
-                    ? [h.Class('flex items-center gap-1 text-amber-600')]
-                    : saving > 0
-                      ? [h.Class('text-primary')]
-                      : [],
-                  [
-                    review.offline.length > 0
-                      ? `${review.offline.length} offline`
+                  review.queueStatus === 'loading'
+                    ? [h.Class('text-muted-foreground')]
+                    : review.offline.length > 0
+                      ? [h.Class('flex items-center gap-1 text-amber-600')]
                       : saving > 0
-                        ? `Saving ${saving}…`
-                        : `${review.graded} reviewed`,
+                        ? [h.Class('text-primary')]
+                        : [],
+                  [
+                    review.queueStatus === 'loading'
+                      ? 'Checking today’s queue…'
+                      : review.offline.length > 0
+                        ? `${review.offline.length} offline`
+                        : saving > 0
+                          ? `Saving ${saving}…`
+                          : `${review.graded} reviewed`,
                   ],
                 ),
               ],
@@ -377,12 +384,12 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                   ),
                 ]),
             review.revealed
-              ? gradeRow(h, suspensionPending)
+              ? gradeRow(h, suspensionPending || review.queueStatus === 'loading')
               : button<Message>(
                   {
                     onClick: Message.RevealedAnswer(),
                     size: 'xl',
-                    isDisabled: suspensionPending,
+                    isDisabled: suspensionPending || review.queueStatus === 'loading',
                     className: 'w-full select-none transition-transform active:scale-[0.99]',
                   },
                   ['Show answer'],
@@ -417,7 +424,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                     onClick: Message.ClickedSuspendCurrentCard(),
                     variant: 'ghost',
                     size: 'lg',
-                    isDisabled: suspensionPending,
+                    isDisabled: suspensionPending || review.queueStatus === 'loading',
                     className:
                       'gap-2 rounded-xl bg-[var(--theme-block)] px-3 text-[var(--theme-ink)] hover:bg-[var(--theme-bar-idle)]',
                   },

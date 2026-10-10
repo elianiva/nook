@@ -43,8 +43,12 @@ const fromCachedCards = (cards: unknown): Option.Option<ReadonlyArray<ReviewCard
   return S.decodeUnknownOption(json)(cards)
 }
 
-const loadFailed = (error: string, retry: LoadRetry) =>
-  MessageConstructors.LoadFailed({ error, retry })
+const loadFailed = (error: string, retry: LoadRetry, sessionId?: string) =>
+  MessageConstructors.LoadFailed({
+    error,
+    retry,
+    ...(sessionId === undefined ? {} : { sessionId }),
+  })
 
 export const FetchSettings = Command.define('FetchSettings', {
   messages: [MessageConstructors.GotSettings, MessageConstructors.LoadFailed],
@@ -98,7 +102,11 @@ export const SaveSettings = Command.define('SaveSettings', {
 export const RestoreQueuedGrades = Command.define('RestoreQueuedGrades', {
   messages: [MessageConstructors.RestoredQueuedGrades, MessageConstructors.LoadFailed],
   execute: loadQueuedGrades().pipe(
-    Effect.map((grades) => MessageConstructors.RestoredQueuedGrades({ grades: [...grades] })),
+    Effect.map((grades) =>
+      MessageConstructors.RestoredQueuedGrades({
+        grades: grades.map((grade) => ({ ...grade, persisted: true })),
+      }),
+    ),
     Effect.catch(() =>
       Effect.succeed(
         loadFailed(
@@ -111,9 +119,9 @@ export const RestoreQueuedGrades = Command.define('RestoreQueuedGrades', {
 })
 
 export const FetchReviewQueue = Command.define('FetchReviewQueue', {
-  args: { deckId: S.Option(DeckId), bypassDueLimit: S.Boolean },
+  args: { deckId: S.Option(DeckId), bypassDueLimit: S.Boolean, sessionId: S.String },
   messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
-  execute: ({ deckId, bypassDueLimit }) =>
+  execute: ({ deckId, bypassDueLimit, sessionId }) =>
     NookRpc.pipe(
       Effect.flatMap((rpc) =>
         rpc.reviewsQueue({
@@ -124,6 +132,8 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
       ),
       Effect.map((queue) =>
         MessageConstructors.GotReviewQueue({
+          source: 'server',
+          sessionId,
           cards: queue.cards,
           dayStartUtc: queue.dayStartUtc,
           lapseMinutes: queue.lapseMinutes,
@@ -141,6 +151,7 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
           loadFailed(
             'Could not load the review queue. Check the connection and try again.',
             'reviewQueue',
+            sessionId,
           ),
         ),
       ),
@@ -148,33 +159,42 @@ export const FetchReviewQueue = Command.define('FetchReviewQueue', {
     ),
 })
 
+/** Saves every queued grade before the reducer allows it to reach the server. */
+export const SaveQueuedGrade = Command.define('SaveQueuedGrade', {
+  args: { id: S.String, cardId: CardId, grade: Grade, seq: S.Number },
+  messages: [MessageConstructors.QueuedGradeSaved, MessageConstructors.GradeFailed],
+  execute: ({ id, cardId, grade, seq }) =>
+    saveQueuedGrade({ id, cardId, grade, seq }).pipe(
+      Effect.map(() => MessageConstructors.QueuedGradeSaved({ id })),
+      Effect.catch(() =>
+        Effect.succeed(
+          MessageConstructors.GradeFailed({
+            id,
+            durable: false,
+            error: 'Could not save that grade on this device. Keep this tab open and retry.',
+          }),
+        ),
+      ),
+    ),
+})
+
 export const SubmitGrade = Command.define('SubmitGrade', {
   args: { id: S.String, cardId: CardId, grade: Grade },
   messages: [MessageConstructors.GradeAccepted, MessageConstructors.GradeFailed],
   execute: ({ id, cardId, grade }) => {
-    const pending = { id, cardId, grade }
-    const submit = saveQueuedGrade(pending).pipe(
-      Effect.mapError(() => 'storage' as const),
-      Effect.flatMap(() =>
-        NookRpc.pipe(
-          Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
-          Effect.provide(NookRpc.layer),
-          Effect.mapError(() => 'server' as const),
-        ),
-      ),
+    const submit = NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
+      Effect.provide(NookRpc.layer),
       Effect.tap(() => removeQueuedGrade(id).pipe(Effect.catch(() => Effect.void))),
       Effect.map((accepted) => MessageConstructors.GradeAccepted({ id, accepted })),
     )
     return submit.pipe(
-      Effect.catch((failure) =>
+      Effect.catch(() =>
         Effect.succeed(
           MessageConstructors.GradeFailed({
             id,
-            durable: failure === 'server',
-            error:
-              failure === 'storage'
-                ? 'Could not save that grade on this device. Keep this tab open and retry.'
-                : 'Could not sync that grade. It is saved on this device — try again.',
+            durable: true,
+            error: 'Could not sync that grade. It is saved on this device — try again.',
           }),
         ),
       ),
@@ -304,9 +324,10 @@ export const PersistReviewQueue = Command.define('PersistReviewQueue', {
     cards: S.Array(ReviewCard),
     dayStartUtc: S.String,
     lapseMinutes: S.Number,
+    warmMedia: S.Boolean,
   },
   messages: [MessageConstructors.PersistedReviewQueue],
-  execute: ({ deckId, cards, dayStartUtc, lapseMinutes }) =>
+  execute: ({ deckId, cards, dayStartUtc, lapseMinutes, warmMedia }) =>
     Option.match(toCachedCards(cards), {
       onNone: () => Effect.succeed(MessageConstructors.PersistedReviewQueue()),
       onSome: (cachedCards) =>
@@ -319,7 +340,7 @@ export const PersistReviewQueue = Command.define('PersistReviewQueue', {
           // Warm the media cache with the queued cards' images and audio, so a
           // reload mid-queue offline still renders them. Best-effort: a missing
           // Cache API or a failed add leaves the queue itself intact.
-          Effect.tap(() => warmMediaCache(cards).pipe(Effect.ignore)),
+          Effect.tap(() => (warmMedia ? warmMediaCache(cards).pipe(Effect.ignore) : Effect.void)),
           Effect.map(() => MessageConstructors.PersistedReviewQueue()),
           Effect.catch(() => Effect.succeed(MessageConstructors.PersistedReviewQueue())),
         ),
@@ -362,14 +383,20 @@ const warmMediaCache = (cards: ReadonlyArray<ReviewCard>): Effect.Effect<void, u
   })
 
 export const LoadCachedQueue = Command.define('LoadCachedQueue', {
-  args: { deckId: S.Option(DeckId) },
-  messages: [MessageConstructors.GotReviewQueue, MessageConstructors.LoadFailed],
-  execute: ({ deckId }) =>
+  args: { deckId: S.Option(DeckId), sessionId: S.String },
+  messages: [
+    MessageConstructors.GotReviewQueue,
+    MessageConstructors.CachedReviewQueueMiss,
+    MessageConstructors.LoadFailed,
+  ],
+  execute: ({ deckId, sessionId }) =>
     loadReviewQueue(deckId).pipe(
       Effect.map((cached) =>
         Option.flatMap(cached, (queue) =>
           Option.map(fromCachedCards(queue.cards), (cards) =>
             MessageConstructors.GotReviewQueue({
+              source: 'cache',
+              sessionId,
               cards: [...cards],
               dayStartUtc: queue.dayStartUtc,
               lapseMinutes: queue.lapseMinutes,
@@ -388,11 +415,7 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
       ),
       Effect.map((restored) =>
         Option.match(restored, {
-          onNone: () =>
-            loadFailed(
-              'Could not load the review queue. Check the connection and try again.',
-              'reviewQueue',
-            ),
+          onNone: () => MessageConstructors.CachedReviewQueueMiss(),
           onSome: (message) => message,
         }),
       ),
@@ -401,6 +424,7 @@ export const LoadCachedQueue = Command.define('LoadCachedQueue', {
           loadFailed(
             'Could not load the review queue. Check the connection and try again.',
             'reviewQueue',
+            sessionId,
           ),
         ),
       ),

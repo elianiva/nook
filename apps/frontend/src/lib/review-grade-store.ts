@@ -17,9 +17,11 @@ const StoredGrade = S.Struct({
   id: S.String,
   cardId: CardId,
   grade: Grade,
+  /** Records written before ordered draining have no recoverable original order. */
+  seq: S.optional(S.Number),
 })
 
-type QueuedGrade = { id: string; cardId: CardId; grade: Grade }
+type QueuedGrade = { id: string; cardId: CardId; grade: Grade; seq: number }
 
 /** The browser refused to read or write its own storage. */
 export class ReviewGradeStoreUnavailable extends Error {
@@ -40,7 +42,7 @@ export const saveQueuedGrade = (
   grade: QueuedGrade,
 ): Effect.Effect<void, ReviewGradeStoreUnavailable> =>
   request('readwrite', (store) =>
-    store.put({ id: grade.id, cardId: grade.cardId, grade: grade.grade }, grade.id),
+    store.put({ id: grade.id, cardId: grade.cardId, grade: grade.grade, seq: grade.seq }, grade.id),
   ).pipe(Effect.asVoid)
 
 /** Removes a grade that the server has accepted. */
@@ -54,5 +56,24 @@ export const loadQueuedGrades = (): Effect.Effect<
 > =>
   request('readonly', (store) => store.getAll()).pipe(
     Effect.flatMap((entries) => S.decodeUnknownEffect(S.Array(StoredGrade))(entries)),
+    Effect.map((entries) => {
+      const missing = entries
+        .filter((entry) => entry.seq === undefined)
+        .toSorted((a, b) => a.id.localeCompare(b.id))
+      const lowestKnown = entries.reduce(
+        (lowest, entry) => (entry.seq === undefined ? lowest : Math.min(lowest, entry.seq)),
+        0,
+      )
+      const fallbackStart = lowestKnown - missing.length
+      let fallbackIndex = 0
+      return entries
+        .map((entry) => ({
+          id: entry.id,
+          cardId: entry.cardId,
+          grade: entry.grade,
+          seq: entry.seq ?? fallbackStart + fallbackIndex++,
+        }))
+        .toSorted((a, b) => a.seq - b.seq || a.id.localeCompare(b.id))
+    }),
     Effect.mapError(() => new ReviewGradeStoreUnavailable()),
   )

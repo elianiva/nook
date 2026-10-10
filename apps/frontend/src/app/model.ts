@@ -133,6 +133,10 @@ export const ReviewPending = S.Struct({
   id: S.String,
   cardId: CardId,
   grade: Grade,
+  /** Client-only sequence; orders durable grade submissions and is never sent to the backend. */
+  seq: S.Number,
+  /** Whether this grade has been saved to the durable IndexedDB outbox. */
+  persisted: S.Boolean,
 })
 export type ReviewPending = typeof ReviewPending.Type
 
@@ -147,7 +151,11 @@ export type ReviewPending = typeof ReviewPending.Type
  * the learner has seen it enough times (`maxRequeue`).
  */
 export const ReviewState = S.Struct({
+  /** Identifies this route's async queue loads so late responses cannot cross sessions. */
+  queueSessionId: S.String,
   phase: ReviewPhase,
+  /** Whether the cached queue is still being checked against the server. */
+  queueStatus: S.Literals(['loading', 'ready', 'offline']),
   cards: S.Array(ReviewCard),
   index: S.Number,
   revealed: S.Boolean,
@@ -192,7 +200,9 @@ export const ReviewState = S.Struct({
 export type ReviewState = typeof ReviewState.Type
 
 export const idleReview: ReviewState = {
+  queueSessionId: '',
   phase: 'loading',
+  queueStatus: 'loading',
   cards: [],
   index: 0,
   revealed: false,
@@ -423,6 +433,12 @@ export const Model = S.Struct({
   deckMutationRollback: S.Option(DeckCacheSnapshot),
   /** Grades in IndexedDB's durable outbox until the server confirms them. */
   queuedGrades: S.Array(ReviewPending),
+  /** Review input stays locked until the durable grade outbox has been read. */
+  queuedGradesRestored: S.Boolean,
+  /** The one outbox grade currently being sent to the server. */
+  gradeInFlight: S.Option(S.String),
+  /** A failed head grade blocks later submissions until Retry or reconnect. */
+  gradeBlocked: S.Boolean,
   /** Server-authoritative settings to restore if an optimistic save fails. */
   settingsRollback: S.Option(AppSettings),
   /** Card-level suspension mutation shown in the expanded deck list. */
@@ -462,6 +478,9 @@ export const seedModel = (url: Url.Url): Model => ({
   deckManage: idleDeckManage,
   deckMutationRollback: Option.none(),
   queuedGrades: [],
+  queuedGradesRestored: false,
+  gradeInFlight: Option.none(),
+  gradeBlocked: false,
   settingsRollback: Option.none(),
   cardSuspensionPending: Option.none(),
   cardSuspensionError: Option.none(),
@@ -493,6 +512,8 @@ export const Message = defineMessageUnion({
   SavedSettings: { settings: AppSettings },
   /** The durable grade outbox was loaded at boot. */
   RestoredQueuedGrades: { grades: S.Array(ReviewPending) },
+  /** One grade was saved to the durable local outbox. */
+  QueuedGradeSaved: { id: S.String },
   /** A Query shows its own error, so its Retry is its own Message. */
   ClickedRetryOverview: {},
   ClickedRetryDecks: {},
@@ -500,13 +521,17 @@ export const Message = defineMessageUnion({
   /** Hover or focus warmed a deck link: load its detail while it is still missing. */
   PrefetchedDeckDetail: { deckId: DeckId },
   /** A fetch or save failed. The notice carries the retry. */
-  LoadFailed: { error: S.String, retry: LoadRetry },
+  LoadFailed: { error: S.String, retry: LoadRetry, sessionId: S.optional(S.String) },
   /** The Learner pressed retry on the notice banner. */
   ClickedRetry: {},
   /** The Learner pressed a Start action: one Deck's queue, or every Deck's. */
   StartedReview: { deckId: S.Option(DeckId) },
-  /** The backend answered with the Cards to review, already rendered. */
+  /** The cache or backend answered with the rendered Cards to review. */
   GotReviewQueue: {
+    /** Cached queues are provisional; server queues are authoritative. */
+    source: S.Literals(['cache', 'server']),
+    /** Identifies the active route session; late responses are ignored. */
+    sessionId: S.String,
     cards: S.Array(ReviewCard),
     dayStartUtc: S.String,
     lapseMinutes: S.Number,
@@ -519,6 +544,8 @@ export const Message = defineMessageUnion({
     /** This response was requested by the session-only due-limit bypass. */
     beyondLimit: S.Boolean,
   },
+  /** IndexedDB had no cached queue; the network request is still running. */
+  CachedReviewQueueMiss: {},
   /** The Learner revealed the answer side. */
   RevealedAnswer: {},
   /** The Learner graded the shown Card. */
