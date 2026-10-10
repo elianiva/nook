@@ -82,6 +82,7 @@ describe('Query wiring', () => {
             kind: 'overview',
             value: {
               dueNow: 3,
+              newToday: 0,
               reviewedToday: 1,
               retention7d: 75,
               streakDays: 2,
@@ -100,6 +101,7 @@ describe('Query wiring', () => {
     expect(AsyncData.getData(overviewQuery.read(cached.overview))).toEqual(
       Option.some({
         dueNow: 3,
+        newToday: 0,
         reviewedToday: 1,
         retention7d: 75,
         streakDays: 2,
@@ -122,6 +124,7 @@ describe('Query wiring', () => {
             kind: 'overview',
             value: {
               dueNow: 99,
+              newToday: 0,
               reviewedToday: 0,
               retention7d: 0,
               streakDays: 0,
@@ -140,6 +143,7 @@ describe('Query wiring', () => {
     // a visibility event never starts a cold fetch storm.
     const overviewValue = {
       dueNow: 0,
+      newToday: 0,
       reviewedToday: 0,
       retention7d: 0,
       streakDays: 0,
@@ -195,6 +199,7 @@ describe('Query wiring', () => {
     // and deck details, whose `Option` fields came back as `{}`.
     const fresh = {
       dueNow: 5,
+      newToday: 0,
       reviewedToday: 2,
       retention7d: 80,
       streakDays: 1,

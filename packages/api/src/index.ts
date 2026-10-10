@@ -145,13 +145,15 @@ export type DeckRename = typeof DeckRename.Type
 export const Overview = S.Struct({
   /** Cards due for Review right now, across every Deck. */
   dueNow: S.Number,
+  /** New Cards still introducible today across every Deck, after daily limits. */
+  newToday: S.Number,
   /** Cards reviewed today. */
   reviewedToday: S.Number,
   /** Share of Reviews in the last 7 days that were not Again, 0–100. */
   retention7d: S.Number,
   /** Day streak. */
   streakDays: S.Number,
-  /** Share of due Cards cleared today, 0–100. */
+  /** Share of due and new Cards cleared today, 0–100. */
   todayProgress: S.Number,
   /** Reviews per day for the last 14 days, oldest first. */
   activity14d: S.Array(S.Number),

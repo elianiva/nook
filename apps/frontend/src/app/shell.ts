@@ -54,7 +54,7 @@ const backHref = (model: Model): string =>
 const overviewDue = (model: Model): string | undefined =>
   Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
     onNone: () => undefined,
-    onSome: (overview) => `${overview.dueNow} due`,
+    onSome: (overview) => `${overview.dueNow + overview.newToday} to study`,
   })
 
 const topChip = (model: Model): string | undefined =>

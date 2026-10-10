@@ -5,6 +5,12 @@ import type { Overview } from '@nook/api'
 import { dayStartUtc, dayStartUtcForKey, resolveTimezone, reviewDayKey } from './day-boundary'
 import { decodeRows, withStorageErrorPassThrough, CountRow } from './storage-error'
 
+const NewRow = Schema.Struct({
+  newCount: Schema.Number,
+  introduced: Schema.Number,
+  limit: Schema.Number,
+})
+
 const SettingsRow = Schema.Struct({ dayRolloverHour: Schema.Number })
 
 const learnerDayActivity = (
@@ -77,6 +83,23 @@ export class Home extends Context.Service<
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`
           const dueRows = yield* decodeRows(CountRow, dueValues)
+          // New Cards still introducible today, per Deck: its waiting new
+          // Cards capped by what is left of the daily limit. Same rule as the
+          // Deck summaries, summed across Decks.
+          const newRows = yield* decodeRows(
+            NewRow,
+            yield* sql`SELECT
+              (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new'
+                AND suspended = 0) AS "newCount",
+              (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
+                AND introduced_day >= ${todayKey}) AS introduced,
+              COALESCE(new_per_day, (SELECT fsrs_new_per_day FROM settings WHERE id = 1)) AS "limit"
+              FROM decks`,
+          )
+          const newToday = newRows.reduce(
+            (total, row) => total + Math.max(0, Math.min(row.newCount, row.limit - row.introduced)),
+            0,
+          )
           const reviewedValues = yield* sql`SELECT COUNT(DISTINCT card_id) AS n FROM reviews
             WHERE julianday(reviewed_at) >= julianday(${boundary})`
           const reviewedRows = yield* decodeRows(CountRow, reviewedValues)
@@ -97,9 +120,12 @@ export class Home extends Context.Service<
           const retention7d = retentionRows[0]?.n ?? 0
           const activity14d = dayRows
           const todayProgress =
-            dueNow + reviewedToday === 0
+            dueNow + newToday + reviewedToday === 0
               ? 100
-              : Math.min(100, Math.round((reviewedToday / (dueNow + reviewedToday)) * 100))
+              : Math.min(
+                  100,
+                  Math.round((reviewedToday / (dueNow + newToday + reviewedToday)) * 100),
+                )
           let streakDays = 0
           let index = activity14d.length - 1
           let streakReachedStart = false
@@ -133,6 +159,7 @@ export class Home extends Context.Service<
           }
           return {
             dueNow,
+            newToday,
             reviewedToday,
             retention7d,
             streakDays,

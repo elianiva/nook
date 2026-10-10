@@ -111,16 +111,16 @@ const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
         [
           h.span(
             [h.Class('text-xs font-bold tracking-[1.6px] text-[var(--theme-kicker)] uppercase')],
-            ['Due now · All decks'],
+            ['To study · All decks'],
           ),
           h.div(
             [h.Class('flex items-baseline gap-2')],
             [
               h.span(
                 [h.Class('text-[52px] leading-[1.05] font-bold tabular-nums tracking-tight')],
-                [String(overview.dueNow)],
+                [String(overview.dueNow + overview.newToday)],
               ),
-              h.span([h.Class('text-sm')], ['waiting']),
+              h.span([h.Class('text-sm')], [`${overview.dueNow} due · ${overview.newToday} new`]),
             ],
           ),
           h.div(
