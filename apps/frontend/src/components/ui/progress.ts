@@ -5,11 +5,9 @@ type Child = Html | string
 import { cn } from '@/lib/utils'
 
 /**
- * foldkit gap: upstream drives the indicator transform and the value text
- * from the Base UI Progress primitive. Here `value` (0–100) positions the
- * indicator directly; `undefined` renders an EMPTY track — animated
- * indeterminate needs primitive support. The label/value builders render
- * static content the consumer owns.
+ * `value` (0–100) sets the indicator width directly; `undefined` renders an
+ * EMPTY track — animated indeterminate needs primitive support. The
+ * label/value builders render static content the consumer owns.
  *
  */
 
@@ -36,9 +34,7 @@ const progressIndicator = <M>(value: number | undefined, h: HtmlBuilder<M>): Htm
       h.Class(progressIndicatorClass),
       h.DataAttribute('slot', 'progress-indicator'),
       // Undefined = indeterminate: empty track until primitives can animate.
-      h.Style({
-        transform: `translateX(-${100 - (value === undefined ? 0 : clampValue(value))}%)`,
-      }),
+      h.Style({ width: `${value === undefined ? 0 : clampValue(value)}%` }),
     ],
     [],
   )
