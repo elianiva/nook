@@ -1,41 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { isAccessAuthenticationFailure } from '../src/lib/rpc'
+import { getAccessAuthenticationAction } from '../src/lib/rpc'
 
 const appOrigin = 'https://nook.example.com'
 const rpcUrl = `${appOrigin}/api/rpc`
 
 describe('RPC authentication recovery', () => {
-  it('does not restart the app for a normal RPC response', () => {
-    expect(isAccessAuthenticationFailure(rpcUrl, rpcUrl, 200, appOrigin)).toBe(false)
+  it('does nothing for a normal RPC response', () => {
+    expect(getAccessAuthenticationAction(rpcUrl, rpcUrl, 200, appOrigin)).toBeNull()
   })
 
-  it.each([401, 403])('restarts the app for an Access rejection (%i)', (status) => {
-    expect(isAccessAuthenticationFailure(rpcUrl, rpcUrl, status, appOrigin)).toBe(true)
+  it.each([401, 403])('reloads the app for an Access rejection (%i)', (status) => {
+    expect(getAccessAuthenticationAction(rpcUrl, rpcUrl, status, appOrigin)).toEqual({
+      _tag: 'reload',
+    })
   })
 
-  it('restarts the app when Access redirects the RPC request to its login page', () => {
+  it('navigates to the Access login page when the RPC request is redirected', () => {
     expect(
-      isAccessAuthenticationFailure(
+      getAccessAuthenticationAction(
         rpcUrl,
         `${appOrigin}/cdn-cgi/access/login/nook?token=expired`,
         200,
         appOrigin,
       ),
-    ).toBe(true)
+    ).toEqual({
+      _tag: 'redirect',
+      url: `${appOrigin}/cdn-cgi/access/login/nook?token=expired`,
+    })
   })
 
-  it('restarts the app when Access redirects to an external identity provider', () => {
+  it('navigates to an external identity provider when Access redirects there', () => {
     expect(
-      isAccessAuthenticationFailure(
+      getAccessAuthenticationAction(
         '/api/rpc',
         'https://identity.example.net/login',
         200,
         appOrigin,
       ),
-    ).toBe(true)
+    ).toEqual({ _tag: 'redirect', url: 'https://identity.example.net/login' })
   })
 
-  it('does not treat an unknown response URL as an authentication redirect', () => {
-    expect(isAccessAuthenticationFailure('/api/rpc', '', 200, appOrigin)).toBe(false)
+  it('does nothing when the response URL is unknown', () => {
+    expect(getAccessAuthenticationAction('/api/rpc', '', 200, appOrigin)).toBeNull()
   })
 })

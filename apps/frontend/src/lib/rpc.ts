@@ -16,19 +16,26 @@ import { Http } from 'foldkit'
 import { Api } from '@nook/api'
 import { RPC_PATH } from './api'
 
-/** An Access rejection or redirect means the page must restart its login flow. */
-export const isAccessAuthenticationFailure = (
+/** What the browser should do when Access rejects or redirects an RPC call. */
+export type AccessAuthenticationAction =
+  | { readonly _tag: 'reload' }
+  | { readonly _tag: 'redirect'; readonly url: string }
+
+export const getAccessAuthenticationAction = (
   requestUrl: string,
   responseUrl: string,
   status: number,
   appOrigin: string,
-): boolean => {
-  if (status === 401 || status === 403) return true
-  if (responseUrl === '') return false
+): AccessAuthenticationAction | null => {
+  if (responseUrl !== '') {
+    const requested = new URL(requestUrl, appOrigin)
+    const resolved = new URL(responseUrl, appOrigin)
+    if (requested.origin !== resolved.origin || requested.pathname !== resolved.pathname) {
+      return { _tag: 'redirect', url: resolved.href }
+    }
+  }
 
-  const requested = new URL(requestUrl, appOrigin)
-  const resolved = new URL(responseUrl, appOrigin)
-  return requested.origin !== resolved.origin || requested.pathname !== resolved.pathname
+  return status === 401 || status === 403 ? { _tag: 'reload' } : null
 }
 
 export class NookRpc extends Context.Service<
@@ -44,16 +51,15 @@ export class NookRpc extends Context.Service<
             response.pipe(
               Effect.tap((result) =>
                 Effect.sync(() => {
-                  if (
-                    typeof window !== 'undefined' &&
-                    isAccessAuthenticationFailure(
+                  if (typeof window !== 'undefined') {
+                    const action = getAccessAuthenticationAction(
                       result.request.url,
                       result.url,
                       result.status,
                       window.location.origin,
                     )
-                  ) {
-                    window.location.reload()
+                    if (action?._tag === 'redirect') window.location.assign(action.url)
+                    else if (action?._tag === 'reload') window.location.reload()
                   }
                 }),
               ),
