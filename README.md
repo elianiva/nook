@@ -2,18 +2,17 @@
   <img src="apps/frontend/public/icons/icon-512.png" alt="nook logo" width="72" /> nook
 </h1>
 
-nook is an Android-first, fast, simple spaced repetition system (SRS) that
-runs as an installable progressive web app (PWA). Import an Anki deck, then
-review your Cards with FSRS scheduling — online or offline, on mobile or
-desktop.
+nook is a self-hosted, Android-first spaced repetition app. Import an Anki
+deck, then review on your phone or desktop—with or without an internet
+connection. nook is an installable progressive web app (PWA) and uses FSRS-6
+to schedule reviews.
 
-nook is designed for one Learner and self-hosting: your collection lives in
-your own Cloudflare account, with no nook sign-up, password, or account to
-manage.
+Your collection stays in your Cloudflare account. Cloudflare Access restricts
+the app to one email address; nook has no separate accounts or sign-up.
 
 ## Screenshots
 
-Portrait screenshots show the app at a mobile viewport, designed for Android.
+These screenshots show the mobile layout.
 
 <p align="center">
   <a href="docs/screenshots/home.png"><img src="docs/screenshots/home.png" alt="nook home screen on mobile" width="24%" /></a>
@@ -21,95 +20,31 @@ Portrait screenshots show the app at a mobile viewport, designed for Android.
   <a href="docs/screenshots/review.png"><img src="docs/screenshots/review.png" alt="nook review screen on mobile, with the answer revealed" width="24%" /></a>
 </p>
 
-## At a glance
+## Features
 
-- **Anki imports:** bring in modern `.apkg` decks with their Note Types,
-  templates, styling, tags, and media. Cards start fresh; Anki scheduling
-  history is not imported.
-- **FSRS-6 reviews:** review due and new Cards, undo the last Grade, and let
-  each Grade reschedule its Card. The append-only Review log is the sync
-  source of truth.
-- **Offline-ready PWA:** install nook on Android and review from the next 200
-  prefetched Cards. Grades made offline sync when the connection returns.
-- **Private self-hosting:** Alchemy deploys the PWA and Worker to your
-  Cloudflare account; D1 stores the collection, R2 stores media, and
-  Cloudflare Access admits one Learner. There are no nook accounts or sign-up.
+- Import modern Anki `.apkg` decks, including note types, templates, styling,
+  tags, and media. Imported cards start with no review history.
+- Review due and new cards with FSRS-6. Undo your last review, and use daily
+  review limits.
+- Install the PWA and review offline using a queue of up to 200 prefetched
+  cards. Reviews sync when you reconnect.
+- Export your collection as JSON, including scheduling state and review
+  history. Media files remain in Cloudflare R2 and are not included.
 
-## Status
-
-The Import, the Decks, and the review flow run end to end, including offline
-review from a prefetched queue, undo, export, and per-day limits.
-
-What runs today:
-
-- A Foldkit client and a Worker, served together on one port by
-  `alchemy dev` and deployed by Alchemy to Cloudflare.
-- A Cloudflare Access application that Alchemy creates and deletes with the
-  Worker.
-- Decks, the overview, and each Deck page, read from D1 through Foldkit
-  Queries: each read holds its last answer, reloads in place, and ignores a
-  late response from an older request. Settings is a plain fetch, because its
-  answer resets the form (`docs/adr/0004`).
-- An Import. The Decks page reads a `.apkg` archive in the browser — a Worker
-  cannot, because workerd's `node:sqlite` is a stub and the wasm engine only
-  loads in a browser — and streams the archive's Note Types, Decks, Notes, and
-  Cards into D1 in batches. The read runs in a Web Worker, which pushes the
-  progress the panel shows after every batch instead of the page polling for
-  it. The Import is keyed by the archive's content hash, so importing the same
-  file twice overwrites instead of duplicating, and a run that fails midway
-  resumes from the cursors it left behind. The archive is kept in IndexedDB
-  while a run is in flight, so a reload resumes it and a stopped run can Retry
-  without another file pick. Media streams into R2, and the Worker serves it
-  from `/api/media`.
-- A Review. The Worker serves a queue of due and new Cards with both sides
-  already rendered from the Note Type's Template and stylesheet, and the app
-  grades them. Each Grade is one append-only row in the Review log plus the
-  Card's FSRS-6 state, written in one batch; a replayed Grade id is ignored
-  (ADR 0002). A Grade reschedules the Card to a real due instant, anchored at
-  the learner-day boundary (`dayRolloverHour` in the learner timezone).
-  `Again` returns the Card later this session, after `lapseMinutes`; one Undo
-  steps back the last grade.
-- Offline review. The device prefetches the next 200 rendered Cards into
-  IndexedDB (ADR 0001) and grades them with no network wait; grades made
-  offline flush when the network returns. The shell is cached by a service
-  worker and installable via the manifest. The server stays authoritative and
-  the sync protocol is the append-only Review log (ADR 0002): no other
-  conflict path exists.
-- An export. The review-done screen and the Settings page download the whole
-  collection — Decks, Notes, Cards with scheduling state, and the Review log —
-  as one JSON file. Media files stay in R2; the export names what it cannot
-  carry. There is no delete and no re-import of an export yet.
-
-See [Design](#design) and [docs/adr](./docs/adr).
-
-## What v1 does
-
-- Import a modern `.apkg` archive: note types, fields, templates, styling,
-  decks, tags, and media.
-- Render Cards the way Anki renders them, including the Note Type's own CSS.
-  Fields, `{{FrontSide}}`, conditionals, cloze deletions, `[sound:]`, and Media
-  URLs are supported. LaTeX and TTS tags are not.
-- Reset scheduling on import, so every imported Card starts as new.
-- Schedule with FSRS-6 only. There is no SM-2 code path.
-- Review online or offline: the Worker serves a queue of due and new Cards,
-  the device prefetches the next 200 rendered Cards, and a Grade reschedules
-  the Card — `Again` back into this session, anything else to a later day.
-- Export the collection as JSON, with scheduling state and the Review log.
-- Undo the last grade.
-
-v1 has no card editor. You import; you do not author. There is no delete.
+nook is for reviewing, not authoring: it has no card editor or delete function.
+You cannot restore a collection from a JSON export yet.
 
 ## Requirements
 
 - Node.js 24 or later
 - pnpm 12
-- A Cloudflare account. Alchemy reads `CLOUDFLARE_API_TOKEN` and
-  `CLOUDFLARE_ACCOUNT_ID`, or it uses an `alchemy` login from `~/.alchemy`.
-- A Zero Trust organization, for Cloudflare Access.
+- A Cloudflare account and a Zero Trust organization for Cloudflare Access
+- A Cloudflare API token and account ID, or an `alchemy` login in `~/.alchemy`
 
-## Getting started
+## Get started
 
-Set the one email that may use the instance, then start the dev server:
+Choose the email address that can access your local instance, install the
+dependencies, and start the dev server:
 
 ```bash
 export NOOK_ALLOWED_EMAIL=you@example.com
@@ -117,145 +52,98 @@ pnpm install
 pnpm dev
 ```
 
-`alchemy dev` serves the Worker and the Foldkit client on <http://localhost:5273>.
-There is no second process to start. Access has no service in front of it
-locally, so `dev.access` stands in an identity and the Worker reads a real one.
+Open <http://localhost:5273>. `alchemy dev` serves both the app and its Worker;
+you do not need to start a second process. Locally, the `dev.access` identity
+stands in for Cloudflare Access.
 
 ## Configuration
 
-| Variable             | Required | Default             | Purpose                        |
-| -------------------- | -------- | ------------------- | ------------------------------ |
-| `NOOK_ALLOWED_EMAIL` | yes      | none                | The single email Access admits |
-| `NOOK_DOMAIN`        | no       | `nook.elianiva.com` | The hostname nook answers on   |
+| Variable             | Required | Default             | Purpose                                        |
+| -------------------- | -------- | ------------------- | ---------------------------------------------- |
+| `NOOK_ALLOWED_EMAIL` | Yes      | —                   | The only email address allowed to access nook. |
+| `NOOK_DOMAIN`        | No       | `nook.elianiva.com` | Hostname for the deployed app.                 |
 
-`NOOK_ALLOWED_EMAIL` has no default on purpose. nook has no sign-up, so nothing
-else stands between a stranger and your collection. `alchemy.run.ts` refuses to
-load without it.
+`NOOK_ALLOWED_EMAIL` is required. There is no sign-up flow, and
+`alchemy.run.ts` will not load without this value.
 
 ## Commands
 
 ```bash
-pnpm install        # install the workspace
-pnpm dev            # alchemy dev: the Worker and the Foldkit client on one port
-pnpm check          # vp check: format, lint, and type-check
-pnpm test           # turbo test; skips the slow Kaishi archive test
-pnpm test:kaishi    # turbo test with the Kaishi archive test included
-pnpm typecheck      # turbo typecheck
-pnpm build          # turbo build; also bundles the Worker
-pnpm fmt            # vp fmt
-pnpm lint           # vp lint
-pnpm infra:deploy   # alchemy deploy --stage prod --yes
+pnpm dev            # Start the app and Worker
+pnpm check          # Format, lint, and type-check
+pnpm test           # Run tests (excludes the slow Kaishi archive test)
+pnpm test:kaishi    # Run tests, including the Kaishi archive test
+pnpm typecheck      # Type-check all packages
+pnpm build          # Build the app and bundle the Worker
+pnpm fmt            # Format the code
+pnpm lint           # Lint the code
+pnpm infra:deploy   # Deploy to Cloudflare's prod stage
 ```
 
-`pnpm build` builds the Worker bundle as well as the client. The
-`ssr` environment in `apps/frontend/vite.config.ts` exists so a Worker that
-fails to bundle fails the build, before any deploy.
+## Deploy
 
-## Layout
+`pnpm infra:deploy` deploys the Worker, static assets, and Cloudflare Access
+application defined in `alchemy.run.ts`.
 
-```
-apps/frontend      @nook/frontend  The Foldkit client and the Worker entry
-packages/anki      @nook/anki      The `.apkg` archive reader and the Card renderer
-packages/api       @nook/api       The RPC contract, the Drizzle schema, types
-packages/backend   @nook/backend   Effect RPC handlers and the services behind them
-alchemy.run.ts                     The Cloudflare stack
-```
-
-`packages/api` stays free of runtime behaviour. The browser bundle imports it,
-so anything that needs a database client, a bucket, a clock, or a request
-belongs in `packages/backend`.
-
-`packages/anki` is pure: the reader opens an archive, and `@nook/anki/render`
-turns a Note into a Card's two sides. The Worker imports the renderer without
-pulling in the reader's browser-only SQLite engine.
-
-Screens follow an Elm-style split: `model.ts`, `commands.ts`, `update.ts`, and
-`view.ts`. Custom Foldkit lint rules enforce it and fail the build.
-
-Reads follow the same split. `queries.ts` defines the Query submodels that own
-each list and detail read; `api-commands.ts` keeps the writes and the review
-queue.
-
-## Design
-
-Reads:
-
-- The overview, the deck list, and one Deck by id are Foldkit Queries. Each
-  owns its fetch, its `AsyncData` state, and a generation number that rejects a
-  late answer from an older request. See
-  [ADR 0004](./docs/adr/0004-queries-own-fetch-state.md).
-- A failed read is local: the slice that failed shows its own message and
-  Retry, and a read that fails after it has data keeps that data.
-
-Storage:
-
-- D1 holds the system of record. D1 has no transactions, so multi-statement
-  writes use `db.batch()`. See
-  [ADR 0003](./docs/adr/0003-d1-with-batch-instead-of-transactions.md).
-- R2 holds Media, served through the Worker. The bucket is never public: every
-  object is read through `/api/media/<name>`.
-- Drizzle owns the schema and generates the migrations.
-
-Scheduling:
-
-- FSRS-6 runs on the server today. The algorithm is deterministic, so the
-  device can run the same code offline later, and the server stays
-  authoritative.
-- Every Review is an append-only row. Card state derives from the log: each
-  grade writes one Review row, one before-grade snapshot for undo, and the
-  Card's new FSRS-6 state, in one batch.
-
-Sync:
-
-- The device prefetches a queue and grades offline. See
-  [ADR 0001](./docs/adr/0001-review-from-a-prefetched-queue.md).
-- The server orders Reviews and ignores replays. See
-  [ADR 0002](./docs/adr/0002-the-server-orders-reviews.md).
-
-Identity:
-
-- Cloudflare Access, configured inline on the Alchemy `access` prop. There are
-  no accounts and no passwords in nook.
+**Before forking:** `.github/workflows/deploy.yml` deploys on every push to
+`master`. Change that workflow if you do not want every push to publish your
+fork.
 
 ## Anki compatibility
 
-nook is compatible with modern Anki `.apkg` deck imports; it is not an Anki
-client and does not sync with AnkiWeb. Import brings in deck content, not
-scheduling history.
+nook imports modern `.apkg` files in the format written by Anki 26.x. It
+supports note fields, `{{FrontSide}}`, conditionals, cloze deletions,
+`[sound:]` references, and media URLs, along with each note type's CSS. LaTeX
+and text-to-speech tags are not supported.
 
-nook reads the modern `.apkg` format that Anki 26.x writes: `collection.anki21`,
-a `media` map, and numbered media files. Note types, fields, templates, and
-decks come from the normalized tables `notetypes`, `fields`, `templates`, and
-`decks`, not from the legacy JSON blobs in `col`.
+Legacy exports are not supported. In Anki, turn off **Support older Anki
+versions** and export the deck again. nook does not import Anki scheduling
+history or deck options, and it does not sync with AnkiWeb. Imported cards
+start new and are scheduled by nook's FSRS-6 implementation.
 
-Legacy exports are rejected with a message that tells the Learner to turn off
-"Support older Anki versions" and export again.
+## Project layout
 
-nook does not read Anki's scheduling state, and does not import deck options.
-Imported Cards start as new, FSRS learns them from your Reviews, and nook
-applies its own global limits.
+```
+apps/frontend      @nook/frontend  The Foldkit app and Worker entry point
+packages/anki      @nook/anki      Anki archive reader and card renderer
+packages/api       @nook/api       RPC contract, Drizzle schema, and types
+packages/backend   @nook/backend   RPC handlers and backend services
+alchemy.run.ts                     Cloudflare infrastructure
+```
+
+The API package contains shared contracts and types; database and storage
+operations live in the backend. The Anki renderer is separate from the
+browser-only archive reader, so the Worker can render cards without bundling
+the reader.
+
+The app uses an Elm-style structure for screens: `model.ts`, `commands.ts`,
+`update.ts`, and `view.ts`. Custom Foldkit lint rules enforce this structure.
+
+## Design notes
+
+- D1 stores the collection and R2 stores media. Media is served through the
+  Worker and is not publicly exposed. Multi-statement writes use D1 batches.
+- The server schedules reviews and remains authoritative. Each review is
+  recorded in an append-only log; replayed review IDs are ignored. This log
+  also syncs reviews made offline.
+- The device stores prefetched cards and offline reviews in IndexedDB. The
+  service worker caches the app shell for installation and offline use.
+- Foldkit Queries manage the overview and deck reads, including loading,
+  errors, retries, and stale responses. See
+  [ADR 0004](./docs/adr/0004-queries-own-fetch-state.md).
+
+More detail is available in the [architecture decision records](./docs/adr):
+[offline review](./docs/adr/0001-review-from-a-prefetched-queue.md),
+[review ordering](./docs/adr/0002-the-server-orders-reviews.md), and
+[D1 writes](./docs/adr/0003-d1-with-batch-instead-of-transactions.md).
+
+## Toolchain notes
+
+- Install dependencies with pnpm. The workspace applies a required patch to
+  Effect 4.0.0; bypassing pnpm can cause a runtime error.
+- `foldkit/experimental/query` is used for deck and overview reads. Its API may
+  change while Foldkit stabilizes it.
 
 ## License
 
 nook is available under the MIT License. See [LICENSE](./LICENSE).
-
-## Deploying
-
-`pnpm infra:deploy` applies the Cloudflare stack in `alchemy.run.ts`: the
-Worker, the static assets, and the Access application.
-
-**Caution:** `.github/workflows/deploy.yml` runs `pnpm infra:deploy` on every
-push to `master`. Change that before you fork this, or every push publishes.
-
-## Notes on the toolchain
-
-- `pnpm-workspace.yaml` pins every `@effect/*` package to 4.0.0 and applies
-  `patches/effect@4.0.0.patch`. The patch is load-bearing: Foldkit redefines
-  three `Schema` properties that Effect 4.0.0 defines as non-configurable, and
-  an unpatched Effect throws at runtime. Install through pnpm, not around it.
-- `foldkit` and `@foldkit/ui` track the same version. The list and detail
-  reads use `foldkit/experimental/query`, whose names and Model shape can
-  change while the module stabilizes.
-- `components.json` registers the `@foldcn` registry namespace, but
-  `src/components/ui/` holds checked-in copies. Installing a component copies
-  the source in; it is not fetched at build time.
