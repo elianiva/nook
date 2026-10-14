@@ -1,25 +1,39 @@
-# nook
+<h1 align="center">
+  <img src="apps/frontend/public/icons/icon-512.png" alt="nook logo" width="72" /> nook
+</h1>
 
-nook is a fast, simple spaced repetition system (SRS) that runs as an
-installable progressive web app (PWA). Import an Anki deck, then review your
-Cards with FSRS scheduling — online or offline, on desktop or mobile.
+nook is an Android-first, fast, simple spaced repetition system (SRS) that
+runs as an installable progressive web app (PWA). Import an Anki deck, then
+review your Cards with FSRS scheduling — online or offline, on mobile or
+desktop.
 
 nook is designed for one Learner and self-hosting: your collection lives in
 your own Cloudflare account, with no nook sign-up, password, or account to
 manage.
 
+## Screenshots
+
+Portrait screenshots show the app at a mobile viewport, designed for Android.
+
+<p align="center">
+  <a href="docs/screenshots/home.png"><img src="docs/screenshots/home.png" alt="nook home screen on mobile" width="24%" /></a>
+  <a href="docs/screenshots/deck-detail.png"><img src="docs/screenshots/deck-detail.png" alt="nook deck details screen on mobile" width="24%" /></a>
+  <a href="docs/screenshots/review.png"><img src="docs/screenshots/review.png" alt="nook review screen on mobile, with the answer revealed" width="24%" /></a>
+</p>
+
 ## At a glance
 
-- **Fast reviews:** the next Cards are prefetched, so reviewing does not wait
-  for a network request.
-- **Offline-ready PWA:** install nook on your device and keep reviewing when
-  your connection drops. Grades sync when you reconnect.
-- **Anki-compatible imports:** bring in modern `.apkg` decks, including their
-  note templates, styling, and media.
-- **FSRS scheduling:** new Cards are scheduled with FSRS-6. Imported Anki
-  scheduling history is not carried over; imported Cards start as new.
-- **Personal by design:** one self-hosted instance serves one Learner. There
-  are no nook accounts or sign-up flow.
+- **Anki imports:** bring in modern `.apkg` decks with their Note Types,
+  templates, styling, tags, and media. Cards start fresh; Anki scheduling
+  history is not imported.
+- **FSRS-6 reviews:** review due and new Cards, undo the last Grade, and let
+  each Grade reschedule its Card. The append-only Review log is the sync
+  source of truth.
+- **Offline-ready PWA:** install nook on Android and review from the next 200
+  prefetched Cards. Grades made offline sync when the connection returns.
+- **Private self-hosting:** Alchemy deploys the PWA and Worker to your
+  Cloudflare account; D1 stores the collection, R2 stores media, and
+  Cloudflare Access admits one Learner. There are no nook accounts or sign-up.
 
 ## Status
 
