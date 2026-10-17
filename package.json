@@ -23,6 +23,7 @@
     "lint": "vp lint",
     "test": "turbo test",
     "test:kaishi": "NOOK_TEST_KAISHI=1 turbo test",
+    "test:e2e": "pnpm --filter @nook/e2e test:e2e",
     "typecheck": "turbo typecheck",
     "prepare": "lefthook install"
   },
