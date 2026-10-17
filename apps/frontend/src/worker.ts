@@ -83,22 +83,16 @@ const appLayer = (env: Env) =>
     Layer.provideMerge(HttpRouter.layer),
   )
 
-type WebHandler = (request: Request) => Promise<Response>
-
 /** The bindings are an argument of `fetch`, so the handler closes over them
- *  rather than a module-scoped layer. Building the layer graph costs about a
- *  millisecond, so it is built once per `env` (one per isolate) and reused; the
- *  request itself reaches the routes through `HttpServerRequest`. */
-const handlers = new WeakMap<Env, WebHandler>()
-
-const handlerFor = (env: Env): WebHandler => {
-  let handler = handlers.get(env)
-  if (handler === undefined) {
-    handler = HttpRouter.toWebHandler(appLayer(env), { disableLogger: true }).handler
-    handlers.set(env, handler)
-  }
-  return handler
-}
+ *  rather than a module-scoped layer. Build it per request and never cache it
+ *  across requests: it owns I/O created inside the first request, which
+ *  Cloudflare forbids reusing from another request, and Effect hits the same
+ *  limit (Effect-TS/effect#6319, effect-smol#2179). A cached handler hangs under
+ *  workerd when a cold isolate's first request is not an RPC call (for example
+ *  `GET /api/health`), and every later RPC call then fails with "Worker's code
+ *  had hung". The rebuild costs about a millisecond of CPU. */
+const handlerFor = (env: Env): ((request: Request) => Promise<Response>) =>
+  HttpRouter.toWebHandler(appLayer(env), { disableLogger: true }).handler
 
 const isMedia = (pathname: string): boolean =>
   pathname === MEDIA_PATH || pathname.startsWith(`${MEDIA_PATH}/`)

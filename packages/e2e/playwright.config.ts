@@ -22,9 +22,8 @@ export default defineConfig({
     // Build the client first: the asset layer serves `apps/frontend/dist`, and the
     // service worker only exists in a production build.
     command: 'pnpm --filter @nook/frontend build && node support/server.ts',
-    // Probe an asset, not `/api/health`: a first request to the Worker that is not an
-    // RPC call leaves the handler `worker.ts` caches per isolate hung for later RPC
-    // calls under workerd. Nothing in the app calls the health route.
+    // Probe an asset, not `/api/health`: `tests/cold-isolate.spec.ts` needs the Worker's
+    // first request to be its own non-RPC call.
     url: `http://localhost:${port}/`,
     reuseExistingServer: false,
     timeout: 180_000,
