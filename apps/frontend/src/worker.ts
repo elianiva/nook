@@ -30,7 +30,8 @@ import {
   SettingsHandlers,
   SqlLive,
 } from '@nook/backend'
-import { HEALTH_PATH, MEDIA_PATH, RPC_PATH } from './lib/api'
+import { checkAccess, type AccessEnv } from './lib/access'
+import { API_PREFIX, HEALTH_PATH, MEDIA_PATH, RPC_PATH } from './lib/api'
 import { mediaResponse, type MediaBucket } from './lib/media'
 
 /** The static asset binding, as much of it as this Worker uses. */
@@ -38,7 +39,7 @@ type Assets = {
   fetch(request: Request): Promise<Response>
 }
 
-type Env = {
+type Env = AccessEnv & {
   ASSETS: Assets
   DB: D1Database
   MEDIA: MediaBucket
@@ -115,6 +116,10 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     try {
+      if (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`)) {
+        const rejection = await checkAccess(request, env)
+        if (rejection !== null) return rejection
+      }
       if (isMedia(url.pathname)) return await mediaResponse(env.MEDIA, request, url)
       return await handlerFor(env)(request)
     } catch (error) {

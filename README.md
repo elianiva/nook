@@ -84,10 +84,11 @@ stands in for Cloudflare Access.
 
 ## Configuration
 
-| Variable             | Required | Default             | Purpose                                        |
-| -------------------- | -------- | ------------------- | ---------------------------------------------- |
-| `NOOK_ALLOWED_EMAIL` | Yes      | —                   | The only email address allowed to access nook. |
-| `NOOK_DOMAIN`        | No       | `nook.elianiva.com` | Hostname for the deployed app.                 |
+| Variable                  | Required | Default             | Purpose                                                                                                                                 |
+| ------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `NOOK_ALLOWED_EMAIL`      | Yes      | —                   | The only email address allowed to access nook.                                                                                          |
+| `NOOK_DOMAIN`             | No       | `nook.elianiva.com` | Hostname for the deployed app.                                                                                                          |
+| `NOOK_ACCESS_TEAM_DOMAIN` | Deploy   | —                   | Zero Trust team domain (`<team>.cloudflareaccess.com`). The Worker verifies the Access JWT against its keys. Not needed for `pnpm dev`. |
 
 `NOOK_ALLOWED_EMAIL` is required. There is no sign-up flow, and
 `alchemy.run.ts` will not load without this value.
