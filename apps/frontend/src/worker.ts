@@ -12,7 +12,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types'
 import { Effect, Layer } from 'effect'
-import { HttpRouter, HttpServer, HttpServerResponse } from 'effect/http'
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
 import { Api } from '@nook/api'
 import {
@@ -79,22 +79,37 @@ const apiRoutes = RpcServer.layerHttp({
   Layer.provideMerge(RpcSerialization.layerJson),
 )
 
-const assetRoute = (env: Env, request: Request) =>
-  HttpRouter.add('*', '/*', () =>
-    Effect.promise(() => env.ASSETS.fetch(request)).pipe(Effect.map(HttpServerResponse.fromWeb)),
+const assetRoute = (env: Env) =>
+  HttpRouter.add('*', '/*', (request) =>
+    HttpServerRequest.toWeb(request).pipe(
+      Effect.flatMap((web) => Effect.promise(() => env.ASSETS.fetch(web))),
+      Effect.map(HttpServerResponse.fromWeb),
+    ),
   )
 
-const appLayer = (env: Env, request: Request) =>
-  Layer.mergeAll(healthRoute, apiRoutes, assetRoute(env, request)).pipe(
+const appLayer = (env: Env) =>
+  Layer.mergeAll(healthRoute, apiRoutes, assetRoute(env)).pipe(
     Layer.provideMerge(SqlLive(env.DB)),
     Layer.provideMerge(HttpServer.layerServices),
     Layer.provideMerge(HttpRouter.layer),
   )
 
-/** Built per request: the bindings are an argument of `fetch`, so the route
- *  handlers close over them rather than a module-scoped layer. */
-const handlerFor = (env: Env, request: Request) =>
-  HttpRouter.toWebHandler(appLayer(env, request), { disableLogger: true }).handler
+type WebHandler = (request: Request) => Promise<Response>
+
+/** The bindings are an argument of `fetch`, so the handler closes over them
+ *  rather than a module-scoped layer. Building the layer graph costs about a
+ *  millisecond, so it is built once per `env` (one per isolate) and reused; the
+ *  request itself reaches the routes through `HttpServerRequest`. */
+const handlers = new WeakMap<Env, WebHandler>()
+
+const handlerFor = (env: Env): WebHandler => {
+  let handler = handlers.get(env)
+  if (handler === undefined) {
+    handler = HttpRouter.toWebHandler(appLayer(env), { disableLogger: true }).handler
+    handlers.set(env, handler)
+  }
+  return handler
+}
 
 /**
  * Media is a Card's images and audio, keyed by the name the archive used.
@@ -148,7 +163,7 @@ export default {
     const url = new URL(request.url)
     try {
       if (isMedia(url.pathname)) return await mediaResponse(env, request, url)
-      return await handlerFor(env, request)(request)
+      return await handlerFor(env)(request)
     } catch (error) {
       logFailure(request, url, error)
       return new Response('Internal Server Error', { status: 500 })
