@@ -7,7 +7,8 @@
  * by hand. The app's own routes and Media behaviour stay in this file.
  *
  * - The shell precache answers offline first; an update waits for the next
- *   load rather than interrupting a review session mid-grade.
+ *   load rather than interrupting a review session mid-grade. The shell's
+ *   reload prompt (outside review) is the only thing that skips waiting.
  * - `/api/media/*` is cache-first with a long max age: a URL is scoped by
  *   Import, so its file never changes, and the prefetched queue's HTML already
  *   names the URLs a session needs.
@@ -76,5 +77,15 @@ const navigationRoute = new NavigationRoute(async ({ request }) => {
 })
 registerRoute(navigationRoute)
 
-void self.skipWaiting()
-self.addEventListener('activate', () => self.clients.claim())
+// A newer worker installs and then waits. It activates only when the learner
+// takes the shell's "reload" prompt, which messages it (`src/lib/sw-update.ts`),
+// or when every tab on the old shell has closed. `clients.claim()` runs only on
+// activation, so the first install still controls the page that registered it.
+self.addEventListener('message', (event) => {
+  if ((event.data as { type?: unknown } | null)?.type === 'nook:skip-waiting') {
+    void self.skipWaiting()
+  }
+})
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim())
+})

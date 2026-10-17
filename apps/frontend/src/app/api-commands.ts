@@ -18,6 +18,7 @@ import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard 
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { loadQueuedGrades, removeQueuedGrade, saveQueuedGrade } from '@/lib/review-grade-store'
 import { NookRpc } from '@/lib/rpc'
+import { applyWaitingWorker } from '@/lib/sw-update'
 import { learnerTimezone as timezone } from '@/lib/timezone'
 import { Message as MessageConstructors } from './model'
 import type { LoadRetry } from './model'
@@ -312,8 +313,8 @@ export const DownloadFile = Command.define('DownloadFile', {
  */
 export const ReloadApp = Command.define('ReloadApp', {
   messages: [MessageConstructors.AppliedSwUpdate],
-  execute: Effect.sync(() => {
-    window.location.reload()
+  execute: Effect.promise(async () => {
+    await applyWaitingWorker(navigator.serviceWorker, () => window.location.reload())
     return MessageConstructors.AppliedSwUpdate()
   }),
 })
