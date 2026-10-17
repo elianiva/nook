@@ -26,6 +26,7 @@ import { Api, DeckId } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Imports, ImportsHandlers } from '../src/imports'
+import { Restore, RestoreHandlers } from '../src/restore'
 import { Reviews, ReviewsHandlers } from '../src/reviews'
 import { Settings, SettingsHandlers } from '../src/settings'
 import { migrate } from './migrate'
@@ -33,10 +34,18 @@ import { migrate } from './migrate'
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
 
 const ApiLive = RpcServer.layerHttp({ group: Api, path: '/api/rpc', protocol: 'http' }).pipe(
-  Layer.provide([DecksHandlers, HomeHandlers, ImportsHandlers, ReviewsHandlers, SettingsHandlers]),
+  Layer.provide([
+    DecksHandlers,
+    HomeHandlers,
+    ImportsHandlers,
+    RestoreHandlers,
+    ReviewsHandlers,
+    SettingsHandlers,
+  ]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
   Layer.provideMerge(Imports.layer),
+  Layer.provideMerge(Restore.layer),
   Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
   Layer.provideMerge(RpcSerialization.layerJson),
