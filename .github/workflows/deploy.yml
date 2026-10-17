@@ -43,3 +43,6 @@ jobs:
           # nook has no sign-up. Access admits this one address and nothing
           # else, so the stack refuses to load without it.
           NOOK_ALLOWED_EMAIL: ${{ secrets.NOOK_ALLOWED_EMAIL }}
+          # The Worker verifies the Access token against this team's keys. A
+          # deploy without it answers 500 on /api/*.
+          NOOK_ACCESS_TEAM_DOMAIN: ${{ secrets.NOOK_ACCESS_TEAM_DOMAIN }}

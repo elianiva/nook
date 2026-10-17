@@ -19,6 +19,14 @@ if (allowedEmail === undefined || allowedEmail === '') {
 }
 
 /**
+ * The Zero Trust team domain (`<team>.cloudflareaccess.com`) whose JWKS signs
+ * the Access token. The Worker verifies that token itself, as defence in depth
+ * behind Access. A deploy without it answers 500 on `/api/*`; `alchemy dev`
+ * stands in an identity instead of a token and does not need it.
+ */
+const accessTeamDomain = process.env['NOOK_ACCESS_TEAM_DOMAIN'] ?? ''
+
+/**
  * The hostname nook answers on. Override it to self-host under your own
  * domain.
  */
@@ -39,48 +47,59 @@ const domain = process.env['NOOK_DOMAIN'] ?? 'nook.elianiva.com'
  * The `MEDIA` binding is the R2 bucket a Card's images and audio live in. The
  * bucket is never public: the Worker serves every object through `/api/media`.
  */
-class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
-  rootDir: 'apps/frontend',
-  main: 'src/worker.ts',
-  env: {
-    DB: Cloudflare.D1.Database('nook-db', {
-      migrations: './packages/backend/migrations',
-    }),
-    MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
-  },
-  domain,
-  // Workers Logs: every console line and Effect log is kept and searchable in
-  // the dashboard, along with one invocation log per request.
-  observability: {
-    enabled: true,
-    logs: {
-      enabled: true,
-      invocationLogs: true,
-      headSamplingRate: 1,
-      persist: true,
-    },
-  },
-  access: {
-    name: 'nook',
-    // One allow rule, one email. Alchemy creates this Access application with
-    // the Worker and deletes it with the Worker, so the policy cannot drift
-    // away from the thing it protects.
-    policies: [{ decision: 'allow', include: [{ email: allowedEmail }] }],
-    autoRedirectToIdentity: true,
-  },
-  assets: {
-    // `/api/*` is the Worker's; every other path is served by the asset layer,
-    // which falls back to `index.html` for client routes.
-    runWorkerFirst: ['/api/*'],
-  },
-  dev: {
-    port: 5273,
-    strictPort: true,
-    // `alchemy dev` has no Access service in front of it, so it stands in an
-    // identity and the Worker reads a real one.
-    access: { aud: 'dev', identity: { email: allowedEmail } },
-  },
-}) {}
+class Website extends Cloudflare.Website.Foldkit<Website>()(
+  'nook',
+  Effect.gen(function* () {
+    // Declared here rather than inline on the Worker so its audience tag is an
+    // output the Worker can be told, and verify the Access token against.
+    // Alchemy creates it with the Worker and deletes it with the Worker.
+    const access = yield* Cloudflare.Access.Application('Access', {
+      type: 'self_hosted',
+      name: 'nook',
+      // One allow rule, one email.
+      policies: [{ decision: 'allow', include: [{ email: allowedEmail }] }],
+      autoRedirectToIdentity: true,
+    })
+    return {
+      rootDir: 'apps/frontend',
+      main: 'src/worker.ts',
+      env: {
+        DB: Cloudflare.D1.Database('nook-db', {
+          migrations: './packages/backend/migrations',
+        }),
+        MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
+        ACCESS_TEAM_DOMAIN: accessTeamDomain,
+        ACCESS_AUD: access.aud,
+        ALLOWED_EMAIL: allowedEmail,
+      },
+      domain,
+      // Workers Logs: every console line and Effect log is kept and searchable in
+      // the dashboard, along with one invocation log per request.
+      observability: {
+        enabled: true,
+        logs: {
+          enabled: true,
+          invocationLogs: true,
+          headSamplingRate: 1,
+          persist: true,
+        },
+      },
+      access,
+      assets: {
+        // `/api/*` is the Worker's; every other path is served by the asset layer,
+        // which falls back to `index.html` for client routes.
+        runWorkerFirst: ['/api/*'],
+      },
+      dev: {
+        port: 5273,
+        strictPort: true,
+        // `alchemy dev` has no Access service in front of it, so it stands in an
+        // identity and the Worker reads a real one.
+        access: { aud: 'dev', identity: { email: allowedEmail } },
+      },
+    }
+  }),
+) {}
 
 export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>
 

@@ -38,6 +38,12 @@ const mf = new Miniflare({
   modules: [{ type: 'ESModule', path: 'worker.js', contents: worker.outputFiles[0]?.contents }],
   compatibilityDate: '2026-08-01',
   compatibilityFlags: ['nodejs_compat'],
+  // The same stand-in identity `alchemy dev` binds, so the Worker's Access
+  // check admits the browser as it does locally.
+  bindings: {
+    ALLOWED_EMAIL: 'e2e@example.com',
+    ALCHEMY_DEV_ACCESS: { aud: 'dev', identity: { email: 'e2e@example.com' } },
+  },
   d1Databases: { DB: 'nook-e2e' },
   r2Buckets: { MEDIA: 'nook-e2e-media' },
   assets: {
