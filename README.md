@@ -66,6 +66,14 @@ stands in for Cloudflare Access.
 `NOOK_ALLOWED_EMAIL` is required. There is no sign-up flow, and
 `alchemy.run.ts` will not load without this value.
 
+## Observability
+
+Deploys turn on Workers Logs (`observability` in `alchemy.run.ts`). Read them in
+the Cloudflare dashboard under the Worker's Logs tab. Storage failures, grades
+for unknown Cards, failed imports and unhandled Worker errors are logged with
+fields such as `operation`, `cardId`, `importId`, `method` and `path`. Card
+content, request bodies, query strings, headers and secrets are never logged.
+
 ## Commands
 
 ```bash

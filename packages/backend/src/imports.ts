@@ -239,6 +239,8 @@ export class Imports extends Context.Service<
       ): Effect.Effect<ImportStatus, ImportNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           yield* status(id)
+          // The message is client-supplied and may quote Card content: log the id only.
+          yield* Effect.logWarning('import failed').pipe(Effect.annotateLogs({ importId: id }))
           yield* sql`UPDATE imports SET status = 'failed', error = ${error}, updated_at = datetime('now') WHERE id = ${id}`
           return yield* status(id)
         }).pipe(Effect.withSpan('Imports.fail'), (self) =>
