@@ -17,7 +17,7 @@ import { AsyncData } from 'foldkit'
 import { modifyFields } from 'foldkit/struct'
 import type { Url } from 'foldkit/url'
 import type { DeckDetail, DeckId, DeckLimits, DeckSummary, Grade, ReviewCard } from '@nook/api'
-import { NavigateInternal, NavigateToPath } from './commands'
+import { FocusElement, NavigateInternal, NavigateToPath } from './commands'
 import {
   DownloadFile,
   FetchExport,
@@ -413,6 +413,15 @@ const persistReviewProgress = (model: Model, cards: ReadonlyArray<ReviewCard>, w
  * queue and the re-queue are walked. The grade is also the undo point until
  * the next grade lands.
  */
+/** The same transition, plus a focus move to `selector` after the next render. */
+const focusAfter = (
+  result: Update.Return<Model, Message>,
+  selector: string,
+): Update.Return<Model, Message> => ({
+  model: result.model,
+  commands: [...(result.commands ?? []), FocusElement({ selector })],
+})
+
 const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message> => {
   const review = model.review
   const card = review.cards[review.index]
@@ -453,6 +462,9 @@ const gradeCurrent = (model: Model, grade: Grade): Update.Return<Model, Message>
     commands: [
       SaveQueuedGrade({ id: entry.id, cardId: entry.cardId, grade: entry.grade, seq: entry.seq }),
       ...persistReviewProgress(model, cards.slice(index)),
+      // The grade bar that held focus is gone: land on the next Card's reveal
+      // button, or on the page when the session just ended.
+      FocusElement({ selector: done ? '#main-content' : '#review-reveal' }),
     ],
   }
 }
@@ -470,22 +482,29 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       // A new screen means new loads; the old notice and the old review session
       // belong to the old screen. The Manage draft belongs to one Deck, so it
       // resets too — a stale name must never leak onto another deck's page.
-      return routeLoads({
-        ...clearNotice(model),
-        route,
-        review: idleReview,
-        deckManage: idleDeckManage,
-        cardSuspensionPending: Option.none(),
-        cardSuspensionError: Option.none(),
-        cardHistoryCard: Option.none(),
-        cardHistoryLoading: false,
-        cardHistory: [],
-        cardHistoryTotal: 0,
-        cardHistoryError: Option.none(),
-      })
+      return focusAfter(
+        routeLoads({
+          ...clearNotice(model),
+          route,
+          review: idleReview,
+          deckManage: idleDeckManage,
+          cardSuspensionPending: Option.none(),
+          cardSuspensionError: Option.none(),
+          cardHistoryCard: Option.none(),
+          cardHistoryLoading: false,
+          cardHistory: [],
+          cardHistoryTotal: 0,
+          cardHistoryError: Option.none(),
+        }),
+        // A new screen starts at its top: keyboard focus and the screen reader
+        // follow the route change instead of staying on the link that is gone.
+        '#main-content',
+      )
     },
 
     CompletedNavigate: () => ({ model }),
+
+    CompletedFocus: () => ({ model }),
 
     GotOverviewMessage: ({ message }) => overview.fold(model, message),
 
@@ -797,6 +816,8 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         ? { model }
         : {
             model: modifyFields(model, { review: () => ({ ...model.review, revealed: true }) }),
+            // The reveal button turns into the grade bar; keep focus inside it.
+            commands: [FocusElement({ selector: '#review-grade-Good' })],
           },
 
     ClickedGrade: ({ grade }) => gradeCurrent(model, grade),
@@ -962,7 +983,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         return { model }
       }
       if (!review.revealed) {
-        return { model: modifyFields(model, { review: () => ({ ...review, revealed: true }) }) }
+        return focusAfter(
+          { model: modifyFields(model, { review: () => ({ ...review, revealed: true }) }) },
+          '#review-grade-Good',
+        )
       }
       return gradeCurrent(model, 'Good')
     },
@@ -1245,6 +1269,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     }),
 
     GotImportPreview: ({ preview }) => ({
+      commands: [FocusElement({ selector: '#import-start' })],
       model: {
         ...model,
         importState: {
@@ -1461,6 +1486,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           error: Option.none(),
         }),
       }),
+      commands: [FocusElement({ selector: '#deck-name' })],
     }),
 
     TypedDeckName: ({ value }) => ({
@@ -1479,6 +1505,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: modifyFields(model, {
         deckManage: () => ({ ...model.deckManage, editing: false, error: Option.none() }),
       }),
+      commands: [FocusElement({ selector: '#deck-rename' })],
     }),
 
     // A blank name would render as an empty row everywhere, so it never
@@ -1518,10 +1545,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         deckManage: { ...model.deckManage, editing: false, saving: false, saved: true },
         deckMutationRollback: Option.none(),
       }
-      return Update.combine<Model, Message>(next, [
-        decks.revalidateOrLoad,
-        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
-      ])
+      return focusAfter(
+        Update.combine<Model, Message>(next, [
+          decks.revalidateOrLoad,
+          (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+        ]),
+        '#deck-rename',
+      )
     },
 
     // Destructive confirms: only one is open at a time, and opening one
@@ -1537,6 +1567,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           error: Option.none(),
         }),
       }),
+      commands: [FocusElement({ selector: '#deck-confirm-keep' })],
     }),
 
     ClickedRemoveDeck: ({ deckId }) => ({
@@ -1550,6 +1581,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           error: Option.none(),
         }),
       }),
+      commands: [FocusElement({ selector: '#deck-confirm-keep' })],
     }),
 
     ClickedCancelDeckConfirm: () => ({
@@ -1560,6 +1592,14 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           error: Option.none(),
         }),
       }),
+      // Back to the button that opened the confirm.
+      commands: [
+        FocusElement({
+          selector: Option.contains(model.deckManage.confirming, 'remove')
+            ? '#deck-remove'
+            : '#deck-reset',
+        }),
+      ],
     }),
 
     ClickedConfirmResetDeck: ({ deckId }) => ({
@@ -1618,6 +1658,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           limitsError: Option.none(),
         }),
       }),
+      commands: [FocusElement({ selector: '#deck-new-per-day' })],
     }),
 
     TypedDeckNewPerDay: ({ value }) => ({
@@ -1659,6 +1700,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           limitsError: Option.none(),
         }),
       }),
+      commands: [FocusElement({ selector: '#deck-limits' })],
     }),
 
     // Save parses the text: blank means `null` (follow Settings), anything
@@ -1719,10 +1761,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
         },
         deckMutationRollback: Option.none(),
       }
-      return Update.combine<Model, Message>(next, [
-        decks.revalidateOrLoad,
-        (current) => deckDetail.revalidateOrLoad(current, { deckId }),
-      ])
+      return focusAfter(
+        Update.combine<Model, Message>(next, [
+          decks.revalidateOrLoad,
+          (current) => deckDetail.revalidateOrLoad(current, { deckId }),
+        ]),
+        '#deck-limits',
+      )
     },
 
     DeckManageFailed: ({ deckId, error }) => {

@@ -122,6 +122,13 @@ const streamImport = (
     }),
   )
 
+/** Whether a key press landed on a control that owns Space and Enter itself. */
+const isActivatable = (target: EventTarget | null): boolean =>
+  target instanceof Element &&
+  target.closest(
+    'a[href], button, input, select, textarea, summary, [role="button"], [contenteditable]',
+  ) !== null
+
 export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
   importRun: entry(
     {
@@ -236,6 +243,11 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
   /**
    * Review shortcuts: Space or Enter reveals, then grades Good; 1–4 grade
    * directly. Grading is one tap on a phone, but a keyboard makes it faster.
+   *
+   * Space and Enter belong to whatever control has focus: on a button or link
+   * they activate it, so Tab to "Again" and Enter grades Again, not Good. Only
+   * a press that lands on the page itself is the shortcut. The digits are not
+   * activation keys, so they work from anywhere outside a text field.
    */
   reviewKeys: entry(
     { onReview: Schema.Boolean },
@@ -245,16 +257,33 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
       }),
       dependenciesToStream: ({ onReview }) =>
         onReview
-          ? Subscription.keyBindings<Message>({
-              bindings: [
-                { keys: 'Space', mapEvent: () => Message.PressedSpace() },
-                { keys: 'Enter', mapEvent: () => Message.PressedSpace() },
-                { keys: '1', mapEvent: () => Message.PressedGrade({ grade: 'Again' }) },
-                { keys: '2', mapEvent: () => Message.PressedGrade({ grade: 'Hard' }) },
-                { keys: '3', mapEvent: () => Message.PressedGrade({ grade: 'Good' }) },
-                { keys: '4', mapEvent: () => Message.PressedGrade({ grade: 'Easy' }) },
-              ],
-            })
+          ? Stream.merge(
+              Subscription.keyBindings<Message>({
+                bindings: [
+                  { keys: '1', mapEvent: () => Message.PressedGrade({ grade: 'Again' }) },
+                  { keys: '2', mapEvent: () => Message.PressedGrade({ grade: 'Hard' }) },
+                  { keys: '3', mapEvent: () => Message.PressedGrade({ grade: 'Good' }) },
+                  { keys: '4', mapEvent: () => Message.PressedGrade({ grade: 'Easy' }) },
+                  // The hint under the grade bar promises it.
+                  { keys: 'U', mapEvent: () => Message.ClickedUndoGrade() },
+                ],
+              }),
+              Subscription.fromEventFilterMap({
+                target: () => document,
+                type: 'keydown',
+                filterMapEvent: (event: KeyboardEvent) =>
+                  (event.key === ' ' || event.key === 'Enter') &&
+                  !event.defaultPrevented &&
+                  !event.repeat &&
+                  !event.isComposing &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  !isActivatable(event.target)
+                    ? Option.some(Message.PressedSpace())
+                    : Option.none(),
+              }),
+            )
           : Stream.empty,
     },
   ),

@@ -149,7 +149,7 @@ const doneView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> =
               ? []
               : [
                   h.p(
-                    [h.Class('text-[11px] text-amber-600')],
+                    [h.Class('text-[11px] text-amber-700')],
                     [
                       `${queued} ${queued === 1 ? 'grade' : 'grades'} saved on this device — they send when the network returns.`,
                     ],
@@ -215,6 +215,10 @@ const cardBody = (card: ReviewCard, revealed: boolean, h: HtmlBuilder<Message>):
       h.div(
         [
           h.Class('card rounded-2xl border-0 bg-[var(--theme-block)] px-5 py-8 shadow-none'),
+          // The Card swaps its content in place: polite and atomic make a
+          // screen reader read the new question, then the answer on reveal.
+          h.AriaLive('polite'),
+          h.AriaAtomic(true),
           h.InnerHTML(revealed ? card.answer : card.question),
         ],
         [],
@@ -225,13 +229,14 @@ const cardBody = (card: ReviewCard, revealed: boolean, h: HtmlBuilder<Message>):
 /** The four Grades, sized for a thumb: one row, full width, 56px tall. */
 const gradeRow = (h: HtmlBuilder<Message>, disabled: boolean): Html =>
   h.div(
-    [h.Class('flex gap-2')],
-    GRADES.map(({ grade, accentClassName }) =>
+    [h.Class('flex gap-2'), h.Role('group'), h.AriaLabel('Grade this Card')],
+    GRADES.map(({ grade, accentClassName }, index) =>
       button<Message>(
         {
           onClick: Message.ClickedGrade({ grade }),
           size: '2xl',
           isDisabled: disabled,
+          attributes: [h.Id(`review-grade-${grade}`), h.AriaKeyshortcuts(String(index + 1))],
           className:
             'flex-1 flex-col gap-1 rounded-xl border border-border bg-background text-foreground shadow-none hover:bg-[var(--theme-block)] select-none transition-transform active:scale-[0.97]',
         },
@@ -300,7 +305,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
         h.div(
           [h.Class('flex shrink-0 flex-col gap-2 px-4 pt-3')],
           [
-            Progress<Message>({ value: percent }, h),
+            Progress<Message>({ value: percent, label: 'Session progress' }, h),
             h.div(
               [
                 h.Class(
@@ -313,7 +318,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                   review.queueStatus === 'loading'
                     ? [h.Class('text-muted-foreground')]
                     : review.offline.length > 0
-                      ? [h.Class('flex items-center gap-1 text-amber-600')]
+                      ? [h.Class('flex items-center gap-1 text-amber-700')]
                       : saving > 0
                         ? [h.Class('text-primary')]
                         : [],
@@ -349,7 +354,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
             ...(review.undone
               ? [
                   h.p(
-                    [h.Class('pb-2 text-center text-[11px] text-emerald-600')],
+                    [h.Class('pb-2 text-center text-[11px] text-emerald-700'), h.Role('status')],
                     ['Undone — the Card is back as it was.'],
                   ),
                 ]
@@ -390,6 +395,7 @@ export const reviewView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
                     onClick: Message.RevealedAnswer(),
                     size: 'xl',
                     isDisabled: suspensionPending || review.queueStatus === 'loading',
+                    attributes: [h.Id('review-reveal'), h.AriaKeyshortcuts('Space')],
                     className: 'w-full select-none transition-transform active:scale-[0.99]',
                   },
                   ['Show answer'],

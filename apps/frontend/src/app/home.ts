@@ -75,6 +75,7 @@ export const deckRow = (deck: DeckSummary, h: HtmlBuilder<Message>): Html => {
               Progress<Message>(
                 {
                   value: deck.retention7d,
+                  label: `${deck.name} retention, 7 days`,
                   className: 'mt-1 [&_[data-slot=progress-track]]:bg-[var(--theme-bar-idle)]',
                 },
                 h,
@@ -129,6 +130,7 @@ const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
               Progress<Message>(
                 {
                   value: overview.todayProgress,
+                  label: 'Today’s progress',
                   className:
                     'flex-1 [&_[data-slot=progress-indicator]]:bg-[var(--theme-ink)] [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-[var(--theme-track)]',
                 },
@@ -186,7 +188,7 @@ const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
   return h.div(
     [h.Class('flex flex-col gap-2')],
     [
-      h.span(
+      h.h2(
         [h.Class('text-[11px] font-bold tracking-[1.8px] text-[var(--theme-sub)] uppercase')],
         ['Activity · Last 14 days'],
       ),
@@ -194,7 +196,15 @@ const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
         [h.Class('rounded-[14px] border-0 bg-[var(--theme-block)] p-[14px]')],
         [
           h.div(
-            [h.Class('flex h-16 items-end gap-1')],
+            // The bars are decoration for sighted users; the strip is one
+            // image whose label carries the numbers.
+            [
+              h.Class('flex h-16 items-end gap-1'),
+              h.Role('img'),
+              h.AriaLabel(
+                `Reviews per day, last 14 days, oldest first: ${overview.activity14d.join(', ')}`,
+              ),
+            ],
             overview.activity14d.map((count, index) =>
               h.div(
                 [
@@ -207,7 +217,6 @@ const activity = (overview: Overview, h: HtmlBuilder<Message>): Html => {
                         : 'var(--theme-bar-idle)',
                     minHeight: '5px',
                   }),
-                  h.Title(`${count} reviews`),
                 ],
                 [],
               ),

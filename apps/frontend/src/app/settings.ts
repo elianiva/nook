@@ -74,11 +74,15 @@ const rowLabel = (
   h: HtmlBuilder<Message>,
   hinted?: Readonly<{ slot: HintSlot; text: string; model: Model }>,
 ): Html =>
-  h.label(
-    [h.For(id), h.Class('min-w-0 flex-1 text-[13px] font-semibold leading-snug')],
+  h.div(
+    [h.Class('min-w-0 flex-1 text-[13px] font-semibold leading-snug')],
     [
-      labelText,
-      ...(hinted === undefined ? [] : [' ', hint(hinted.slot, hinted.text, hinted.model, h)]),
+      h.label([h.For(id)], [labelText]),
+      // Beside the label, not inside it: the hint button would otherwise
+      // become part of the field's accessible name.
+      ...(hinted === undefined
+        ? []
+        : [' ', hint(hinted.slot, hinted.text, hinted.model, h, labelText)]),
     ],
   )
 
@@ -326,7 +330,9 @@ const behaviourSection = (draft: SettingsDraft, model: Model, h: HtmlBuilder<Mes
           nativeSelect<Message>(
             {
               id: 'rollover-hour',
-              label: 'Day rollover',
+              // The row's own `<label for>` names the select; a second label
+              // would make the accessible name read twice.
+              label: '',
               value: `${draft.dayRolloverHour}:00`,
               onChange: (value) =>
                 Message.EditedRolloverHour({ value: value.split(':')[0] ?? '4' }),
@@ -403,8 +409,8 @@ const appearanceSection = (model: Model, h: HtmlBuilder<Message>): Html => {
               h.OnClick(Message.PickedTheme({ theme: key })),
               h.Class(
                 active
-                  ? 'size-9 shrink-0 rounded-xl border-0 outline-none ring-2 ring-[var(--theme-strong)] ring-offset-2 ring-offset-white'
-                  : 'size-9 shrink-0 rounded-xl border-0 outline-none',
+                  ? 'size-9 shrink-0 rounded-xl border-0 outline-none ring-2 ring-[var(--theme-strong)] ring-offset-2 ring-offset-white focus-visible:ring-4'
+                  : 'size-9 shrink-0 rounded-xl border-0 outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-ink)] focus-visible:ring-offset-2 focus-visible:ring-offset-white',
               ),
               h.Style({ backgroundColor: meta.tint }),
               h.AriaPressed(active ? 'true' : 'false'),
@@ -430,6 +436,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
               h.Class(
                 'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
               ),
+              h.Role('status'),
             ],
             ['Settings saved on this device.'],
           ),

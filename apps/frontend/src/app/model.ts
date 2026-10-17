@@ -501,6 +501,8 @@ export const Message = defineMessageUnion({
   /** The URL changed (link, back/forward, or cold load). */
   ChangedUrl: { url: Url.Url },
   CompletedNavigate: {},
+  /** A focus move finished, or its target was not on screen. */
+  CompletedFocus: {},
   /** A Query's fetch completed. The wrapper routes it back through its lifted fold. */
   GotOverviewMessage: { message: overviewQuery.Message },
   GotDecksMessage: { message: decksQuery.Message },

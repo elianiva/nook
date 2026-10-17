@@ -84,7 +84,7 @@ describe('deck manage', () => {
     const done = update(saved.model, Message.RenamedDeck({ deckId }))
     expect(done.model.deckManage.editing).toBe(false)
     expect(done.model.deckManage.saved).toBe(true)
-    expect(names(done)).toEqual(['FetchDecks', 'FetchDeckDetail'])
+    expect(names(done)).toEqual(['FetchDecks', 'FetchDeckDetail', 'FocusElement'])
   })
 
   it('opens one destructive confirm at a time and closes it on cancel', () => {

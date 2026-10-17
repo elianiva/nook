@@ -83,14 +83,14 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --muted-foreground: oklch(0.5 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: oklch(0.53 0.235 27.3);
   --destructive-foreground: oklch(0.97 0.01 17);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.45 0 0);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -164,7 +164,7 @@
     --theme-ink: #33272a;
     --theme-kicker: #43242e;
     --theme-sub: #6e6259;
-    --theme-nav-idle: #b3a8ab;
+    --theme-nav-idle: #74676a;
     --theme-block: #f4f4f5;
     --theme-bar-idle: #e2e2e4;
     --theme-strong: #b34a63;
@@ -179,7 +179,7 @@
     --theme-nav-idle: #75655c;
     --theme-block: #f4f4f5;
     --theme-bar-idle: #e2e2e4;
-    --theme-strong: #a3650a;
+    --theme-strong: #935a08;
     --theme-track: rgba(51, 39, 42, 0.18);
   }
   :root[data-theme='mochi-sage'] {
@@ -235,6 +235,13 @@
   }
   [data-leave] {
     --tw-animation-fill-mode: both;
+  }
+  /* Keyboard focus is always visible. Controls with their own ring (inputs,
+     buttons) draw it through the utilities layer; links, the tab bar, and
+     anything else fall back to this outline. */
+  :focus-visible {
+    outline: 2px solid var(--theme-strong);
+    outline-offset: 2px;
   }
 }
 
@@ -333,8 +340,20 @@ html:active-view-transition-type(slide-backward) {
   z-index: 1;
 }
 
+/* Reduced motion: no page slide, no pulsing skeletons, no press or slide
+   transitions. State changes still happen; they just do not animate. */
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(page-content) {
+  ::view-transition-group(page-content),
+  ::view-transition-old(page-content),
+  ::view-transition-new(page-content) {
     animation: none;
+  }
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
