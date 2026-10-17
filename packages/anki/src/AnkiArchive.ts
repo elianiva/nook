@@ -1,17 +1,19 @@
 import { Context, Effect, Layer, Stream } from 'effect'
 import type * as Scope from 'effect/Scope'
-import type { AnkiCard, AnkiMediaEntry, AnkiNote } from './AnkiContent'
+import type { AnkiCard, AnkiMediaEntry, AnkiNote, AnkiReview } from './AnkiContent'
 import type { AnkiOpenError, AnkiReadError } from './AnkiErrors'
 import { AnkiCorruptArchive, AnkiUnsupportedArchive } from './AnkiErrors'
 import type { AnkiManifest } from './AnkiManifest'
 import {
   countCards,
   countNotes,
+  countReviews,
   readDecks,
   readNoteTypes,
   readSchemaVersion,
   streamCards,
   streamNotes,
+  streamReviews,
 } from './ArchiveReader'
 import {
   checkArchiveFormat,
@@ -64,6 +66,8 @@ export interface OpenedArchive {
   readonly manifest: Effect.Effect<AnkiManifest, AnkiReadError>
   readonly notes: Stream.Stream<AnkiNote, AnkiReadError>
   readonly cards: Stream.Stream<AnkiCard, AnkiReadError>
+  /** Graded Reviews from `revlog`, by Card then time. Read only when a caller asks for them. */
+  readonly reviews: Stream.Stream<AnkiReview, AnkiReadError>
   readonly media: Stream.Stream<OpenedMedia, AnkiReadError>
 }
 
@@ -191,8 +195,14 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
 
           const manifest: Effect.Effect<AnkiManifest, AnkiReadError> = Effect.gen(function* () {
             onStage?.('manifest')
-            const [noteTypes, decks, noteCount, cardCount] = yield* Effect.all(
-              [readNoteTypes(sql), readDecks(sql), countNotes(sql), countCards(sql)],
+            const [noteTypes, decks, noteCount, cardCount, reviewCount] = yield* Effect.all(
+              [
+                readNoteTypes(sql),
+                readDecks(sql),
+                countNotes(sql),
+                countCards(sql),
+                countReviews(sql),
+              ],
               { concurrency: 'unbounded' },
             )
             return {
@@ -202,6 +212,7 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
               media: [...mediaIndex],
               noteCount,
               cardCount,
+              reviewCount,
               mediaCount: mediaIndex.length,
               mediaBytes: mediaIndex.reduce((total, entry) => total + entry.bytes, 0),
             }
@@ -234,6 +245,7 @@ export const layer = (source: AnkiSqliteSource): Layer.Layer<AnkiArchive, AnkiOp
             manifest,
             notes: streamNotes(sql),
             cards: streamCards(sql),
+            reviews: streamReviews(sql),
             media,
           }
         })

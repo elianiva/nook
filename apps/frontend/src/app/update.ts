@@ -1314,6 +1314,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           readStage: Option.none(),
           preview: Option.none(),
           includeMedia: true,
+          includeHistory: false,
           status: Option.none(),
           error: Option.none(),
         },
@@ -1341,6 +1342,13 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       model: {
         ...model,
         importState: { ...model.importState, includeMedia: isChecked },
+      },
+    }),
+
+    ToggledImportHistory: ({ isChecked }) => ({
+      model: {
+        ...model,
+        importState: { ...model.importState, includeHistory: isChecked },
       },
     }),
 
@@ -1382,6 +1390,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
               readStage: Option.none(),
               preview: Option.none(),
               includeMedia: true,
+              includeHistory: false,
               status: Option.none(),
               error: Option.none(),
             },
@@ -1434,6 +1443,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
           readStage: Option.none(),
           preview: model.importState.preview,
           includeMedia: model.importState.includeMedia,
+          includeHistory: model.importState.includeHistory,
           status: Option.some(progress),
           error: Option.none(),
         },

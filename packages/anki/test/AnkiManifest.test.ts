@@ -71,6 +71,7 @@ describe('AnkiManifest', () => {
       media: [{ name: 'cat.png', entry: '0', bytes: 12, checksum: 'a'.repeat(40) }],
       noteCount: 3402,
       cardCount: 6804,
+      reviewCount: 52000,
       mediaCount: 1,
       mediaBytes: 12,
     })

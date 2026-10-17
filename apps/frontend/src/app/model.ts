@@ -392,6 +392,11 @@ export const ImportState = S.Struct({
   preview: S.Option(ImportPreview),
   /** Whether the run writes the archive's Media. The Learner toggles this on the detail panel. */
   includeMedia: S.Boolean,
+  /**
+   * Whether the run seeds FSRS state and Review history from Anki's review log.
+   * Off by default: without it every imported Card starts new.
+   */
+  includeHistory: S.Boolean,
   /** The last counts the worker reported, for the progress bar. */
   status: S.Option(ImportProgress),
   /** Why the last run failed, as one sentence for the Learner. */
@@ -407,6 +412,7 @@ export const idleImport: ImportState = {
   readStage: Option.none(),
   preview: Option.none(),
   includeMedia: true,
+  includeHistory: false,
   status: Option.none(),
   error: Option.none(),
 }
@@ -667,6 +673,7 @@ export const Message = defineMessageUnion({
   GotImportPreview: { preview: ImportPreview },
   /** The Learner toggled Media on the detail panel. */
   ToggledImportMedia: { isChecked: S.Boolean },
+  ToggledImportHistory: { isChecked: S.Boolean },
   /** The Learner pressed Start on the detail panel. */
   ClickedStartImport: {},
   /** The Learner dismissed the file picker. Nothing was picked, so the panel closes. */

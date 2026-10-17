@@ -23,7 +23,8 @@ These screenshots show the mobile layout.
 ## Features
 
 - Import modern Anki `.apkg` decks, including note types, templates, styling,
-  tags, and media. Imported cards start with no review history.
+  tags, and media. Imported cards start as new, or optionally keep their
+  schedule by replaying your Anki review history.
 - Review due and new cards with FSRS-6. Undo your last review, and use daily
   review limits.
 - Install the PWA and review offline using a queue of up to 200 prefetched
@@ -131,9 +132,35 @@ supports note fields, `{{FrontSide}}`, conditionals, cloze deletions,
 and text-to-speech tags are not supported.
 
 Legacy exports are not supported. In Anki, turn off **Support older Anki
-versions** and export the deck again. nook does not import Anki scheduling
-history or deck options, and it does not sync with AnkiWeb. Imported cards
-start new and are scheduled by nook's FSRS-6 implementation.
+versions** and export the deck again. nook does not import Anki deck options
+and does not sync with AnkiWeb.
+
+### Scheduling history (optional)
+
+By default imported cards start new and are scheduled by nook's FSRS-6
+implementation. If the archive carries a review log, the import panel offers
+**Import review history**, which is off unless you turn it on.
+
+With it on, nook reads the log's graded reviews (which button, and when) and
+replays them through FSRS-6 with your nook settings, so each card gets the
+stability, difficulty, and due date it would hold had you pressed the same
+buttons in nook. Anki's own intervals, ease factors, and FSRS parameters are not
+copied. The reviews also appear in each card's history and in your streaks.
+
+- Manual entries (set due date, forget, reschedule) and cram reviews that do
+  not reschedule are ignored.
+- A card you have already reviewed in nook keeps its schedule; its history is
+  not replayed over it.
+- Due dates come from nook's desired retention, not Anki's due dates, so
+  cards Anki had scheduled far ahead can come due earlier or later, and a
+  backlog you left in Anki shows up as overdue. Daily review limits still
+  apply.
+- Imported reviews cannot be undone. Lapses on cards that were in review count
+  towards leech detection, as in Anki.
+- Already imported a deck without history? Import the same file again with
+  the option on: notes and cards are kept and only the history is added.
+- The archive must include scheduling information (in Anki, tick **Include
+  scheduling information** when exporting). Otherwise the option is hidden.
 
 ## Project layout
 

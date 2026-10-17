@@ -5,11 +5,13 @@ import * as Reactivity from 'effect/reactivity/Reactivity'
 import {
   countCards,
   countNotes,
+  countReviews,
   readDecks,
   readNoteTypes,
   readSchemaVersion,
   streamCards,
   streamNotes,
+  streamReviews,
 } from '../src/ArchiveReader'
 import { deckComponents } from '../src/DeckName'
 import type { AnkiNoteType } from '../src/AnkiManifest'
@@ -253,5 +255,67 @@ describe('streamCards', () => {
           )
         }),
       ),
+  )
+})
+
+describe('streamReviews', () => {
+  const DAY = 86_400_000
+
+  it.effect('keeps graded Reviews only, grouped by Card and ordered in time within a Card', () =>
+    withCollection(
+      {
+        revlog: [
+          // Card 20 is reviewed before card 10 in time, but the stream groups by Card.
+          { id: 1 * DAY, cardId: 20, ease: 3, type: 0 },
+          { id: 2 * DAY, cardId: 10, ease: 1, type: 0 },
+          { id: 3 * DAY, cardId: 10, ease: 4, type: 1 },
+          // Manual entries and non-rescheduling cram record no recall.
+          { id: 4 * DAY, cardId: 10, ease: 0, type: 4 },
+          { id: 5 * DAY, cardId: 10, ease: 3, type: 4 },
+          { id: 6 * DAY, cardId: 10, ease: 3, type: 3, factor: 0 },
+          // A rescheduling filtered review does count.
+          { id: 7 * DAY, cardId: 10, ease: 2, type: 3, factor: 2500 },
+          // A review of a Card the archive no longer holds is still read.
+          { id: 8 * DAY, cardId: 99, ease: 2, type: 2 },
+        ],
+      },
+      (sql) =>
+        Effect.gen(function* () {
+          assert.strictEqual(yield* countReviews(sql), 5)
+          assert.deepStrictEqual(
+            (yield* Stream.runCollect(streamReviews(sql))).map(
+              (review) => `${review.cardId}:${review.id / DAY}:${review.grade}`,
+            ),
+            ['10:2:Again', '10:3:Easy', '10:7:Hard', '20:1:Good', '99:8:Hard'],
+          )
+        }),
+    ),
+  )
+
+  it.effect('pages through a revlog larger than one page without skipping or repeating a row', () =>
+    withCollection(
+      {
+        // 2 Cards of 2600 Reviews each: the first page ends inside Card 2, so the
+        // cursor has to be the (Card, id) pair, not the Card alone.
+        revlog: [1, 2].flatMap((cardId) =>
+          Array.from({ length: 2600 }, (_, index) => ({
+            id: cardId * 10_000_000 + index,
+            cardId,
+            ease: (index % 4) + 1,
+          })),
+        ),
+      },
+      (sql) =>
+        Effect.gen(function* () {
+          const reviews = [...(yield* Stream.runCollect(streamReviews(sql)))]
+          assert.strictEqual(reviews.length, 5200)
+          assert.strictEqual(new Set(reviews.map((review) => review.id)).size, 5200)
+          const ids = reviews.map((review) => review.id)
+          assert.deepStrictEqual(
+            ids,
+            [...ids].sort((a, b) => a - b),
+          )
+        }),
+    ),
   )
 })

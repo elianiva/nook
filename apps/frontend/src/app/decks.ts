@@ -31,10 +31,15 @@ const formatCount = (count: number): string => count.toLocaleString()
 
 /** Share of the archive's rows written so far, 0–100. An archive with no rows is done. */
 const percentWritten = (progress: ImportProgress): number => {
-  const total = progress.noteCount + progress.cardCount + progress.mediaCount
+  const total = progress.noteCount + progress.cardCount + progress.mediaCount + progress.reviewCount
   if (total === 0) return 100
   return Math.round(
-    ((progress.notesImported + progress.cardsImported + progress.mediaImported) / total) * 100,
+    ((progress.notesImported +
+      progress.cardsImported +
+      progress.mediaImported +
+      progress.reviewsImported) /
+      total) *
+      100,
   )
 }
 
@@ -199,6 +204,29 @@ const importPreviewPanel = (state: ImportState, h: HtmlBuilder<Message>): Child 
                         ),
                       ],
                     ),
+                preview.reviewCount === 0
+                  ? h.empty
+                  : h.div(
+                      [h.Class('py-1')],
+                      [
+                        switch_<Message>(
+                          {
+                            id: 'import-include-history',
+                            label: `Import review history (${formatCount(preview.reviewCount)} reviews)`,
+                            description: state.includeHistory
+                              ? "Cards keep their schedule: FSRS replays your Anki reviews to set each card's stability and due date. Cards you already reviewed here are left alone."
+                              : 'Off: every card starts as new.',
+                            isChecked: state.includeHistory,
+                            onToggle: (isChecked) => Message.ToggledImportHistory({ isChecked }),
+                            className: 'shrink-0 border-0 data-checked:bg-[var(--theme-tint)]',
+                            labelClass: 'flex-1 text-[13px] font-semibold',
+                            descriptionClass: 'text-[11px]',
+                            wrapperClass: 'w-full flex-row-reverse justify-between gap-3',
+                          },
+                          h,
+                        ),
+                      ],
+                    ),
                 h.div(
                   [h.Class('flex gap-1 pt-1')],
                   [
@@ -278,6 +306,15 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
         : `${formatCount(status.mediaImported)} of ${formatCount(status.mediaCount)} media`,
   })
 
+  // History only counts when the Learner opted in; otherwise `reviewCount` is 0.
+  const history = Option.match(state.status, {
+    onNone: () => null,
+    onSome: (status) =>
+      status.reviewCount === 0
+        ? null
+        : `${formatCount(status.reviewsImported)} of ${formatCount(status.reviewCount)} reviews`,
+  })
+
   // A stopped Import keeps its archive, so Retry resumes it without another
   // file pick. A finished one only needs dismissing, and a running one can be
   // stopped.
@@ -337,6 +374,9 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
             ...(media === null
               ? []
               : [h.span([h.Class('text-[11px] text-muted-foreground')], [media])]),
+            ...(history === null
+              ? []
+              : [h.span([h.Class('text-[11px] text-muted-foreground')], [history])]),
           ]),
       ...(actions.length === 0 ? [] : [h.div([h.Class('flex gap-1 pt-1')], actions)]),
     ],

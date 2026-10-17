@@ -234,7 +234,7 @@ export const ImportNote = S.Struct({
 })
 export type ImportNote = typeof ImportNote.Type
 
-/** One Card as it crosses the wire during an Import. Scheduling is dropped: every imported Card starts new. */
+/** One Card as it crosses the wire during an Import. Scheduling is dropped: a Card starts new unless the Learner imports history. */
 export const ImportCard = S.Struct({
   id: S.Number,
   noteId: S.Number,
@@ -244,6 +244,19 @@ export const ImportCard = S.Struct({
   flag: S.Number,
 })
 export type ImportCard = typeof ImportCard.Type
+
+/**
+ * One graded Review from Anki's `revlog`, as it crosses the wire when the
+ * Learner opts in to importing history. Only what an FSRS replay reads: which
+ * Card, when, and the Grade. `id` is Anki's `revlog.id`, the Review's instant in
+ * Unix milliseconds.
+ */
+export const ImportReview = S.Struct({
+  id: S.Number,
+  cardId: S.Number,
+  grade: S.Literals(['Again', 'Hard', 'Good', 'Easy']),
+})
+export type ImportReview = typeof ImportReview.Type
 
 /** One Deck as it crosses the wire during an Import. `name` is the display name, components joined with `::`. */
 export const ImportDeck = S.Struct({
@@ -301,6 +314,8 @@ export const ImportManifest = S.Struct({
   decks: S.Array(ImportDeck),
   noteCount: S.Number,
   cardCount: S.Number,
+  /** How many graded Reviews the archive's review log holds. Absent from clients that predate history import. */
+  reviewCount: S.optional(S.Number),
   /** How many Media files the archive carries. They stream into R2 during the Import. */
   mediaCount: S.Number,
 })
@@ -321,8 +336,15 @@ export const ImportStatus = S.Struct({
   cardsCursor: S.Number,
   notesImported: S.Number,
   cardsImported: S.Number,
+  /** Whether this Import replays Anki's review history. Off unless the Learner opted in. */
+  includeHistory: S.Boolean,
+  /** The last Anki Card id whose whole history was written. */
+  reviewsCursor: S.Number,
+  reviewsImported: S.Number,
   noteCount: S.Number,
   cardCount: S.Number,
+  /** Graded Reviews the archive carries, or 0 when history is not imported. */
+  reviewCount: S.Number,
   /** Media the archive carries, streamed into R2 during the Import. */
   mediaCount: S.Number,
   /** Why the last run failed, for the screen to show. `None` while it runs or after it finishes. */
@@ -335,13 +357,25 @@ export const ImportStart = S.Struct({
   id: ImportId,
   filename: S.String,
   manifest: ImportManifest,
+  /**
+   * Opt in to seeding FSRS state and Review history from the archive's review
+   * log. Absent or false is the default: every imported Card starts new. A
+   * resumed run keeps the choice its Import already holds.
+   */
+  includeHistory: S.optional(S.Boolean),
 })
 export type ImportStart = typeof ImportStart.Type
 
-/** One step of each stream. Either array may be empty: Notes and Cards are separate streams. */
+/** One step of each stream. Any array may be empty: Notes, Cards, and Reviews are separate streams. */
 export const ImportBatchPayload = S.Struct({
   notes: S.Array(ImportNote),
   cards: S.Array(ImportCard),
+  /**
+   * Graded Reviews, ordered by Card then time. A batch carries each Card's
+   * whole history or none of it: the server replays one Card per history, so a
+   * Card split across batches would be seeded from a partial replay.
+   */
+  reviews: S.optional(S.Array(ImportReview)),
 })
 export type ImportBatchPayload = typeof ImportBatchPayload.Type
 

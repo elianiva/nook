@@ -93,6 +93,8 @@ export const AnkiManifest = Schema.Struct({
   media: Schema.Array(AnkiMediaEntry),
   noteCount: Schema.Number,
   cardCount: Schema.Number,
+  /** Graded Reviews in the archive's `revlog`. Zero for an export without scheduling information. */
+  reviewCount: Schema.Number,
   mediaCount: Schema.Number,
   mediaBytes: Schema.Number,
 })

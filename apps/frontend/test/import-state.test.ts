@@ -27,8 +27,10 @@ const progress = {
   notesImported: 2,
   cardsImported: 2,
   mediaImported: 0,
+  reviewsImported: 0,
   noteCount: 2,
   cardCount: 2,
+  reviewCount: 0,
   mediaCount: 1,
 }
 
@@ -42,6 +44,7 @@ const preview = {
   cardCount: 2,
   mediaCount: 1,
   mediaBytes: 2048,
+  reviewCount: 0,
   decks: [{ id: 7, name: 'Japanese::Core' }],
   noteTypes: [{ id: 100, name: 'Basic', kind: 'normal' as const, templateCount: 1 }],
 }
@@ -61,6 +64,8 @@ describe('Import state', () => {
     expect(model.importState.active).toBe(true)
     expect(Option.isNone(model.importState.preview)).toBe(true)
     expect(model.importState.includeMedia).toBe(true)
+    // History is opt-in: a fresh pick never carries the last Import's choice.
+    expect(model.importState.includeHistory).toBe(false)
   })
 
   it.prop('lands any preview without starting the run', [previewValue], ([preview]) => {
@@ -80,6 +85,23 @@ describe('Import state', () => {
       expect(model.importState.phase).toBe('preview')
     },
   )
+
+  it('keeps history off until the Learner turns it on, and resets it for the next pick', () => {
+    expect(previewed().importState.includeHistory).toBe(false)
+    const on = update(previewed(), Message.ToggledImportHistory({ isChecked: true })).model
+    expect(on.importState.includeHistory).toBe(true)
+    expect(on.importState.phase).toBe('preview')
+    // The choice rides into the run.
+    expect(update(on, Message.ClickedStartImport()).model.importState.includeHistory).toBe(true)
+    // A restored run has no panel to ask on; the server's record of the choice decides.
+    const restored = update(
+      decksModel(),
+      Message.RestoredImportJob({ job: Option.some({ id: ID, filename: 'japanese.apkg' }) }),
+    ).model
+    expect(restored.importState.includeHistory).toBe(false)
+    const next = update(on, Message.GotImportFile({ id: ID, filename: 'again.apkg' })).model
+    expect(next.importState.includeHistory).toBe(false)
+  })
 
   it.prop('records any progress the worker reports', [progressValue], ([progress]) => {
     const { model } = update(running(), Message.ReportedImport({ progress }))

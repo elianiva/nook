@@ -240,6 +240,32 @@ describe('AnkiArchive', () => {
     ),
   )
 
+  it.effect('counts and reads graded Reviews through the wasm driver', () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* Effect.promise(() =>
+          archiveOf({
+            revlog: [
+              { id: 1_700_000_000_000, cardId: 1, ease: 3, type: 0 },
+              { id: 1_700_000_100_000, cardId: 1, ease: 0, type: 4 },
+              { id: 1_700_086_400_000, cardId: 1, ease: 1, type: 1 },
+            ],
+          }),
+        )
+        const opened = yield* withWasmFetch(openArchiveMemory(archive))
+        assert.strictEqual((yield* opened.manifest).reviewCount, 2)
+        const reviews = yield* Stream.runCollect(opened.reviews)
+        assert.deepStrictEqual(
+          [...reviews],
+          [
+            { id: 1_700_000_000_000, cardId: 1, grade: 'Good' },
+            { id: 1_700_086_400_000, cardId: 1, grade: 'Again' },
+          ],
+        )
+      }),
+    ),
+  )
+
   it.effect('reports each step of opening an archive', () =>
     Effect.scoped(
       Effect.gen(function* () {

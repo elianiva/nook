@@ -3,7 +3,7 @@ import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { DecksRpc, HomeRpc, SettingsRpc, ImportsRpc, DeckId, ImportId } from '@nook/api'
-import type { ImportManifest, ImportNote } from '@nook/api'
+import type { ImportManifest, ImportNote, ImportReview } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Imports, ImportsHandlers } from '../src/imports'
@@ -86,6 +86,13 @@ const note = (id: number, front: string): ImportNote => ({
   modified: 1_700_000_000,
   fields: [front, 'water'],
   tags: ['noun'],
+})
+
+/** A Review of `cardId` on `day` of March 2024, noon-free: midnight UTC. */
+const grade = (cardId: number, day: number, value: ImportReview['grade']): ImportReview => ({
+  id: Date.UTC(2024, 2, day),
+  cardId,
+  grade: value,
 })
 
 const countRows = (table: string, where = '1 = 1') =>
@@ -287,6 +294,185 @@ layer(TestLayers)('imports over sqlite', (it) => {
       })
       expect(written.notesImported).toBe(2)
       expect(written.cardsImported).toBe(1)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('ignores review history unless the Import opted in', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc, ImportsRpc))
+      const id = ImportId.make('1'.repeat(64))
+
+      const started = yield* client.importsStart({
+        id,
+        filename: 'plain.apkg',
+        manifest: { ...manifest(), reviewCount: 2 },
+      })
+      expect(started.includeHistory).toBe(false)
+      expect(started.reviewCount).toBe(0)
+
+      // A client that sends Reviews anyway cannot seed state the Learner declined.
+      const written = yield* client.importsWriteBatch({
+        importId: id,
+        batch: {
+          notes: [note(10, '水')],
+          cards: [{ id: 20, noteId: 10, deckId: 7, templateOrd: 0, suspended: false, flag: 0 }],
+          reviews: [grade(20, 1, 'Good'), grade(20, 3, 'Good')],
+        },
+      })
+      expect(written.reviewsCursor).toBe(0)
+      expect(written.reviewsImported).toBe(0)
+      expect(yield* countRows('reviews', `card_id = '20'`)).toBe(0)
+      expect(yield* countRows('cards', `id = '20' AND state = 'new' AND reps = 0`)).toBe(1)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect(
+    'seeds FSRS state and Review history for opted-in Cards, once however often it lands',
+    () =>
+      Effect.gen(function* () {
+        yield* migrate
+        const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc, ImportsRpc))
+        const sql = yield* Effect.promise(() => import('effect/sql')).pipe(
+          Effect.flatMap((module) => module.SqlClient.SqlClient),
+        )
+        const id = ImportId.make('2'.repeat(64))
+        const cards = [20, 21, 22].map((cardId) => ({
+          id: cardId,
+          noteId: 10,
+          deckId: 7,
+          templateOrd: cardId - 20,
+          suspended: false,
+          flag: 0,
+        }))
+
+        const started = yield* client.importsStart({
+          id,
+          filename: 'history.apkg',
+          manifest: { ...manifest(), cardCount: 3, reviewCount: 6 },
+          includeHistory: true,
+        })
+        expect(started.includeHistory).toBe(true)
+        expect(started.reviewCount).toBe(6)
+        yield* client.importsWriteBatch({
+          importId: id,
+          batch: { notes: [note(10, '水')], cards },
+        })
+
+        // Card 22 was graded in nook before the history arrives: it keeps that.
+        yield* sql.unsafe(
+          `INSERT INTO reviews (id, card_id, grade, reviewed_at) VALUES ('native-1', '22', 'Good', '2024-02-01T00:00:00Z')`,
+        )
+
+        const batch = {
+          notes: [],
+          cards: [],
+          reviews: [
+            // Card 20: Good, then Good three days on.
+            grade(20, 1, 'Good'),
+            grade(20, 4, 'Good'),
+            // Card 21: Good, then a lapse.
+            grade(21, 1, 'Good'),
+            grade(21, 6, 'Again'),
+            // Card 22 carries native progress; card 99 was never imported.
+            grade(22, 1, 'Easy'),
+            grade(99, 1, 'Good'),
+          ],
+        }
+        const seeded = yield* client.importsWriteBatch({ importId: id, batch })
+        expect(seeded.reviewsCursor).toBe(99)
+        expect(seeded.reviewsImported).toBe(4)
+
+        const card20 = (yield* sql.unsafe<Record<string, number | string>>(
+          `SELECT state, stability, difficulty, reps, lapses, review_lapses AS rl, due_at, last_reviewed_at AS last, introduced_day AS day, due_in_days AS days FROM cards WHERE id = '20'`,
+        ))[0]
+        expect(card20?.['state']).toBe('review')
+        expect(Number(card20?.['stability'])).toBeCloseTo(13.8, 0)
+        expect(card20?.['reps']).toBe(2)
+        expect(card20?.['last']).toBe('2024-03-04T00:00:00Z')
+        expect(card20?.['day']).toBe('2024-03-01')
+        expect(card20?.['days']).toBe(14)
+        expect(card20?.['due_at']).toBe('2024-03-18T00:00:00Z')
+
+        const card21 = (yield* sql.unsafe<Record<string, number | string>>(
+          `SELECT state, reps, lapses, review_lapses AS rl, due_in_days AS days FROM cards WHERE id = '21'`,
+        ))[0]
+        expect(card21).toMatchObject({ state: 'relearning', reps: 2, lapses: 1, rl: 1, days: 0 })
+
+        // Each replayed Review carries its after-state, tied to the Import.
+        const rows = yield* sql.unsafe<Record<string, number | string | null>>(
+          `SELECT id, grade, reviewed_at, state_after, stability_after, due_at_after, import_id
+         FROM reviews WHERE card_id = '20' ORDER BY reviewed_at`,
+        )
+        expect(rows.map((row) => row['id'])).toEqual([
+          `anki-20-${Date.UTC(2024, 2, 1)}`,
+          `anki-20-${Date.UTC(2024, 2, 4)}`,
+        ])
+        expect(rows[0]).toMatchObject({
+          grade: 'Good',
+          state_after: 'review',
+          import_id: id,
+          due_at_after: '2024-03-03T00:00:00Z',
+        })
+        expect(Number(rows[0]?.['stability_after'])).toBeCloseTo(2.3065, 4)
+
+        // The native Card and the unknown Card are untouched.
+        expect(yield* countRows('reviews', `card_id = '22'`)).toBe(1)
+        expect(yield* countRows('cards', `id = '22' AND state = 'new'`)).toBe(1)
+        expect(yield* countRows('reviews', `card_id = '99'`)).toBe(0)
+
+        // A retry of the same batch lands on the same rows.
+        yield* client.importsWriteBatch({ importId: id, batch })
+        expect(yield* countRows('reviews', `import_id = '${id}'`)).toBe(4)
+        expect(
+          (yield* sql.unsafe<{ reps: number }>(`SELECT reps FROM cards WHERE id = '20'`))[0]?.reps,
+        ).toBe(2)
+      }).pipe(Effect.scoped),
+  )
+
+  it.effect('adds history to an Import that already finished, and keeps the choice on resume', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(DecksRpc.merge(HomeRpc, SettingsRpc, ImportsRpc))
+      const id = ImportId.make('3'.repeat(64))
+      const cards = [{ id: 20, noteId: 10, deckId: 7, templateOrd: 0, suspended: false, flag: 0 }]
+
+      yield* client.importsStart({ id, filename: 'later.apkg', manifest: manifest() })
+      yield* client.importsWriteBatch({ importId: id, batch: { notes: [note(10, '水')], cards } })
+      const done = yield* client.importsComplete({ importId: id })
+      expect(done.status).toBe('done')
+      expect(done.includeHistory).toBe(false)
+
+      // Same archive, opting in this time: Notes and Cards are kept, history is left to write.
+      const reopened = yield* client.importsStart({
+        id,
+        filename: 'later.apkg',
+        manifest: { ...manifest(), reviewCount: 2 },
+        includeHistory: true,
+      })
+      expect(reopened.status).toBe('running')
+      expect(reopened.includeHistory).toBe(true)
+      expect(reopened.reviewCount).toBe(2)
+      expect(reopened.notesCursor).toBe(10)
+      expect(reopened.cardsCursor).toBe(20)
+      expect(reopened.reviewsCursor).toBe(0)
+
+      yield* client.importsWriteBatch({
+        importId: id,
+        batch: { notes: [], cards: [], reviews: [grade(20, 1, 'Good')] },
+      })
+      yield* client.importsFail({ importId: id, error: 'The connection dropped.' })
+
+      // A resumed run asks without the flag, as a reload would; the Import still holds it.
+      const resumed = yield* client.importsStart({
+        id,
+        filename: 'later.apkg',
+        manifest: { ...manifest(), reviewCount: 2 },
+      })
+      expect(resumed.includeHistory).toBe(true)
+      expect(resumed.reviewCount).toBe(2)
+      expect(resumed.reviewsCursor).toBe(20)
+      expect(resumed.reviewsImported).toBe(1)
     }).pipe(Effect.scoped),
   )
 
