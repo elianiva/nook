@@ -621,6 +621,8 @@ export const Message = defineMessageUnion({
   PressedSpace: {},
   /** The server accepted the grade and rescheduled the Card. */
   GradeAccepted: { id: S.String, accepted: ReviewAccepted },
+  /** The server refused the grade because it was already undone; it leaves the queue unapplied. */
+  GradeDiscarded: { id: S.String },
   /** The Learner pressed Undo on the last grade. */
   ClickedUndoGrade: {},
   /** The server undid the last grade and restored the Card. */

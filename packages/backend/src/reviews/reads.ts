@@ -45,7 +45,7 @@ export const makeReads = (sql: Sql.SqlClient) => {
             COALESCE(CAST(julianday(due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
             due_at AS "dueAt", note_id AS "noteId", introduced_day AS "introducedDay",
             buried_until AS "buriedUntil",
-            last_reviewed_at AS "lastReviewedAt"
+            last_reviewed_at AS "lastReviewedAt", grade_seq AS "gradeSeq"
             FROM cards WHERE id = ${cardId}`
       const decoded = yield* decodeRows(CardRow, rows)
       return decoded[0]

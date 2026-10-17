@@ -203,6 +203,33 @@ layer(TestLayers)('review session behaviour', (it) => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('ignores a stale replay of a grade that was undone', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(ReviewsRpc)
+      const sql = yield* Sql.SqlClient
+      const target = (yield* client.reviewsQueue(query)).cards.find(
+        (card) => card.state === 'review',
+      )
+      assert.isDefined(target)
+      if (target === undefined) return
+
+      const grade = { id: 'undone-replay', cardId: target.cardId, grade: 'Again' } as const
+      yield* client.reviewsGrade(grade)
+      const undone = yield* client.reviewsUndo({ cardId: target.cardId, reviewId: grade.id })
+
+      // A second tab's outbox (or a slow retry) delivers the grade again.
+      const replay = yield* Effect.flip(client.reviewsGrade(grade))
+      expect(replay._tag).toBe('ReviewUndone')
+
+      const reviews = yield* sql`SELECT id FROM reviews WHERE id = ${grade.id}`
+      expect(reviews).toEqual([])
+      const cards = yield* sql`SELECT state, stability, reps FROM cards WHERE id = ${target.cardId}`
+      expect(cards[0]?.['state']).toBe(undone.state)
+      expect(cards[0]?.['stability']).toBeCloseTo(undone.stability, 6)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('buries same-Note siblings and enforces the daily new limit', () =>
     Effect.gen(function* () {
       yield* migrate

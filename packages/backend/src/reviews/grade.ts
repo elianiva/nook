@@ -3,19 +3,30 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { CardNotFound, StorageUnavailable } from '@nook/api'
+import { CardNotFound, ReviewUndone, StorageUnavailable } from '@nook/api'
 import type { ReviewAccepted, ReviewSubmission } from '@nook/api'
 import { runStatements } from '../batch'
 import { dayStartUtc, dueInstantUtc, resolveTimezone, reviewDayKey } from '../day-boundary'
 import { scheduleReview } from '../fsrs'
 import { decodeRows, withStorageErrorPassThrough } from '../storage-error'
+import type { StorageError } from '../storage-error'
 import type { ReviewsDeps } from './reads'
 import { DeckLimitsRow, isLeechWarning } from './rows'
 
+/**
+ * How many times a grade re-reads its Card after another grade or undo landed
+ * first. Each loss means a competing write won, so a few rounds is plenty.
+ */
+const MAX_ATTEMPTS = 4
+
 export const makeGrade = ({ sql, readFsrs, readCard }: ReviewsDeps) => {
-  const grade = (
+  const attempt = (
     submission: ReviewSubmission,
-  ): Effect.Effect<ReviewAccepted, CardNotFound | StorageUnavailable> =>
+    remaining: number,
+  ): Effect.Effect<
+    ReviewAccepted,
+    CardNotFound | ReviewUndone | StorageUnavailable | StorageError
+  > =>
     Effect.gen(function* () {
       const card = yield* readCard(submission.cardId)
       if (card === undefined) {
@@ -26,6 +37,14 @@ export const makeGrade = ({ sql, readFsrs, readCard }: ReviewsDeps) => {
           }),
         )
         return yield* new CardNotFound({ cardId: submission.cardId })
+      }
+
+      const undoneRows = yield* sql`SELECT review_id FROM undone_reviews
+            WHERE review_id = ${submission.id}`
+      if (undoneRows.length > 0) {
+        // The grade landed and was then undone. Applying it now would
+        // resurrect a grade the Learner took back.
+        return yield* new ReviewUndone({ reviewId: submission.id })
       }
 
       const replayRows = yield* sql`SELECT leech_suspended AS "leechSuspended"
@@ -101,19 +120,45 @@ export const makeGrade = ({ sql, readFsrs, readCard }: ReviewsDeps) => {
       // bury until the next day, so one Note never shows two Cards in a
       // session.
       const nextDay = dueInstantUtc(boundary, 1, now, lapseMinutes)
+      // Every statement is guarded on the Card still being at the version
+      // this grade read (`grade_seq`), so a grade or undo that landed after
+      // the reads above makes the whole batch a no-op instead of being
+      // overwritten by a schedule computed from stale state. The Card's own
+      // update goes last: it bumps the version, which is the commit point.
+      const versionHeld = sql`(SELECT grade_seq FROM cards WHERE id = ${submission.cardId}) = ${card.gradeSeq}`
+      const written = sql`EXISTS (SELECT 1 FROM review_snapshots WHERE review_id = ${submission.id})`
       const statements = [
         sql`INSERT INTO reviews (id, card_id, grade, reviewed_at, leech_suspended,
               state_after, stability_after, difficulty_after, due_in_days_after, due_at_after)
-              VALUES (${submission.id}, ${submission.cardId}, ${submission.grade},
+              SELECT ${submission.id}, ${submission.cardId}, ${submission.grade},
               strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ${leechSuspended ? 1 : 0},
-              ${scheduled.state}, ${scheduled.stability}, ${scheduled.difficulty}, ${interval}, ${dueAt})`,
+              ${scheduled.state}, ${scheduled.stability}, ${scheduled.difficulty}, ${interval}, ${dueAt}
+              WHERE ${versionHeld}
+              AND NOT EXISTS (SELECT 1 FROM undone_reviews WHERE review_id = ${submission.id})
+              AND NOT EXISTS (SELECT 1 FROM reviews WHERE id = ${submission.id})`,
         sql`INSERT INTO review_snapshots (review_id, card_id, state, stability, difficulty,
               due_in_days, due_at, reps, lapses, introduced_day, last_reviewed_at, buried_until,
               review_lapses, suspended)
-              VALUES (${submission.id}, ${submission.cardId}, ${card.state}, ${card.stability},
+              SELECT ${submission.id}, ${submission.cardId}, ${card.state}, ${card.stability},
               ${card.difficulty}, ${card.dueInDays}, ${card.dueAt}, ${card.reps}, ${card.lapses},
               ${card.introducedDay}, ${card.lastReviewedAt}, ${card.buriedUntil},
-              ${card.reviewLapses}, ${card.suspended})`,
+              ${card.reviewLapses}, ${card.suspended}
+              WHERE ${versionHeld}
+              AND EXISTS (SELECT 1 FROM reviews WHERE id = ${submission.id})
+              AND NOT ${written}`,
+        ...(card.noteId === null
+          ? []
+          : [
+              sql`UPDATE cards SET buried_until = ${nextDay},
+                    buried_sibling_of = ${submission.cardId},
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                    WHERE note_id = ${card.noteId} AND id != ${submission.cardId}
+                    AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                    AND ${versionHeld} AND ${written}`,
+            ]),
+        sql`UPDATE decks SET last_studied_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              WHERE id = ${card.deckId} AND ${versionHeld} AND ${written}`,
         sql`UPDATE cards SET state = ${scheduled.state}, stability = ${scheduled.stability},
               difficulty = ${scheduled.difficulty}, due_in_days = ${requeueInSession ? 0 : interval},
               due_at = ${dueAt},
@@ -123,21 +168,26 @@ export const makeGrade = ({ sql, readFsrs, readCard }: ReviewsDeps) => {
               introduced_day = CASE WHEN state = 'new' THEN ${todayKey} ELSE introduced_day END,
               reps = ${scheduled.reps}, lapses = ${scheduled.lapses},
               last_reviewed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+              grade_seq = grade_seq + 1,
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-              WHERE id = ${submission.cardId}`,
-        ...(card.noteId === null
-          ? []
-          : [
-              sql`UPDATE cards SET buried_until = ${nextDay},
-                    buried_sibling_of = ${submission.cardId},
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                    WHERE note_id = ${card.noteId} AND id != ${submission.cardId}
-                    AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
-            ]),
-        sql`UPDATE decks SET last_studied_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${card.deckId}`,
+              WHERE id = ${submission.cardId} AND ${versionHeld} AND ${written}`,
       ]
       yield* runStatements(statements)
+
+      const landed = yield* sql`SELECT id FROM reviews WHERE id = ${submission.id}`
+      if (landed.length === 0) {
+        // The guard held the batch back: an undo took this id, or another
+        // grade moved the Card first. Re-read and schedule on top of it.
+        const undone = yield* sql`SELECT review_id FROM undone_reviews
+              WHERE review_id = ${submission.id}`
+        if (undone.length > 0) return yield* new ReviewUndone({ reviewId: submission.id })
+        if (remaining <= 1) {
+          return yield* new StorageUnavailable({
+            message: 'Could not save the review: the Card kept changing. Try again.',
+          })
+        }
+        return yield* attempt(submission, remaining - 1)
+      }
 
       return {
         cardId: submission.cardId,
@@ -152,7 +202,12 @@ export const makeGrade = ({ sql, readFsrs, readCard }: ReviewsDeps) => {
         requeueInSession,
         leechSuspended,
       } satisfies ReviewAccepted
-    }).pipe(
+    })
+
+  const grade = (
+    submission: ReviewSubmission,
+  ): Effect.Effect<ReviewAccepted, CardNotFound | ReviewUndone | StorageUnavailable> =>
+    attempt(submission, MAX_ATTEMPTS).pipe(
       Effect.annotateLogs({
         cardId: submission.cardId,
         reviewId: submission.id,

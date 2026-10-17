@@ -442,6 +442,28 @@ describe('review session', () => {
     expect(names(retried)).toEqual(['SubmitGrade'])
   })
 
+  it('drops a grade the server refused as undone and keeps draining behind it', () => {
+    const first = update(
+      reviewing([card('c1'), card('c2')]),
+      Message.ClickedGrade({ grade: 'Good' }),
+    )
+    const revealed = update(first.model, Message.RevealedAnswer()).model
+    const second = update(revealed, Message.ClickedGrade({ grade: 'Easy' }))
+    const [head, tail] = second.model.queuedGrades
+    expect(head).toBeDefined()
+    expect(tail).toBeDefined()
+    if (head === undefined || tail === undefined) return
+    const headSaved = update(second.model, Message.QueuedGradeSaved({ id: head.id }))
+    const bothSaved = update(headSaved.model, Message.QueuedGradeSaved({ id: tail.id }))
+    expect(bothSaved.model.gradeInFlight).toEqual(Option.some(head.id))
+
+    const discarded = update(bothSaved.model, Message.GradeDiscarded({ id: head.id }))
+    expect(discarded.model.queuedGrades.map((entry) => entry.id)).toEqual([tail.id])
+    expect(discarded.model.gradeBlocked).toBe(false)
+    expect(names(discarded)).toEqual(['SubmitGrade'])
+    expect(discarded.model.gradeInFlight).toEqual(Option.some(tail.id))
+  })
+
   it('does not call a grade durable when this device could not persist it', () => {
     const graded = update(reviewing([card('c1')]), Message.ClickedGrade({ grade: 'Good' }))
     const id = graded.model.review.pending[0]?.id

@@ -62,6 +62,8 @@ export const CardRow = Schema.Struct({
   introducedDay: Schema.NullOr(Schema.String),
   buriedUntil: Schema.NullOr(Schema.String),
   lastReviewedAt: Schema.NullOr(Schema.String),
+  /** Bumped by every grade and undo, never lowered: the Card's version for compare-and-set. */
+  gradeSeq: Schema.Number,
 })
 
 /** The FSRS knobs, read straight from the singleton settings row. */
