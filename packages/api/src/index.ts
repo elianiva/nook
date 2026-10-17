@@ -675,6 +675,15 @@ export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', 
   cardId: CardId,
 }) {}
 
+/**
+ * The grade was undone, and the server remembers that. A replay of it (a
+ * second tab's outbox, a slow retry) must not apply it again, so it is
+ * refused. The client drops the grade; the undo already settled it.
+ */
+export class ReviewUndone extends S.TaggedError<ReviewUndone>()('ReviewUndone', {
+  reviewId: S.String,
+}) {}
+
 export class DecksRpc extends RpcGroup.make(
   Rpc.make('decksList', {
     /** The learner timezone, for the day boundary. The server defaults to UTC without it. */
@@ -809,7 +818,7 @@ export class ReviewsRpc extends RpcGroup.make(
   Rpc.make('reviewsGrade', {
     payload: ReviewSubmission,
     success: ReviewAccepted,
-    error: S.Union([CardNotFound, StorageUnavailable]),
+    error: S.Union([CardNotFound, ReviewUndone, StorageUnavailable]),
   }),
   Rpc.make('reviewsUndo', {
     payload: UndoReview,

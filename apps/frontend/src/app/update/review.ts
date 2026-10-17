@@ -408,6 +408,22 @@ export const reviewHandlers = defineHandlers((model) => ({
     }
   },
 
+  GradeDiscarded: ({ id }) => {
+    const wasInFlight = Option.getOrNull(model.gradeInFlight) === id
+    const draining = runQueuedGrade({
+      ...model,
+      queuedGrades: model.queuedGrades.filter((entry) => entry.id !== id),
+      gradeInFlight: wasInFlight ? Option.none<string>() : model.gradeInFlight,
+      gradeBlocked: wasInFlight ? false : model.gradeBlocked,
+      review: {
+        ...model.review,
+        pending: model.review.pending.filter((entry) => entry.id !== id),
+        offline: model.review.offline.filter((entry) => entry.id !== id),
+      },
+    })
+    return draining
+  },
+
   ClickedUndoGrade: () => {
     const last = model.review.lastGrade
     if (

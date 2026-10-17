@@ -181,7 +181,11 @@ export const SaveQueuedGrade = Command.define('SaveQueuedGrade', {
 
 export const SubmitGrade = Command.define('SubmitGrade', {
   args: { id: S.String, cardId: CardId, grade: Grade },
-  messages: [MessageConstructors.GradeAccepted, MessageConstructors.GradeFailed],
+  messages: [
+    MessageConstructors.GradeAccepted,
+    MessageConstructors.GradeDiscarded,
+    MessageConstructors.GradeFailed,
+  ],
   execute: ({ id, cardId, grade }) => {
     const submit = NookRpc.pipe(
       Effect.flatMap((rpc) => rpc.reviewsGrade({ id, cardId, grade, timezone: timezone() })),
@@ -190,6 +194,14 @@ export const SubmitGrade = Command.define('SubmitGrade', {
       Effect.map((accepted) => MessageConstructors.GradeAccepted({ id, accepted })),
     )
     return submit.pipe(
+      // The server remembers this grade was undone and refuses it for good:
+      // retrying can never succeed, so the grade leaves the outbox.
+      Effect.catchTag('ReviewUndone', () =>
+        removeQueuedGrade(id).pipe(
+          Effect.catch(() => Effect.void),
+          Effect.as(MessageConstructors.GradeDiscarded({ id })),
+        ),
+      ),
       Effect.catch(() =>
         Effect.succeed(
           MessageConstructors.GradeFailed({

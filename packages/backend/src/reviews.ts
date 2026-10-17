@@ -29,6 +29,7 @@ import * as Sql from 'effect/sql/SqlClient'
 import {
   CardId,
   CardNotFound,
+  ReviewUndone,
   CollectionExport,
   DeckId,
   ReviewsRpc,
@@ -57,7 +58,7 @@ export class Reviews extends Context.Service<
     }): Effect.Effect<ReviewQueue, StorageUnavailable>
     grade(
       submission: ReviewSubmission,
-    ): Effect.Effect<ReviewAccepted, CardNotFound | StorageUnavailable>
+    ): Effect.Effect<ReviewAccepted, CardNotFound | ReviewUndone | StorageUnavailable>
     undo(input: {
       cardId: CardId
       reviewId?: string | undefined

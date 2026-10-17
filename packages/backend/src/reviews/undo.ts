@@ -82,6 +82,10 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
       const stillLatest = sql`(SELECT id FROM reviews WHERE card_id = ${input.cardId}
             ORDER BY reviewed_at DESC, rowid DESC LIMIT 1) = ${latest.id}`
       yield* runStatements([
+        // The tombstone first, while the guard still holds: a replay of this
+        // grade must be refused, not re-applied (ADR 0002).
+        sql`INSERT OR IGNORE INTO undone_reviews (review_id, card_id)
+              SELECT ${latest.id}, ${input.cardId} WHERE ${stillLatest}`,
         sql`UPDATE cards SET state = ${snapshot.state}, stability = ${snapshot.stability},
               difficulty = ${snapshot.difficulty}, due_in_days = ${snapshot.dueInDays},
               due_at = ${snapshot.dueAt},
@@ -92,6 +96,7 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
                 THEN COALESCE(${snapshot.suspended}, suspended) ELSE suspended END,
               reps = ${snapshot.reps}, lapses = ${snapshot.lapses},
               last_reviewed_at = ${snapshot.lastReviewedAt},
+              grade_seq = grade_seq + 1,
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               WHERE id = ${input.cardId} AND ${stillLatest}`,
         sql`UPDATE cards SET buried_until = NULL, buried_sibling_of = NULL,

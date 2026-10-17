@@ -72,6 +72,7 @@ export const migrate = Effect.gen(function* () {
   const sql = yield* Sql.SqlClient
 
   for (const table of [
+    'undone_reviews',
     'review_snapshots',
     'reviews',
     'notes',
