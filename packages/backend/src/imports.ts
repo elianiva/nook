@@ -78,6 +78,10 @@ const SchedulerRow = Schema.Struct({
  * tables through the `SqlClient` the layer closes over, so the service
  * interface carries no requirements — see `Decks` for why.
  *
+ * A re-import moves a Note's `import_id` to the new Import, but its Media
+ * keeps resolving from the Import that stored the files unless the new Import
+ * carries Media of its own (`notes.media_import_id`).
+ *
  * Every write is an upsert keyed by Anki's own id, and the cursor advances in
  * the same batch as the rows it counts. A run that dies midway leaves its
  * cursor where it stopped, so the next run continues rather than restarts, and
@@ -325,7 +329,12 @@ export class Imports extends Context.Service<
               VALUES (${String(note.id)}, ${String(note.noteTypeId)}, ${note.guid}, ${JSON.stringify(note.fields)}, ${JSON.stringify(note.tags)}, ${note.modified}, ${id})
               ON CONFLICT (id) DO UPDATE SET note_type_id = excluded.note_type_id, guid = excluded.guid,
                 fields = excluded.fields, tags = excluded.tags, modified = excluded.modified,
-                import_id = excluded.import_id, updated_at = datetime('now')`
+                import_id = excluded.import_id,
+                media_import_id = CASE
+                  WHEN (SELECT media_count FROM imports WHERE id = excluded.import_id) > 0 THEN NULL
+                  ELSE COALESCE(notes.media_import_id, notes.import_id)
+                END,
+                updated_at = datetime('now')`
           })
 
           let cardsCursor = current.cardsCursor
