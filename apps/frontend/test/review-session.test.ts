@@ -409,6 +409,10 @@ describe('review session', () => {
     )
     model = accepted.model
     expect(names(update(model, Message.ClickedUndoGrade()))).toEqual(['UndoGrade'])
+    // A retry after a lost response must name the same grade, so the server
+    // cannot undo an earlier one.
+    const retry = update(model, Message.ClickedRetryUndo())
+    expect(retry.commands?.[0]?.args).toMatchObject({ reviewId: id })
 
     const undone = update(
       model,

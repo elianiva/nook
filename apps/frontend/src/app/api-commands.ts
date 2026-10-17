@@ -248,11 +248,11 @@ export const FetchCardHistory = Command.define('FetchCardHistory', {
 })
 
 export const UndoGrade = Command.define('UndoGrade', {
-  args: { cardId: CardId },
+  args: { cardId: CardId, reviewId: S.String },
   messages: [MessageConstructors.UndoneGrade, MessageConstructors.UndoFailed],
-  execute: ({ cardId }) =>
+  execute: ({ cardId, reviewId }) =>
     NookRpc.pipe(
-      Effect.flatMap((rpc) => rpc.reviewsUndo({ cardId })),
+      Effect.flatMap((rpc) => rpc.reviewsUndo({ cardId, reviewId })),
       Effect.map(() => MessageConstructors.UndoneGrade({ cardId })),
       Effect.catch(() =>
         Effect.succeed(

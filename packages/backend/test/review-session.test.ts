@@ -136,6 +136,73 @@ layer(TestLayers)('review session behaviour', (it) => {
     }).pipe(Effect.scoped),
   )
 
+  it.effect('a retried undo with the same review id does not undo an earlier grade', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(ReviewsRpc)
+      const sql = yield* Sql.SqlClient
+      const target = (yield* client.reviewsQueue(query)).cards.find(
+        (card) => card.state === 'review',
+      )
+      assert.isDefined(target)
+      if (target === undefined) return
+
+      const good = yield* client.reviewsGrade({
+        id: 'undo-retry-good',
+        cardId: target.cardId,
+        grade: 'Good',
+      })
+      yield* client.reviewsGrade({ id: 'undo-retry-again', cardId: target.cardId, grade: 'Again' })
+
+      // The first undo lands but its response is lost; the client retries the
+      // same undo. The retry must be a no-op, not a second undo.
+      yield* client.reviewsUndo({ cardId: target.cardId, reviewId: 'undo-retry-again' })
+      const retried = yield* client.reviewsUndo({
+        cardId: target.cardId,
+        reviewId: 'undo-retry-again',
+      })
+      expect(retried.state).toBe(good.state)
+      expect(retried.stability).toBeCloseTo(good.stability, 6)
+
+      const reviews = yield* sql`SELECT id FROM reviews WHERE card_id = ${target.cardId}
+        AND id LIKE 'undo-retry-%'`
+      expect(reviews.map((row) => row['id'])).toEqual(['undo-retry-good'])
+      const cards = yield* sql`SELECT state, stability FROM cards WHERE id = ${target.cardId}`
+      expect(cards[0]?.['state']).toBe(good.state)
+      expect(cards[0]?.['stability']).toBeCloseTo(good.stability, 6)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect('refuses to undo a review that is no longer the latest on its Card', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(ReviewsRpc)
+      const sql = yield* Sql.SqlClient
+      const target = (yield* client.reviewsQueue(query)).cards.find(
+        (card) => card.state === 'review',
+      )
+      assert.isDefined(target)
+      if (target === undefined) return
+
+      yield* client.reviewsGrade({ id: 'stale-undo-1', cardId: target.cardId, grade: 'Good' })
+      const second = yield* client.reviewsGrade({
+        id: 'stale-undo-2',
+        cardId: target.cardId,
+        grade: 'Easy',
+      })
+
+      const stale = yield* Effect.exit(
+        client.reviewsUndo({ cardId: target.cardId, reviewId: 'stale-undo-1' }),
+      )
+      assert.strictEqual(stale._tag, 'Failure')
+
+      const reviews = yield* sql`SELECT id FROM reviews WHERE id LIKE 'stale-undo-%' ORDER BY id`
+      expect(reviews.map((row) => row['id'])).toEqual(['stale-undo-1', 'stale-undo-2'])
+      const cards = yield* sql`SELECT stability FROM cards WHERE id = ${target.cardId}`
+      expect(cards[0]?.['stability']).toBeCloseTo(second.stability, 6)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('buries same-Note siblings and enforces the daily new limit', () =>
     Effect.gen(function* () {
       yield* migrate

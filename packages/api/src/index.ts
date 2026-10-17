@@ -465,6 +465,13 @@ export type ReviewAccepted = typeof ReviewAccepted.Type
  */
 export const UndoReview = S.Struct({
   cardId: CardId,
+  /**
+   * The id of the grade being undone. A retry after a lost response names the
+   * same grade, so it cannot undo an earlier one; a grade that is no longer
+   * the Card's latest is refused. Omitted by older clients, which undo
+   * whatever is latest.
+   */
+  reviewId: S.optional(S.String),
 })
 export type UndoReview = typeof UndoReview.Type
 
