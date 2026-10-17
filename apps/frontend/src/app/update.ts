@@ -187,7 +187,7 @@ const retryCommandsFor = (model: Model, retry: LoadRetry) => {
     case 'undoReview': {
       const last = model.review.lastGrade
       if (Option.isNone(last)) return []
-      return [UndoGrade({ cardId: last.value.cardId })]
+      return [UndoGrade({ cardId: last.value.cardId, reviewId: last.value.id })]
     }
     case 'collectionExport':
       return [FetchExport()]
@@ -1035,7 +1035,10 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       ) {
         return { model }
       }
-      return { model, commands: [UndoGrade({ cardId: last.value.cardId })] }
+      return {
+        model,
+        commands: [UndoGrade({ cardId: last.value.cardId, reviewId: last.value.id })],
+      }
     },
 
     UndoneGrade: ({ cardId }) => {
@@ -1096,8 +1099,17 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
 
     ClickedRetryUndo: () => {
       const last = model.review.lastGrade
-      if (Option.isNone(last)) return { model }
-      return { model, commands: [UndoGrade({ cardId: last.value.cardId })] }
+      if (
+        Option.isNone(last) ||
+        model.queuedGrades.length > 0 ||
+        Option.isSome(model.gradeInFlight)
+      ) {
+        return { model }
+      }
+      return {
+        model,
+        commands: [UndoGrade({ cardId: last.value.cardId, reviewId: last.value.id })],
+      }
     },
 
     ClickedExport: () => ({ model, commands: [FetchExport()] }),
