@@ -1,4 +1,5 @@
 import * as Alchemy from 'alchemy'
+import * as Namespace from 'alchemy/Namespace'
 import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Effect from 'effect/Effect'
 
@@ -59,7 +60,10 @@ class Website extends Cloudflare.Website.Foldkit<Website>()(
       // One allow rule, one email.
       policies: [{ decision: 'allow', include: [{ email: allowedEmail }] }],
       autoRedirectToIdentity: true,
-    })
+      // Keep the logical ID the Worker's inline `access` prop used (`nook/Access`),
+      // so the existing application is updated in place. A new one would collide
+      // with the Worker's destination, which the old one still owns.
+    }).pipe(Namespace.push('nook'))
     return {
       rootDir: 'apps/frontend',
       main: 'src/worker.ts',
