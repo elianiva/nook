@@ -174,6 +174,11 @@ export const writeCollection = (spec: CollectionSpec): string => {
 
   const db = new DatabaseSync(filename)
   try {
+    // The file is thrown away after one read, so durability buys nothing, and
+    // every fsync is a stall on a loaded CI disk: a property runs this 100 times.
+    db.exec('PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF')
+    // One transaction for the whole collection, not one commit per statement.
+    db.exec('BEGIN')
     db.exec(SCHEMA)
     insert(
       db,
@@ -252,8 +257,6 @@ export const writeCollection = (spec: CollectionSpec): string => {
         card.flag ?? 0,
       )
     }
-    // One transaction: a revlog is thousands of rows, and a commit per row fsyncs each.
-    db.exec('BEGIN')
     for (const entry of spec.revlog ?? []) {
       insert(
         db,
