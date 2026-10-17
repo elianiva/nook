@@ -85,9 +85,10 @@ pnpm infra:deploy   # Deploy to Cloudflare's prod stage
 `pnpm infra:deploy` deploys the Worker, static assets, and Cloudflare Access
 application defined in `alchemy.run.ts`.
 
-**Before forking:** `.github/workflows/deploy.yml` deploys on every push to
-`master`. Change that workflow if you do not want every push to publish your
-fork.
+**Before forking:** `.github/workflows/deploy.yml` deploys every `master` commit
+whose `CI` workflow run succeeds, and can also be started manually with
+`workflow_dispatch` (which skips the CI gate). Change that workflow if you do
+not want your fork to publish automatically.
 
 ## Anki compatibility
 
