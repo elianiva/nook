@@ -8,3 +8,5 @@ dist/
 .DS_Store
 .amp/in/
 .amp/portals/
+test-results/
+playwright-report/

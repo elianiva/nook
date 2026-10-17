@@ -107,12 +107,32 @@ pnpm dev            # Start the app and Worker
 pnpm check          # Format, lint, and type-check
 pnpm test           # Run tests (excludes the slow Kaishi archive test)
 pnpm test:kaishi    # Run tests, including the Kaishi archive test
+pnpm test:e2e       # Run the browser smoke test (needs Chromium; see below)
 pnpm typecheck      # Type-check all packages
 pnpm build          # Build the app and bundle the Worker
 pnpm fmt            # Format the code
 pnpm lint           # Lint the code
 pnpm infra:deploy   # Deploy to Cloudflare's prod stage
 ```
+
+## End-to-end test
+
+`pnpm test:e2e` runs a Playwright smoke test of the whole flow: import a small
+`.apkg`, review a card online, go offline and grade the rest from the
+prefetched queue ([ADR 0001](./docs/adr/0001-review-from-a-prefetched-queue.md)),
+then reconnect and check that the grades reached the server. It is not part of
+`pnpm test` because it builds the app and drives a real browser.
+
+It needs no Cloudflare credentials. `packages/e2e/support/server.ts` builds the
+client, bundles `apps/frontend/src/worker.ts`, and runs it under Miniflare
+(workerd) with local D1 and R2 and the same asset routing as `alchemy.run.ts`.
+State is in memory, so every run starts from an empty collection. The test's
+archive comes from `packages/e2e/support/apkg.ts`, which reuses the collection
+writer in `packages/anki/test`.
+
+Install a browser once with `pnpm --filter @nook/e2e exec playwright install chromium`
+(add `--with-deps` on a fresh Linux machine). To use an existing Chrome, set
+`NOOK_E2E_CHROME=/path/to/chrome`. Set `NOOK_E2E_PORT` if port 5274 is taken.
 
 ## Deploy
 
@@ -169,6 +189,7 @@ apps/frontend      @nook/frontend  The Foldkit app and Worker entry point
 packages/anki      @nook/anki      Anki archive reader and card renderer
 packages/api       @nook/api       RPC contract, Drizzle schema, and types
 packages/backend   @nook/backend   RPC handlers and backend services
+packages/e2e       @nook/e2e       Playwright smoke test and its local Worker harness
 alchemy.run.ts                     Cloudflare infrastructure
 ```
 
