@@ -316,7 +316,10 @@ const header = (detail: DeckDetail, h: HtmlBuilder<Message>): Html => {
       h.div(
         [h.Class('mt-3 flex items-center gap-2')],
         [
-          Progress<Message>({ value: detail.summary.retention7d, className: 'flex-1' }, h),
+          Progress<Message>(
+            { value: detail.summary.retention7d, label: '7-day retention', className: 'flex-1' },
+            h,
+          ),
           h.span(
             [h.Class('text-xs tabular-nums text-muted-foreground')],
             [`${detail.summary.retention7d}% · 7d`],
@@ -402,9 +405,10 @@ const cardsSection = (
       h.button(
         [
           h.OnClick(Message.ToggledDeckCards()),
-          h.Class('flex w-full items-center justify-between gap-3 text-left outline-none'),
+          h.Class(
+            'flex w-full items-center justify-between gap-3 rounded-[10px] text-left outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-strong)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--theme-block)]',
+          ),
           h.AriaExpanded(open),
-          h.AriaLabel(open ? 'Hide Cards' : 'Show Cards'),
         ],
         [
           h.div(
@@ -567,6 +571,7 @@ const limitsRow = (detail: DeckDetail, saving: boolean, h: HtmlBuilder<Message>)
           }),
           size: 'sm',
           isDisabled: saving,
+          attributes: [h.Id('deck-limits')],
         },
         [icon(h, Settings2, 'size-3.5'), 'Limits'],
         h,
@@ -616,6 +621,7 @@ const manageSection = (
                 h.Class(
                   'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
                 ),
+                h.Role('status'),
               ],
               ['Deck renamed.'],
             ),
@@ -628,6 +634,7 @@ const manageSection = (
                 h.Class(
                   'rounded-[10px] border-0 bg-white px-3 py-2 text-xs font-semibold text-[var(--theme-ink)]',
                 ),
+                h.Role('status'),
               ],
               ['Limits saved.'],
             ),
@@ -675,6 +682,7 @@ const renameRow = (detail: DeckDetail, saving: boolean, h: HtmlBuilder<Message>)
           }),
           size: 'sm',
           isDisabled: saving,
+          attributes: [h.Id('deck-rename')],
         },
         [icon(h, Pencil, 'size-3.5'), 'Rename'],
         h,
@@ -759,6 +767,7 @@ const destructiveRows = (
           onClick: Message.ClickedResetDeck({ deckId: id }),
           size: 'sm',
           isDisabled: saving,
+          attributes: [h.Id('deck-reset')],
         },
         [icon(h, RotateCcw, 'size-3.5'), 'Reset'],
         h,
@@ -783,6 +792,7 @@ const destructiveRows = (
           onClick: Message.ClickedRemoveDeck({ deckId: id }),
           size: 'sm',
           isDisabled: saving,
+          attributes: [h.Id('deck-remove')],
         },
         [icon(h, Trash2, 'size-3.5'), 'Remove'],
         h,
@@ -793,7 +803,7 @@ const destructiveRows = (
 
 const resetConfirm = (id: DeckId, saving: boolean, h: HtmlBuilder<Message>): Child =>
   h.div(
-    [h.Class('flex flex-col gap-2 rounded-[10px] border-0 bg-white px-3 py-2.5')],
+    [h.Class('flex flex-col gap-2 rounded-[10px] border-0 bg-white px-3 py-2.5'), h.Role('alert')],
     [
       h.p(
         [h.Class('text-xs')],
@@ -819,6 +829,7 @@ const resetConfirm = (id: DeckId, saving: boolean, h: HtmlBuilder<Message>): Chi
               onClick: Message.ClickedCancelDeckConfirm(),
               size: 'sm',
               isDisabled: saving,
+              attributes: [h.Id('deck-confirm-keep')],
             },
             ['Keep'],
             h,
@@ -861,6 +872,7 @@ const removeConfirm = (
               onClick: Message.ClickedCancelDeckConfirm(),
               size: 'sm',
               isDisabled: saving,
+              attributes: [h.Id('deck-confirm-keep')],
             },
             ['Keep'],
             h,

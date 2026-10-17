@@ -246,6 +246,7 @@ describe('review session', () => {
     expect(names(update(revealed, Message.ClickedGrade({ grade: 'Good' })))).toEqual([
       'SaveQueuedGrade',
       'PersistReviewQueue',
+      'FocusElement',
     ])
   })
 
@@ -290,7 +291,7 @@ describe('review session', () => {
     expect(graded.model.review.cards[2]?.cardId).toBe('c1')
     expect(graded.model.review.requeue.length).toBe(1)
     expect(graded.model.review.phase).toBe('reviewing')
-    expect(names(graded)).toEqual(['SaveQueuedGrade', 'PersistReviewQueue'])
+    expect(names(graded)).toEqual(['SaveQueuedGrade', 'PersistReviewQueue', 'FocusElement'])
     const savedQueue = graded.commands?.find((command) => command.name === 'PersistReviewQueue')
     expect(savedQueue).toMatchObject({ args: { cards: [{ cardId: 'c2' }, { cardId: 'c1' }] } })
   })

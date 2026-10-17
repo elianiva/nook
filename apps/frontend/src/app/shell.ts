@@ -105,7 +105,8 @@ const topTitle = (model: Model): string => {
 
 const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
   const chip = topChip(model)
-  return h.div(
+  const heading = model.route._tag === 'DeckDetail' ? h.span : h.h1
+  return h.header(
     // Sticky within the scroll container's flow: the header stays pinned to
     // the top of the screen while the page content slides underneath, instead
     // of scrolling away and snapping back on direction change. `bg-background`
@@ -139,7 +140,7 @@ const topChrome = (model: Model, h: HtmlBuilder<Message>): Html => {
           h.div(
             [h.Class('flex min-w-0 flex-1 flex-col leading-tight')],
             [
-              h.span(
+              heading(
                 [h.Class('truncate text-[17px] font-extrabold tracking-tight')],
                 [topTitle(model)],
               ),
@@ -342,9 +343,14 @@ export const shell = (
       topChrome(model, h),
       h.main(
         [
+          // The target of the focus move after a route change (see
+          // `ChangedUrl`): `tabindex=-1` lets script focus land here without
+          // adding a tab stop.
+          h.Id('main-content'),
+          h.Tabindex(-1),
           h.Class(
             cn(
-              'mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col',
+              'mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col outline-none',
               // Every screen child keeps its own height: without `shrink-0`
               // a flex column squeezes its children below their content
               // height when the page is taller than the viewport, and cards

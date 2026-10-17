@@ -7,7 +7,7 @@
  */
 
 import { Effect, Schema as S } from 'effect'
-import { Command, Navigation, Url } from 'foldkit'
+import { Command, Dom, Navigation, Url } from 'foldkit'
 import { Message } from './model'
 
 export const NavigateInternal = Command.define('NavigateInternal', {
@@ -22,4 +22,19 @@ export const NavigateToPath = Command.define('NavigateToPath', {
   args: { path: S.String },
   messages: [Message.CompletedNavigate],
   execute: ({ path }) => Navigation.pushUrl(path).pipe(Effect.as(Message.CompletedNavigate())),
+})
+
+/**
+ * Moves keyboard and screen-reader focus to the element `selector` names once
+ * the next render commits. A missing element is not an error: the screen that
+ * would have owned the focus simply is not showing.
+ */
+export const FocusElement = Command.define('FocusElement', {
+  args: { selector: S.String },
+  messages: [Message.CompletedFocus],
+  execute: ({ selector }) =>
+    Dom.focus(selector, { makeFocusable: true, preventScroll: true }).pipe(
+      Effect.ignore,
+      Effect.as(Message.CompletedFocus()),
+    ),
 })

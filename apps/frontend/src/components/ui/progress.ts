@@ -24,7 +24,8 @@ export const progressValueClass = 'text-muted-foreground ml-auto text-sm tabular
 
 type StyleConfig = Readonly<{ className?: string }>
 
-type ProgressConfig = Readonly<{ value?: number; className?: string }>
+/** `label` names the bar for assistive tech; a bare progressbar reads as an unnamed number. */
+type ProgressConfig = Readonly<{ value?: number; className?: string; label?: string }>
 
 const clampValue = (value: number): number => Math.min(100, Math.max(0, value))
 
@@ -45,6 +46,7 @@ export const progress = <M>(config: ProgressConfig, h: HtmlBuilder<M>): Html =>
     [
       h.Class(cn(progressClass, config.className)),
       h.Role('progressbar'),
+      ...(config.label === undefined ? [] : [h.AriaLabel(config.label)]),
       h.AriaValuemin(0),
       h.AriaValuemax(100),
       ...(config.value === undefined ? [] : [h.AriaValuenow(clampValue(config.value))]),

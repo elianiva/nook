@@ -129,13 +129,13 @@ const importPreviewPanel = (state: ImportState, h: HtmlBuilder<Message>): Child 
       ...(waiting
         ? [
             h.span(
-              [h.Class('text-xs text-muted-foreground')],
+              [h.Class('text-xs text-muted-foreground'), h.Role('status')],
               [readStageText(stage, state.filename)],
             ),
           ]
         : failed !== null
           ? [
-              h.p([h.Class('text-xs text-destructive')], [failed]),
+              h.p([h.Class('text-xs text-destructive'), h.Role('alert')], [failed]),
               h.div(
                 [h.Class('flex gap-1 pt-1')],
                 [
@@ -203,7 +203,11 @@ const importPreviewPanel = (state: ImportState, h: HtmlBuilder<Message>): Child 
                   [h.Class('flex gap-1 pt-1')],
                   [
                     button<Message>(
-                      { onClick: Message.ClickedStartImport(), size: 'sm' },
+                      {
+                        onClick: Message.ClickedStartImport(),
+                        size: 'sm',
+                        attributes: [h.Id('import-start')],
+                      },
                       ['Start import'],
                       h,
                     ),
@@ -306,16 +310,20 @@ const importPanel = (model: Model, h: HtmlBuilder<Message>): Child => {
                 `size-4 shrink-0 ${header.tone}`,
               ),
           h.span(
-            [h.Class(`min-w-0 flex-1 truncate text-xs font-medium ${header.tone}`)],
+            [
+              h.Class(`min-w-0 flex-1 truncate text-xs font-medium ${header.tone}`),
+              h.Role('status'),
+            ],
             [header.text],
           ),
         ],
       ),
       ...(state.phase === 'failed'
-        ? [h.p([h.Class('text-xs text-destructive')], [failed ?? ''])]
+        ? [h.p([h.Class('text-xs text-destructive'), h.Role('alert')], [failed ?? ''])]
         : [
             Progress<Message>(
               {
+                label: 'Import progress',
                 value: Option.match(state.status, {
                   onNone: () => undefined,
                   onSome: percentWritten,
@@ -382,6 +390,7 @@ const deckCard = (deck: DeckSummary, variant: 'due' | 'clean', h: HtmlBuilder<Me
                 Progress<Message>(
                   {
                     value: deck.retention7d,
+                    label: `${deck.name} retention, 7 days`,
                     className:
                       'mt-1 [&_[data-slot=progress-track]]:h-[5px] [&_[data-slot=progress-track]]:bg-[var(--theme-bar-idle)] [&_[data-slot=progress-indicator]]:bg-[var(--theme-tint)]',
                   },
@@ -423,7 +432,6 @@ const importFooter = (model: Model, h: HtmlBuilder<Message>): Html =>
       size: 'lg',
       className:
         'h-12 w-full rounded-[14px] bg-[var(--theme-ink)] text-sm font-bold text-white shadow-none hover:bg-[var(--theme-ink)]/90',
-      attributes: [h.AriaLabel('Import deck')],
     },
     [icon(h, Plus, 'size-4'), 'Import a deck…'],
     h,

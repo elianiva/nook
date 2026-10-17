@@ -36,7 +36,13 @@ export const foldHintMessage = (
  * A `?` trigger with its hint panel. The trigger is a ghost icon button;
  * the panel uses the foldcn tooltip style.
  */
-export const hint = (slot: HintSlot, text: string, model: Model, h: HtmlBuilder<Message>): Html => {
+export const hint = (
+  slot: HintSlot,
+  text: string,
+  model: Model,
+  h: HtmlBuilder<Message>,
+  subject: string,
+): Html => {
   const child = model.hints[slot] ?? Tooltip.init({ id: `hint-${slot}` })
   return h.submodel({
     slotId: `hint-${slot}`,
@@ -48,7 +54,7 @@ export const hint = (slot: HintSlot, text: string, model: Model, h: HtmlBuilder<
         content: text,
         triggerClass:
           'h-5 w-5 gap-0 rounded-full border-0 bg-transparent p-0 text-[var(--theme-sub)] hover:bg-transparent hover:text-[var(--theme-ink)]',
-        triggerAttributes: [h.AriaLabel('About this setting')],
+        triggerAttributes: [h.AriaLabel(`About ${subject}`)],
       },
       h,
     ),

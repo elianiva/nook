@@ -10,7 +10,7 @@ import { deckDetailView } from './deck-detail'
 import { decksView } from './decks'
 import { homeView } from './home'
 import type { Message, Model } from './model'
-import { AppRoute } from './routes'
+import { AppRoute, routeTitle } from './routes'
 import { reviewView } from './review'
 import { settingsView } from './settings'
 import { shell } from './shell'
@@ -44,5 +44,5 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
     Settings: () => shell(model, settingsView(model, h), h),
     NotFound: () => notFoundView(model, h),
   })
-  return { title: 'nook', body }
+  return { title: model.route._tag === 'Home' ? 'nook' : `${routeTitle(model.route)} · nook`, body }
 }
