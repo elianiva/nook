@@ -13,3 +13,10 @@ both devices' Reviews, which corrupts the inputs the scheduler learns from.
 The log is append-only, and Card state is derived from it rather than
 overwritten. Changing this protocol after two devices exist is a compatibility
 problem, not a refactor.
+
+Undo keeps the id of each grade it removes, so a late replay of an undone grade
+is refused (`ReviewUndone`) rather than applied again. Each Card carries a
+version (`cards.grade_seq`) that every grade and undo bumps. A grade writes only
+if the Card is still at the version it read; otherwise it re-reads and schedules
+on top of the grade that landed first, so grades from two tabs are applied one
+after the other and none is lost.
