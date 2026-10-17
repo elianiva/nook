@@ -2,11 +2,12 @@ import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
-import { DecksRpc, HomeRpc, SettingsRpc, ImportsRpc, DeckId, ImportId } from '@nook/api'
+import { DecksRpc, HomeRpc, SettingsRpc, ImportsRpc, ReviewsRpc, DeckId, ImportId } from '@nook/api'
 import type { ImportManifest, ImportNote, ImportReview } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Home, HomeHandlers } from '../src/home'
 import { Imports, ImportsHandlers } from '../src/imports'
+import { Reviews, ReviewsHandlers } from '../src/reviews'
 import { Settings, SettingsHandlers } from '../src/settings'
 import { migrate } from './migrate'
 
@@ -16,11 +17,13 @@ const HandlersLive = Layer.mergeAll(
   DecksHandlers,
   HomeHandlers,
   ImportsHandlers,
+  ReviewsHandlers,
   SettingsHandlers,
 ).pipe(
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
   Layer.provideMerge(Imports.layer),
+  Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
   Layer.provideMerge(SqlLive),
 )
@@ -473,6 +476,56 @@ layer(TestLayers)('imports over sqlite', (it) => {
       expect(resumed.reviewCount).toBe(2)
       expect(resumed.reviewsCursor).toBe(20)
       expect(resumed.reviewsImported).toBe(1)
+    }).pipe(Effect.scoped),
+  )
+
+  it.effect("keeps resolving a re-imported Note's Media from the Import that stored it", () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(
+        DecksRpc.merge(HomeRpc, SettingsRpc, ImportsRpc, ReviewsRpc),
+      )
+      const withMedia = ImportId.make('d'.repeat(64))
+      const withoutMedia = ImportId.make('e'.repeat(64))
+      const withMoreMedia = ImportId.make('f'.repeat(64))
+      const batch = {
+        notes: [{ ...note(10, '<img src="a.png">') }],
+        cards: [{ id: 20, noteId: 10, deckId: 7, templateOrd: 0, suspended: false, flag: 0 }],
+      }
+      const question = () =>
+        client
+          .reviewsQueue({ deckId: DeckId.make('7'), timezone: 'UTC' })
+          .pipe(Effect.map((queue) => queue.cards.find((card) => card.noteId === '10')?.question))
+
+      yield* client.importsStart({
+        id: withMedia,
+        filename: 'one.apkg',
+        manifest: manifest({ mediaCount: 1 }),
+      })
+      yield* client.importsWriteBatch({ importId: withMedia, batch })
+      expect(yield* question()).toContain(`/api/media/${withMedia}/a.png`)
+
+      // A later archive re-imports the Note with its Media excluded: the files
+      // exist only under the first Import, so the Note must keep pointing there.
+      yield* client.importsStart({
+        id: withoutMedia,
+        filename: 'two.apkg',
+        manifest: manifest({ mediaCount: 0 }),
+      })
+      yield* client.importsWriteBatch({ importId: withoutMedia, batch })
+      expect(yield* question()).toContain(`/api/media/${withMedia}/a.png`)
+
+      // The Import still owns the Note's row, so its progress is unaffected.
+      expect(yield* countRows('notes', `import_id = '${withoutMedia}'`)).toBe(1)
+
+      // A re-import that does upload Media takes over its Media scope.
+      yield* client.importsStart({
+        id: withMoreMedia,
+        filename: 'three.apkg',
+        manifest: manifest({ mediaCount: 1 }),
+      })
+      yield* client.importsWriteBatch({ importId: withMoreMedia, batch })
+      expect(yield* question()).toContain(`/api/media/${withMoreMedia}/a.png`)
     }).pipe(Effect.scoped),
   )
 

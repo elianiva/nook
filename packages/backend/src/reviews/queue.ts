@@ -84,7 +84,7 @@ export const makeQueue = ({ sql, readFsrs }: ReviewsDeps) => {
       const newAllowed = input.bypassDueLimit ? 0 : Math.max(0, newPerDay - introducedToday)
 
       const rows = yield* sql`SELECT c.id AS "cardId", c.deck_id AS "deckId",
-            c.note_id AS "noteId", n.import_id AS "importId", c.template_ord AS "templateOrd",
+            c.note_id AS "noteId", COALESCE(n.media_import_id, n.import_id) AS "importId", c.template_ord AS "templateOrd",
             c.state AS state, c.stability AS stability, c.difficulty AS difficulty,
             c.due_at AS "dueAt",
             COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",

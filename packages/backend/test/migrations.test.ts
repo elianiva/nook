@@ -19,6 +19,7 @@ describe('migrations stay append-only', () => {
       '0007_leeches.sql',
       '0008_review_history.sql',
       '0009_import_history.sql',
+      '0010_note_media_import.sql',
     ])
   })
 })
