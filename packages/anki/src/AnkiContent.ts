@@ -107,6 +107,39 @@ export const AnkiCard = AnkiCardRow.pipe(
 
 export type AnkiCard = typeof AnkiCard.Type
 
+const GRADES = ['Again', 'Hard', 'Good', 'Easy'] as const
+
+const AnkiReviewRow = Schema.Struct({
+  id: Schema.Number,
+  cid: Schema.Number,
+  ease: Schema.Number,
+})
+
+/**
+ * One graded Review from Anki's `revlog` table, read into nook's terms.
+ *
+ * Only the facts FSRS replays survive: which Card, when, and which of the four
+ * buttons. `ivl`, `lastIvl`, `factor`, and `time` describe Anki's own scheduler,
+ * which FSRS does not read. `revlog.id` is the Review's instant in Unix
+ * milliseconds. The reader only selects rows whose `ease` is 1 to 4, so a row
+ * outside that range fails to decode rather than becoming a wrong Grade.
+ */
+export const AnkiReview = AnkiReviewRow.pipe(
+  Schema.decodeTo(
+    Schema.Struct({
+      id: Schema.Number,
+      cardId: Schema.Number,
+      grade: Schema.Literals(GRADES),
+    }),
+    codec(
+      (row) => ({ id: row.id, cardId: row.cid, grade: GRADES[row.ease - 1] ?? ('Good' as const) }),
+      (review) => ({ id: review.id, cid: review.cardId, ease: GRADES.indexOf(review.grade) + 1 }),
+    ),
+  ),
+)
+
+export type AnkiReview = typeof AnkiReview.Type
+
 /**
  * One Media file the archive carries, and where its bytes live. `entry` is the
  * zip entry name, which for a modern archive is the Media file's index as a

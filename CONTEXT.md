@@ -59,6 +59,11 @@ keeps what is there; a Card takes the export's Schedule only if the export
 reviewed it more recently.
 _Avoid_: import (that is `.apkg`), replace, overwrite
 
+**Review history**:
+The graded Reviews an `.apkg` archive records for its Cards. A Learner may opt in
+to importing it; FSRS replays it to set each Card's Stability and Difficulty.
+_Avoid_: revlog, scheduling info
+
 **`.apkg` archive**:
 The zip file Anki exports. It holds an Anki collection database and its Media.
 _Avoid_: import file, backup file

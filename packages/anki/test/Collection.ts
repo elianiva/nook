@@ -81,12 +81,25 @@ export interface CardSpec {
   readonly flag?: number
 }
 
+/** One row of Anki's `revlog`. Columns FSRS never reads default to Anki's own empty values. */
+export interface RevlogSpec {
+  /** Unix milliseconds. Unique per Review. */
+  readonly id: number
+  readonly cardId: number
+  /** The button: 1 Again, 2 Hard, 3 Good, 4 Easy, and 0 for a manual entry. */
+  readonly ease: number
+  /** 0 learn, 1 review, 2 relearn, 3 filtered, 4 manual. */
+  readonly type?: number
+  readonly factor?: number
+}
+
 export interface CollectionSpec {
   readonly schemaVersion?: number
   readonly decks?: ReadonlyArray<DeckSpec>
   readonly noteTypes?: ReadonlyArray<NoteTypeSpec>
   readonly notes?: ReadonlyArray<NoteSpec>
   readonly cards?: ReadonlyArray<CardSpec>
+  readonly revlog?: ReadonlyArray<RevlogSpec>
 }
 
 const SCHEMA = `
@@ -106,6 +119,11 @@ CREATE TABLE cards (
   due integer NOT NULL, ivl integer NOT NULL, factor integer NOT NULL, reps integer NOT NULL,
   lapses integer NOT NULL, left integer NOT NULL, odue integer NOT NULL, odid integer NOT NULL,
   flags integer NOT NULL, data text NOT NULL
+);
+CREATE TABLE revlog (
+  id integer PRIMARY KEY NOT NULL, cid integer NOT NULL, usn integer NOT NULL, ease integer NOT NULL,
+  ivl integer NOT NULL, lastIvl integer NOT NULL, factor integer NOT NULL, time integer NOT NULL,
+  type integer NOT NULL
 );
 CREATE TABLE notetypes (
   id integer NOT NULL PRIMARY KEY, name text NOT NULL COLLATE nocase,
@@ -234,6 +252,20 @@ export const writeCollection = (spec: CollectionSpec): string => {
         card.flag ?? 0,
       )
     }
+    // One transaction: a revlog is thousands of rows, and a commit per row fsyncs each.
+    db.exec('BEGIN')
+    for (const entry of spec.revlog ?? []) {
+      insert(
+        db,
+        'INSERT INTO revlog VALUES (?, ?, -1, ?, 0, 0, ?, 0, ?)',
+        entry.id,
+        entry.cardId,
+        entry.ease,
+        entry.factor ?? 2500,
+        entry.type ?? 1,
+      )
+    }
+    db.exec('COMMIT')
   } finally {
     db.close()
   }

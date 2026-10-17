@@ -64,7 +64,7 @@ export const toMessages = (event: ImportWorkerEvent): ReadonlyArray<Message> => 
  * cancelled: the cursors in D1 make the next run pick up where this one
  * stopped. A failed or finished stream ends, so the worker does not linger.
  *
- * The run reads the Media choice from the dependencies it starts with, so a
+ * The run reads the Media and history choices from the dependencies it starts with, so a
  * later toggle never tears the worker down and starts another run over what
  * is already running.
  */
@@ -72,6 +72,7 @@ const streamImport = (
   id: ImportId,
   command: 'preview' | 'run',
   includeMedia: boolean,
+  includeHistory: boolean,
 ): Stream.Stream<Message, never> =>
   Stream.callback<Message>((queue) =>
     Effect.gen(function* () {
@@ -117,6 +118,7 @@ const streamImport = (
               filename: job.value.filename,
               blob: job.value.blob,
               includeMedia,
+              includeHistory,
             }
       worker.postMessage(start)
     }),
@@ -137,6 +139,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
       phase: Schema.String,
       hasPreview: Schema.Boolean,
       includeMedia: Schema.Boolean,
+      includeHistory: Schema.Boolean,
     },
     {
       // The pick opens the preview worker; the Start press swaps it for the
@@ -148,8 +151,8 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
       // a loop of counting and reading instead of finishing. The equivalence
       // below treats `running`, `reading`, and `writing` as one run, so only
       // a real transition — preview to run, run to an end — restarts the
-      // stream. `includeMedia` is read when the run starts and never
-      // restarts it; the counts land in `status`, which is not a dependency.
+      // stream. `includeMedia` and `includeHistory` are read when the run starts and
+      // never restart it; the counts land in `status`, which is not a dependency.
       keepAliveEquivalence: Equivalence.Struct({
         importId: Option.makeEquivalence<string>(Equivalence.String),
         active: Equivalence.Boolean,
@@ -158,6 +161,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         ),
         hasPreview: Equivalence.Boolean,
         includeMedia: (_a: boolean, _b: boolean) => true,
+        includeHistory: (_a: boolean, _b: boolean) => true,
       }),
       modelToDependencies: (model) => ({
         importId: model.importState.id,
@@ -165,6 +169,7 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
         phase: model.importState.phase,
         hasPreview: Option.isSome(model.importState.preview),
         includeMedia: model.importState.includeMedia,
+        includeHistory: model.importState.includeHistory,
       }),
       dependenciesToStream: (
         dependencies: Readonly<{
@@ -173,15 +178,16 @@ export const subscriptions = Subscription.make<Model, Message>()((entry) => ({
           phase: string
           hasPreview: boolean
           includeMedia: boolean
+          includeHistory: boolean
         }>,
       ) => {
-        const { importId, active, phase, hasPreview, includeMedia } = dependencies
+        const { importId, active, phase, hasPreview, includeMedia, includeHistory } = dependencies
         if (!active || Option.isNone(importId)) return Stream.empty
         if (phase === 'preview' && !hasPreview) {
-          return streamImport(importId.value, 'preview', includeMedia)
+          return streamImport(importId.value, 'preview', includeMedia, includeHistory)
         }
         if (phase === 'running' || phase === 'reading' || phase === 'writing') {
-          return streamImport(importId.value, 'run', includeMedia)
+          return streamImport(importId.value, 'run', includeMedia, includeHistory)
         }
         return Stream.empty
       },

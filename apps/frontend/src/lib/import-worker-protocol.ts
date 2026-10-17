@@ -24,6 +24,8 @@ export type ImportWorkerCommand =
       readonly blob: Blob
       /** False when the Learner excluded Media on the detail panel. */
       readonly includeMedia: boolean
+      /** True when the Learner opted in to seeding FSRS state from Anki's review history. */
+      readonly includeHistory: boolean
     }
   | {
       readonly type: 'preview'
@@ -64,6 +66,8 @@ export const ImportPreview = Schema.Struct({
   cardCount: Schema.Number,
   mediaCount: Schema.Number,
   mediaBytes: Schema.Number,
+  /** Graded Reviews in the archive's review log. Zero when the export carries no history. */
+  reviewCount: Schema.Number,
   decks: Schema.Array(ImportPreviewDeck),
   noteTypes: Schema.Array(ImportPreviewNoteType),
 })
@@ -91,8 +95,12 @@ export const ImportProgress = Schema.Struct({
   notesImported: Schema.Number,
   cardsImported: Schema.Number,
   mediaImported: Schema.Number,
+  /** Reviews written so far. Always 0 for an Import that did not opt in to history. */
+  reviewsImported: Schema.Number,
   noteCount: Schema.Number,
   cardCount: Schema.Number,
+  /** Reviews the run will write: 0 unless the Import opted in to history. */
+  reviewCount: Schema.Number,
   mediaCount: Schema.Number,
 })
 export type ImportProgress = typeof ImportProgress.Type

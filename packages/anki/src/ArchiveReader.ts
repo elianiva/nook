@@ -2,7 +2,7 @@ import { Effect, Option, Schema, Stream } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import type { Row } from 'effect/sql/SqlConnection'
 import type { SqlError } from 'effect/sql/SqlError'
-import { AnkiCard, AnkiNote } from './AnkiContent'
+import { AnkiCard, AnkiNote, AnkiReview } from './AnkiContent'
 import type { AnkiReadError } from './AnkiErrors'
 import {
   NOTETYPE_KIND_CLOZE,
@@ -29,8 +29,10 @@ import { AnkiDeck, AnkiField, AnkiNoteType, AnkiTemplate } from './AnkiManifest'
  * `tags.tag` are all collated. Order by `id`, which is the rowid, or by `ord`
  * alongside `ntid`, which is the `fields` and `templates` primary key.
  *
- * Deck options and the review log are never read. nook starts every imported Card
- * as new and applies its own limits, so Anki's scheduling state has nowhere to go.
+ * Deck options and Anki's own scheduling columns are never read. nook applies its
+ * own limits and schedules with FSRS. The review log is the one exception, and
+ * only when the Learner opts in: `streamReviews` reads which button was pressed
+ * and when, which is all an FSRS replay needs.
  *
  * A damaged blob fails in the error channel with a corrupt-archive error
  * carrying a fix, never a thrown decode error. A page that ends without a last
@@ -242,6 +244,48 @@ export const streamNotes = (sql: Sql.SqlClient): Stream.Stream<AnkiNote, AnkiRea
     sql`SELECT id, guid, mid, mod, flds, tags FROM notes WHERE id > ${after} ORDER BY id LIMIT 5000`.pipe(
       decodeRows(AnkiNote),
       Effect.map((notes) => [notes, nextAfter(notes)] as const),
+    ),
+  )
+
+/**
+ * The `revlog` rows that are graded Reviews.
+ *
+ * `ease` 0 and `type` 4 are Anki's manual entries (set due date, forget,
+ * reschedule), which record no recall. `type` 3 with `factor` 0 is a cram in a
+ * filtered Deck that does not reschedule, which Anki's own FSRS replay ignores
+ * too. Everything else with a button 1 to 4 is a Review the Learner graded.
+ * This counts them without reading any.
+ */
+export const countReviews = (sql: Sql.SqlClient): Effect.Effect<number, AnkiReadError> =>
+  countOf(sql`SELECT count(*) AS n FROM revlog
+      WHERE ease BETWEEN 1 AND 4 AND type != 4 AND NOT (type = 3 AND factor = 0)`)
+
+/**
+ * Every graded Review (see `countReviews` for which rows qualify), grouped by Card and in time order within a Card.
+ *
+ * Replaying a Card needs its whole history in order, and nothing else, so the
+ * order is `(cid, id)` rather than Anki's global time order. Pages cut on that
+ * pair, so the cursor is a Card id plus a Review id. Both are plain integer
+ * columns: `revlog.id` is the rowid, and none of the columns is collated.
+ * Reviews of a Card the archive no longer holds are still returned; the
+ * writer drops them.
+ */
+export const streamReviews = (sql: Sql.SqlClient): Stream.Stream<AnkiReview, AnkiReadError> =>
+  Stream.paginate({ cid: 0, id: 0 }, (after) =>
+    sql`SELECT id, cid, ease FROM revlog
+      WHERE ease BETWEEN 1 AND 4 AND type != 4 AND NOT (type = 3 AND factor = 0)
+      AND (cid > ${after.cid} OR (cid = ${after.cid} AND id > ${after.id}))
+      ORDER BY cid, id LIMIT 5000`.pipe(
+      decodeRows(AnkiReview),
+      Effect.map((reviews) => {
+        const last = reviews.at(-1)
+        return [
+          reviews,
+          reviews.length < 5000 || last === undefined
+            ? Option.none<{ cid: number; id: number }>()
+            : Option.some({ cid: last.cardId, id: last.id }),
+        ] as const
+      }),
     ),
   )
 

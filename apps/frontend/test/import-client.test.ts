@@ -70,6 +70,7 @@ describe('worker events as Messages', () => {
       cardCount: 4,
       mediaCount: 2,
       mediaBytes: 2048,
+      reviewCount: 0,
       decks: [{ id: 7, name: 'Japanese::Core' }],
       noteTypes: [{ id: 100, name: 'Basic', kind: 'normal' as const, templateCount: 1 }],
     }
@@ -83,8 +84,10 @@ describe('worker events as Messages', () => {
       notesImported: 2,
       cardsImported: 1,
       mediaImported: 0,
+      reviewsImported: 0,
       noteCount: 4,
       cardCount: 4,
+      reviewCount: 0,
       mediaCount: 0,
     }
     expect(toMessages({ type: 'progress', progress })).toEqual([
@@ -97,8 +100,10 @@ describe('worker events as Messages', () => {
       notesImported: 4,
       cardsImported: 4,
       mediaImported: 0,
+      reviewsImported: 0,
       noteCount: 4,
       cardCount: 4,
+      reviewCount: 0,
       mediaCount: 0,
     }
     expect(toMessages({ type: 'done', progress })).toEqual([Message.CompletedImport({ progress })])
@@ -120,6 +125,7 @@ describe('ImportPreview', () => {
       cardCount: 4,
       mediaCount: 2,
       mediaBytes: 2048,
+      reviewCount: 0,
       decks: [{ id: 7, name: 'Japanese::Core' }],
       noteTypes: [{ id: 100, name: 'Basic', kind: 'normal', templateCount: 1 }],
     }
@@ -134,8 +140,10 @@ describe('ImportProgress', () => {
       notesImported: 1,
       cardsImported: 2,
       mediaImported: 3,
+      reviewsImported: 6,
       noteCount: 3,
       cardCount: 4,
+      reviewCount: 7,
       mediaCount: 5,
     }
     expect(Schema.decodeUnknownSync(ImportProgress)(plain)).toEqual(plain)
@@ -168,12 +176,15 @@ describe('importRun subscription lifetime', () => {
       phase: 'running' as const,
       hasPreview: false,
       includeMedia: true,
+      includeHistory: false,
     }
     // The worker's own progress must not restart it.
     expect(equivalence(base, { ...base, phase: 'reading' })).toBe(true)
     expect(equivalence({ ...base, phase: 'reading' }, { ...base, phase: 'writing' })).toBe(true)
     // A Media toggle must not restart the run worker.
     expect(equivalence(base, { ...base, includeMedia: false })).toBe(true)
+    // Neither may a history toggle: it is read once, when the run starts.
+    expect(equivalence(base, { ...base, includeHistory: true })).toBe(true)
     // A real transition restarts: preview swaps its worker for the run one.
     expect(equivalence({ ...base, phase: 'preview' }, base)).toBe(false)
     // An end state tears the worker down.

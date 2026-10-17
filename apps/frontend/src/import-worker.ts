@@ -23,6 +23,7 @@ import type { AnkiManifest, OpenedMedia } from '@nook/anki'
 import type {
   ImportBatchPayload as ImportBatch,
   ImportManifest,
+  ImportReview,
   ImportStart as ImportStartPayload,
 } from '@nook/api'
 import type {
@@ -64,6 +65,7 @@ const toManifest = (manifest: AnkiManifest): ImportManifest => ({
   })),
   noteCount: manifest.noteCount,
   cardCount: manifest.cardCount,
+  reviewCount: manifest.reviewCount,
   mediaCount: manifest.mediaCount,
 })
 
@@ -74,6 +76,7 @@ const toPreview = (manifest: AnkiManifest): ImportPreview => ({
   cardCount: manifest.cardCount,
   mediaCount: manifest.mediaCount,
   mediaBytes: manifest.mediaBytes,
+  reviewCount: manifest.reviewCount,
   decks: manifest.decks.map((deck) => ({ id: deck.id, name: deckName(deck) })),
   noteTypes: manifest.noteTypes.map((noteType) => ({
     id: noteType.id,
@@ -88,8 +91,10 @@ const toProgress = (
   status: {
     notesImported: number
     cardsImported: number
+    reviewsImported: number
     noteCount: number
     cardCount: number
+    reviewCount: number
     mediaCount: number
   },
   mediaImported: number,
@@ -97,8 +102,10 @@ const toProgress = (
   notesImported: status.notesImported,
   cardsImported: status.cardsImported,
   mediaImported,
+  reviewsImported: status.reviewsImported,
   noteCount: status.noteCount,
   cardCount: status.cardCount,
+  reviewCount: status.reviewCount,
   mediaCount: status.mediaCount,
 })
 
@@ -176,6 +183,7 @@ const runImport = (command: Extract<ImportWorkerCommand, { type: 'run' }>): Effe
         id: command.id,
         filename: command.filename,
         manifest: manifestForRun,
+        includeHistory: command.includeHistory,
       }
       const started = yield* rpc.importsStart(startPayload)
 
@@ -218,6 +226,34 @@ const runImport = (command: Extract<ImportWorkerCommand, { type: 'run' }>): Effe
         Stream.grouped(ROWS_PER_REQUEST),
         Stream.runForEach((cards) => writeBatch({ notes: [], cards: Array.from(cards) })),
       )
+
+      // History after Cards: a Review needs its Card to exist. The server's own
+      // record of the opt-in decides, not the flag this run started with, so a run
+      // resumed after a reload still finishes the history the first run began.
+      // The stream is ordered by Card and cut only between Cards, because the
+      // server replays one whole Card's history at a time.
+      if (started.includeHistory) {
+        const pending: Array<ImportReview> = []
+        const flush = Effect.suspend(() => {
+          if (pending.length === 0) return Effect.void
+          const reviews = pending.splice(0)
+          return writeBatch({ notes: [], cards: [], reviews })
+        })
+        yield* opened.reviews.pipe(
+          Stream.filter((review) => review.cardId > started.reviewsCursor),
+          Stream.groupAdjacentBy((review) => review.cardId),
+          Stream.runForEach(([, history]) => {
+            // Flush before adding a Card that would overflow the request. A
+            // single Card never splits, however long its history.
+            const overflows =
+              pending.length > 0 && pending.length + history.length > ROWS_PER_REQUEST
+            return (overflows ? flush : Effect.void).pipe(
+              Effect.andThen(Effect.sync(() => void pending.push(...history))),
+            )
+          }),
+        )
+        yield* flush
+      }
 
       // Media last, one file per request: a Card renders without its audio, but
       // a half-written Note cannot. A re-run overwrites, so a retry is safe.
@@ -274,7 +310,11 @@ scope.onmessage = (event: MessageEvent<ImportWorkerCommand>) => {
   const run =
     command.type === 'preview'
       ? runPreview(command)
-      : runImport({ ...command, includeMedia: command.includeMedia ?? true })
+      : runImport({
+          ...command,
+          includeMedia: command.includeMedia ?? true,
+          includeHistory: command.includeHistory ?? false,
+        })
   Effect.runPromise(run).catch(() =>
     post({ type: 'failed', error: 'The import stopped unexpectedly. Try again.' }),
   )
