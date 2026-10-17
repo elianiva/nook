@@ -8,9 +8,9 @@
  *
  * - The shell precache answers offline first; an update waits for the next
  *   load rather than interrupting a review session mid-grade.
- * - `/api/media/*` is cache-first with a long max age: card images and audio
- *   change only when the media row changes, and the prefetched queue's HTML
- *   already names the URLs a session needs.
+ * - `/api/media/*` is cache-first with a long max age: a URL is scoped by
+ *   Import, so its file never changes, and the prefetched queue's HTML already
+ *   names the URLs a session needs.
  * - Other `/api/*` JSON stays network-only: caching a grade or a queue would
  *   serve a stale collection as if it were due. The prefetched queue in
  *   IndexedDB — not this worker — is what makes grading instant offline
@@ -25,6 +25,7 @@ import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { CacheFirst } from 'workbox-strategies'
 import { ExpirationPlugin } from 'workbox-expiration'
+import { LEGACY_MEDIA_HEADER } from './lib/media'
 
 declare const self: ServiceWorkerGlobalScope & {
   readonly __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -37,14 +38,23 @@ cleanupOutdatedCaches()
 // a fallback would serve a stale shell after a deploy.
 precacheAndRoute(self.__WB_MANIFEST)
 
-// Card images and audio, cache-first: the queue HTML names the URLs, and a
-// media row rarely changes. Thirty days keeps a studied deck's images on the
-// device; a few hundred entries cap the storage a large collection can claim.
+// A response the Worker served from a pre-scoping key may be another Deck's
+// file, so it is shown but never stored: the next load asks again.
+const skipLegacyMedia = {
+  cacheWillUpdate: async ({ response }: { response: Response }) =>
+    response.headers.has(LEGACY_MEDIA_HEADER) ? null : response,
+}
+
+// Card images and audio, cache-first: the queue HTML names the URLs, which are
+// scoped by Import and so never change content. Thirty days keeps a studied
+// deck's images on the device; a few hundred entries cap the storage a large
+// collection can claim.
 registerRoute(
   ({ url }) => url.pathname.startsWith('/api/media/'),
   new CacheFirst({
     cacheName: 'nook-media',
     plugins: [
+      skipLegacyMedia,
       new ExpirationPlugin({
         maxEntries: 300,
         maxAgeSeconds: 30 * 24 * 60 * 60,

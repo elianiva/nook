@@ -32,7 +32,7 @@ import type {
   ImportWorkerCommand,
   ImportWorkerEvent,
 } from './lib/import-worker-protocol'
-import { MEDIA_PATH } from './lib/api'
+import { mediaUrl } from './lib/media'
 import { NookRpc } from './lib/rpc'
 
 /** How many Notes or Cards ride in one request. Each row is one SQLite statement. */
@@ -104,10 +104,10 @@ const toProgress = (
 
 /** Uploads one Media file. The name is the archive's own, so a re-upload overwrites. The
  * Worker derives the stored type from the name. */
-const putMedia = (client: HttpClient.HttpClient, file: OpenedMedia) =>
+const putMedia = (client: HttpClient.HttpClient, importId: string, file: OpenedMedia) =>
   client
     .execute(
-      HttpClientRequest.put(`${MEDIA_PATH}/${encodeURIComponent(file.name)}`).pipe(
+      HttpClientRequest.put(mediaUrl(importId, file.name)).pipe(
         HttpClientRequest.bodyUint8Array(file.bytes, 'application/octet-stream'),
       ),
     )
@@ -227,7 +227,7 @@ const runImport = (command: Extract<ImportWorkerCommand, { type: 'run' }>): Effe
           Stream.grouped(MEDIA_PER_REQUEST),
           Stream.runForEach((group) => {
             const files = Array.from(group)
-            return Effect.forEach(files, (file) => putMedia(client, file), {
+            return Effect.forEach(files, (file) => putMedia(client, command.id, file), {
               concurrency: 1,
               discard: true,
             }).pipe(
