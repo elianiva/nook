@@ -117,6 +117,8 @@ describe('checkAccess', () => {
   it('fails closed when Access is not configured', async () => {
     expect((await checkAccess(request(), { ALLOWED_EMAIL: email }))?.status).toBe(500)
     expect((await checkAccess(request(), {}))?.status).toBe(500)
+    const missing = await checkAccess(request(), { ALLOWED_EMAIL: email, ACCESS_AUD: aud })
+    expect(await missing?.text()).toContain('NOOK_ACCESS_TEAM_DOMAIN is not set')
   })
 
   it('trusts the dev stand-in only for the allowed email', async () => {

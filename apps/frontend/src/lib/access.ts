@@ -127,17 +127,29 @@ export const verifyAccessJwt = async (
  */
 export const checkAccess = async (request: Request, env: AccessEnv): Promise<Response | null> => {
   const { ACCESS_TEAM_DOMAIN: teamDomain, ACCESS_AUD: aud, ALLOWED_EMAIL: email } = env
-  if (email === undefined || email === '')
-    return new Response('Access not configured', { status: 500 })
+  const missing = [
+    [email, 'NOOK_ALLOWED_EMAIL'],
+    ...(env.ALCHEMY_DEV_ACCESS === undefined
+      ? [
+          [teamDomain, 'NOOK_ACCESS_TEAM_DOMAIN'],
+          [aud, 'the Access application audience (ACCESS_AUD)'],
+        ]
+      : []),
+  ].filter(([value]) => value === undefined || value === '')
+  if (missing.length > 0 || email === undefined) {
+    const names = missing.map(([, name]) => name).join(', ')
+    const message = `Access is not configured: ${names} is not set. Redeploy with it set.`
+    console.error(message)
+    return new Response(message, { status: 500 })
+  }
 
   const dev = env.ALCHEMY_DEV_ACCESS
   if (dev !== undefined) {
     return sameEmail(dev.identity?.email, email) ? null : new Response('Forbidden', { status: 403 })
   }
 
-  if (!teamDomain || !aud) return new Response('Access not configured', { status: 500 })
   const token = request.headers.get('cf-access-jwt-assertion')
-  if (token === null) return new Response('Forbidden', { status: 403 })
+  if (token === null || !teamDomain || !aud) return new Response('Forbidden', { status: 403 })
   return (await verifyAccessJwt(token, { teamDomain, aud, email }))
     ? null
     : new Response('Forbidden', { status: 403 })

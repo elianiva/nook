@@ -93,6 +93,11 @@ stands in for Cloudflare Access.
 `NOOK_ALLOWED_EMAIL` is required. There is no sign-up flow, and
 `alchemy.run.ts` will not load without this value.
 
+`NOOK_ACCESS_TEAM_DOMAIN` is required to deploy. The Worker checks the Access
+token on every `/api/*` request itself, as a second layer behind Access. A
+deploy without it returns 500 on `/api/*` and logs `NOOK_ACCESS_TEAM_DOMAIN is
+not set`. `pnpm dev`, CI and `pnpm build` do not need it.
+
 ## Observability
 
 Deploys turn on Workers Logs (`observability` in `alchemy.run.ts`). Read them in
@@ -138,7 +143,9 @@ Install a browser once with `pnpm --filter @nook/e2e exec playwright install chr
 ## Deploy
 
 `pnpm infra:deploy` deploys the Worker, static assets, and Cloudflare Access
-application defined in `alchemy.run.ts`.
+application defined in `alchemy.run.ts`. Set `NOOK_ACCESS_TEAM_DOMAIN` (the
+`deploy.yml` workflow reads it from the secret of the same name) first: a deploy
+without it returns 500 on `/api/*`.
 
 **Before forking:** `.github/workflows/deploy.yml` deploys every `master` commit
 whose `CI` workflow run succeeds, and can also be started manually with

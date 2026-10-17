@@ -19,6 +19,14 @@ if (allowedEmail === undefined || allowedEmail === '') {
 }
 
 /**
+ * The Zero Trust team domain (`<team>.cloudflareaccess.com`) whose JWKS signs
+ * the Access token. The Worker verifies that token itself, as defence in depth
+ * behind Access. A deploy without it answers 500 on `/api/*`; `alchemy dev`
+ * stands in an identity instead of a token and does not need it.
+ */
+const accessTeamDomain = process.env['NOOK_ACCESS_TEAM_DOMAIN'] ?? ''
+
+/**
  * The hostname nook answers on. Override it to self-host under your own
  * domain.
  */
