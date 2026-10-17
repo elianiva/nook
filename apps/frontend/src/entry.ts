@@ -63,6 +63,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
           })
         })
         // An update that was already waiting when the page loaded.
+        if (registration.waiting !== null && navigator.serviceWorker.controller !== null) {
+          signalUpdate()
+        }
         void registration.update().catch(() => {})
       })
       .catch(() => {})
