@@ -102,7 +102,8 @@ const toProgress = (
   mediaCount: status.mediaCount,
 })
 
-/** Uploads one Media file. The name is the archive's own, so a re-upload overwrites. */
+/** Uploads one Media file. The name is the archive's own, so a re-upload overwrites. The
+ * Worker derives the stored type from the name. */
 const putMedia = (client: HttpClient.HttpClient, file: OpenedMedia) =>
   client
     .execute(
@@ -110,7 +111,16 @@ const putMedia = (client: HttpClient.HttpClient, file: OpenedMedia) =>
         HttpClientRequest.bodyUint8Array(file.bytes, 'application/octet-stream'),
       ),
     )
-    .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.asVoid)
+    .pipe(
+      // The Worker refuses files that are not images, audio or other passive
+      // types (415) and files over its size limit (413). A Card renders
+      // without such a file, so the Import skips it rather than failing.
+      Effect.flatMap((response) =>
+        response.status === 415 || response.status === 413
+          ? Effect.void
+          : HttpClientResponse.filterStatusOk(response).pipe(Effect.asVoid),
+      ),
+    )
 
 /** The sentences an Anki error carries are written for the Learner; anything else is not. */
 const toSentence = (error: unknown): string => {
