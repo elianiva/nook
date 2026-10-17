@@ -7,6 +7,16 @@
  * The stored content type is therefore never trusted. The type comes from the
  * file name's extension, only passive types may be uploaded, and everything
  * else is served sandboxed as a download.
+ *
+ * A file lives at `<importId>/<name>`. The archive's own name (`image1.jpg`)
+ * is only unique inside one archive, so keying by it alone let one Deck's file
+ * overwrite another's and the one-year cache froze whichever copy a device saw
+ * first. An Import id is the SHA-256 of the archive, so a re-import of the same
+ * file lands on the same keys. Files stored before the scoping sit at the bare
+ * `<name>`: a scoped GET that misses falls back to it, and a bare-name GET reads
+ * it. Such a key may hold another Deck's file, so it is never `immutable` and
+ * carries `LEGACY_MEDIA_HEADER`, which the service worker refuses to cache.
+ * Validation and the content type always follow the name, never the key.
  */
 
 import { MEDIA_PATH } from './api'
@@ -63,6 +73,15 @@ export const uploadTypeFor = (name: string): string | null => {
   const ext = extensionOf(name)
   return own(PASSIVE_TYPES, ext) ?? own(ACTIVE_TYPES, ext) ?? null
 }
+
+/** Set on a response read from a pre-scoping key. */
+export const LEGACY_MEDIA_HEADER = 'x-nook-media-legacy'
+
+const IMPORT_ID = /^[0-9a-f]{64}$/
+
+/** The browser URL for one Media file of one Import. */
+export const mediaUrl = (importId: string, name: string): string =>
+  `${MEDIA_PATH}/${importId}/${encodeURIComponent(name)}`
 
 /** A name is one path segment of printable text: no separators, no dot-segments, no controls. */
 export const isValidMediaName = (name: string): boolean =>
@@ -128,34 +147,49 @@ export type MediaBucket = {
   ): Promise<unknown>
 }
 
-/**
- * Media is a Card's images and audio, keyed by the name the archive used.
- *
- * The Import writes each file with a PUT and the review screen reads it back
- * with a GET. Objects are immutable — a Media name identifies one file — so
- * they are cached hard.
- */
+/** Splits a request path into the Import scope (null for a bare legacy path) and the decoded name. */
+const parseMediaPath = (pathname: string): { scope: string | null; name: string } => {
+  const rest = pathname.slice(MEDIA_PATH.length + 1)
+  const slash = rest.indexOf('/')
+  const scope = slash === -1 ? '' : rest.slice(0, slash)
+  if (IMPORT_ID.test(scope) && slash < rest.length - 1) {
+    return { scope, name: decodeURIComponent(rest.slice(slash + 1)) }
+  }
+  return { scope: null, name: decodeURIComponent(rest) }
+}
+
 export const mediaResponse = async (
   bucket: MediaBucket,
   request: Request,
   url: URL,
 ): Promise<Response> => {
-  let name: string
+  let parsed: { scope: string | null; name: string }
   try {
-    name = decodeURIComponent(url.pathname.slice(MEDIA_PATH.length + 1))
+    parsed = parseMediaPath(url.pathname)
   } catch {
     return text(400, 'Bad media name')
   }
+  const { scope, name } = parsed
   if (name === '') return text(404, 'Not found')
   if (!isValidMediaName(name)) return text(400, 'Bad media name')
+  const key = scope === null ? name : `${scope}/${name}`
 
   if (request.method === 'GET' || request.method === 'HEAD') {
-    const object = await bucket.get(name)
+    let object = await bucket.get(key)
+    let legacy = scope === null
+    if (object === null && scope !== null) {
+      object = await bucket.get(name)
+      legacy = true
+    }
     if (object === null) return text(404, 'Not found')
     const headers = new Headers()
     object.writeHttpMetadata(headers)
     headers.set('etag', object.httpEtag)
-    headers.set('cache-control', 'public, max-age=31536000, immutable')
+    headers.set(
+      'cache-control',
+      legacy ? 'public, max-age=300' : 'public, max-age=31536000, immutable',
+    )
+    if (legacy) headers.set(LEGACY_MEDIA_HEADER, '1')
     headers.set('x-content-type-options', 'nosniff')
     // The stored type is not trusted (older objects were all stored as
     // octet-stream); the name decides.
@@ -178,7 +212,7 @@ export const mediaResponse = async (
     if (contentType === null) return text(415, 'Unsupported media type')
     const bytes = await readLimited(request, MAX_MEDIA_BYTES)
     if (bytes === null) return text(413, 'Media too large')
-    await bucket.put(name, bytes, { httpMetadata: { contentType } })
+    await bucket.put(key, bytes, { httpMetadata: { contentType } })
     return new Response(null, { status: 204 })
   }
 

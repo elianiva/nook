@@ -1,5 +1,6 @@
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
+import * as Sql from 'effect/sql/SqlClient'
 import { RpcTest } from 'effect/rpc'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { ReviewsRpc, CardId, DeckId } from '@nook/api'
@@ -16,6 +17,31 @@ const TestLayers = ReviewsHandlers.pipe(
 const showcaseDeck = DeckId.make('deck-showcase-japanese')
 
 layer(TestLayers)('reviews over sqlite', (it) => {
+  it.effect('scopes Media URLs by Import so same-named files in two Decks stay apart', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(ReviewsRpc)
+      const sql = yield* Sql.SqlClient
+      const a = 'a'.repeat(64)
+      const b = 'b'.repeat(64)
+      const fields = JSON.stringify(['<img src="image1.jpg">', 'x'])
+      yield* sql`INSERT INTO imports (id, filename) VALUES (${a}, 'a.apkg'), (${b}, 'b.apkg')`
+      yield* sql`UPDATE notes SET fields = ${fields}, import_id = ${a}
+        WHERE id = 'showcase-note-1'`
+      yield* sql`UPDATE notes SET fields = ${fields}, import_id = ${b}
+        WHERE id = 'showcase-note-2'`
+
+      const queue = yield* client.reviewsQueue({ deckId: showcaseDeck, timezone: 'UTC' })
+      const questions = queue.cards
+        .filter((card) => ['showcase-note-1', 'showcase-note-2'].includes(card.noteId))
+        .sort((x, y) => x.noteId.localeCompare(y.noteId))
+        .map((card) => card.question)
+      expect(questions).toHaveLength(2)
+      expect(questions[0]).toContain(`src="/api/media/${a}/image1.jpg"`)
+      expect(questions[1]).toContain(`src="/api/media/${b}/image1.jpg"`)
+    }).pipe(Effect.scoped),
+  )
+
   it.effect('serves a rendered queue and schedules a graded Card', () =>
     Effect.gen(function* () {
       yield* migrate

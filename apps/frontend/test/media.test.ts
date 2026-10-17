@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_MEDIA_BYTES,
+  LEGACY_MEDIA_HEADER,
   isValidMediaName,
+  mediaUrl,
   mediaResponse,
   type MediaBucket,
 } from '../src/lib/media'
@@ -115,5 +117,58 @@ describe('media serving', () => {
     expect(head.headers.get('content-type')).toBe('audio/mpeg')
     expect(await head.text()).toBe('')
     expect((await call(bucket, 'GET', 'gone.png')).status).toBe(404)
+  })
+})
+
+const A = 'a'.repeat(64)
+const B = 'b'.repeat(64)
+
+describe('media key scoping', () => {
+  it('stores and serves same-named files from two Imports apart', async () => {
+    const store: Record<string, string> = {}
+    const bucket: MediaBucket = {
+      async get(key) {
+        if (!(key in store)) return null
+        return {
+          body: new Response(store[key]).body!,
+          httpEtag: '"e"',
+          writeHttpMetadata: () => {},
+        }
+      },
+      async put(key, value) {
+        store[key] = new TextDecoder().decode(value as Uint8Array)
+      },
+    }
+    const put = (path: string, body: string) =>
+      call(bucket, 'PUT', path.replace('/api/media/', ''), new TextEncoder().encode(body))
+    await put(mediaUrl(A, 'image1.jpg'), 'cat')
+    await put(mediaUrl(B, 'image1.jpg'), 'dog')
+    expect(Object.keys(store).sort()).toEqual([`${A}/image1.jpg`, `${B}/image1.jpg`])
+
+    const first = await call(bucket, 'GET', `${A}/image1.jpg`)
+    expect(await first.text()).toBe('cat')
+    expect(first.headers.get('cache-control')).toContain('immutable')
+    expect(first.headers.get('content-type')).toBe('image/jpeg')
+    expect(await (await call(bucket, 'GET', `${B}/image1.jpg`)).text()).toBe('dog')
+  })
+
+  it('falls back to a bare legacy key without immutable caching, still sandboxing by name', async () => {
+    const { bucket } = fakeBucket({ 'old.png': 'legacy', 'x.svg': '<svg/>' })
+    const res = await call(bucket, 'GET', `${A}/old.png`)
+    expect(await res.text()).toBe('legacy')
+    expect(res.headers.get('cache-control')).not.toContain('immutable')
+    expect(res.headers.get(LEGACY_MEDIA_HEADER)).toBe('1')
+    expect(res.headers.get('content-type')).toBe('image/png')
+    const svg = await call(bucket, 'GET', `${A}/x.svg`)
+    expect(svg.headers.get('content-security-policy')).toBe('sandbox')
+    expect((await call(bucket, 'GET', `${A}/none.png`)).status).toBe(404)
+  })
+
+  it('validates the name inside a scoped path and the upload type', async () => {
+    const { bucket, puts } = fakeBucket()
+    expect((await call(bucket, 'PUT', `${A}/a%00.png`, new Uint8Array([1]))).status).toBe(400)
+    expect((await call(bucket, 'PUT', `${A}/a%2Fb.png`, new Uint8Array([1]))).status).toBe(400)
+    expect((await call(bucket, 'PUT', `${A}/page.html`, new Uint8Array([1]))).status).toBe(415)
+    expect(puts).toHaveLength(0)
   })
 })

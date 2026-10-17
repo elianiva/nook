@@ -65,8 +65,9 @@ const QUEUE_LIMIT = 200
 /** How many grade events a Card history request returns, newest first. */
 const HISTORY_LIMIT = 100
 
-/** Where the browser loads a Media file from. */
-const mediaUrl = (name: string): string => `/api/media/${encodeURIComponent(name)}`
+/** Where the browser loads a Media file from. Scoped by Import: archive file names repeat across Decks. */
+const mediaUrl = (importId: string, name: string): string =>
+  `/api/media/${importId}/${encodeURIComponent(name)}`
 
 const CardStateRow = Schema.Literals(['new', 'learning', 'review', 'relearning'])
 
@@ -75,6 +76,7 @@ const QueueRow = Schema.Struct({
   cardId: Schema.String,
   deckId: Schema.String,
   noteId: Schema.String,
+  importId: Schema.String,
   templateOrd: Schema.Number,
   state: CardStateRow,
   stability: Schema.Number,
@@ -168,7 +170,7 @@ const toReviewCard = (row: typeof QueueRow.Type): Effect.Effect<ReviewCard, Sche
       note: { fields: noteFields, tags: noteTags },
       templateOrd: row.templateOrd,
       deckName: row.deckName,
-      mediaUrl,
+      mediaUrl: (name) => mediaUrl(row.importId, name),
     })
 
     return {
@@ -322,7 +324,7 @@ export class Reviews extends Context.Service<
           const newAllowed = input.bypassDueLimit ? 0 : Math.max(0, newPerDay - introducedToday)
 
           const rows = yield* sql`SELECT c.id AS "cardId", c.deck_id AS "deckId",
-            c.note_id AS "noteId", c.template_ord AS "templateOrd",
+            c.note_id AS "noteId", n.import_id AS "importId", c.template_ord AS "templateOrd",
             c.state AS state, c.stability AS stability, c.difficulty AS difficulty,
             c.due_at AS "dueAt",
             COALESCE(CAST(julianday(c.due_at) - julianday('now') AS INTEGER), 0) AS "dueInDays",
