@@ -31,6 +31,7 @@ import {
   Grade,
   ImportId,
   Overview,
+  RestoreResult,
   ReviewAccepted,
   ReviewCard,
 } from '@nook/api'
@@ -410,6 +411,39 @@ export const idleImport: ImportState = {
   error: Option.none(),
 }
 
+/** Where a restore from a JSON export is. `preview` holds the file and what merging it would do. */
+export const RestorePhase = S.Literals([
+  'idle',
+  'reading',
+  'preview',
+  'restoring',
+  'done',
+  'failed',
+])
+export type RestorePhase = typeof RestorePhase.Type
+
+export const RestoreState = S.Struct({
+  phase: RestorePhase,
+  filename: S.String,
+  /** The picked file's text, kept so confirming sends exactly what the preview checked. */
+  json: S.String,
+  /** The merge the server computed: a dry run in `preview`, the real one in `done`. */
+  result: S.Option(RestoreResult),
+  /** Why the restore stopped, and the specific problems the server listed. */
+  error: S.Option(S.String),
+  issues: S.Array(S.String),
+})
+export type RestoreState = typeof RestoreState.Type
+
+export const idleRestore: RestoreState = {
+  phase: 'idle',
+  filename: '',
+  json: '',
+  result: Option.none(),
+  error: Option.none(),
+  issues: [],
+}
+
 export const Model = S.Struct({
   route: AppRoute,
   /** The overview Query: due counts, streak, and the activity strip. */
@@ -427,6 +461,8 @@ export const Model = S.Struct({
   fsrsDiagnosticsError: S.Option(S.String),
   /** The Import the Decks page is showing: what is running, or what last ran. */
   importState: ImportState,
+  /** The Settings page's restore from a JSON export. */
+  restore: RestoreState,
   /** The deck page's Manage section: rename draft and destructive confirms. */
   deckManage: DeckManage,
   /** Server cache values held while an optimistic deck mutation is in flight. */
@@ -475,6 +511,7 @@ export const seedModel = (url: Url.Url): Model => ({
   fsrsDiagnosticsLoading: false,
   fsrsDiagnosticsError: Option.none(),
   importState: idleImport,
+  restore: idleRestore,
   deckManage: idleDeckManage,
   deckMutationRollback: Option.none(),
   queuedGrades: [],
@@ -598,6 +635,22 @@ export const Message = defineMessageUnion({
   DownloadedExport: {},
   /** The review queue was cached on this device. */
   PersistedReviewQueue: {},
+  /** The Learner pressed Restore from JSON; the file picker opens. */
+  ClickedRestore: {},
+  /** The picker closed without a file. */
+  CancelledRestoreSelect: {},
+  /** A file was picked and read; the server previews the merge. */
+  GotRestoreFile: { filename: S.String, json: S.String },
+  /** The server's dry run of the merge. */
+  PreviewedRestore: { result: RestoreResult },
+  /** The Learner confirmed the previewed restore. */
+  ClickedConfirmRestore: {},
+  /** The restore was written. */
+  RestoredCollection: { result: RestoreResult },
+  /** The server refused the file, or the file could not be read or sent. */
+  RestoreFailed: { error: S.String, issues: S.Array(S.String) },
+  /** The Learner closed the restore panel. */
+  ClickedDismissRestore: {},
   /** The export did not land. */
   ExportFailed: { error: S.String },
   /** The grade did not land. It waits in `pending` for Retry. */

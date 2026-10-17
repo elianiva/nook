@@ -28,11 +28,36 @@ These screenshots show the mobile layout.
   review limits.
 - Install the PWA and review offline using a queue of up to 200 prefetched
   cards. Reviews sync when you reconnect.
-- Export your collection as JSON, including scheduling state and review
-  history. Media files remain in Cloudflare R2 and are not included.
+- Export your collection as JSON: decks, note types, notes, cards with
+  scheduling state, and review history. Restore it from Settings. Media files
+  remain in Cloudflare R2 and are not included, so they are not part of the
+  backup.
 
-nook is for reviewing, not authoring: it has no card editor or delete function.
-You cannot restore a collection from a JSON export yet.
+nook is for reviewing, not authoring: it has no card editor.
+
+## Back up and restore
+
+**Settings → Collection → Export collection as JSON** downloads the file.
+**Restore from JSON export** merges a file back in, after previewing what it
+would change:
+
+- Restore never deletes. Decks, note types, notes, and cards whose id is already
+  in the collection are kept as they are; missing ones are added. This is how
+  you recover a deck you removed. Restoring the same file twice changes nothing.
+- Reviews are merged by id. A card that exists in both takes the file's
+  schedule only if the file reviewed it more recently.
+- Restored reviews keep the schedule they produced, but not their before-state,
+  and they cannot be undone.
+- The whole file is validated first. A file that is not valid JSON, comes from a
+  newer nook, is incomplete, or points at a deck, note, note type, or card that
+  exists nowhere is refused with the specific problems, and nothing is written.
+- Exports before format version 2 have no note types. They restore only into a
+  collection that still holds those note types.
+- A restore commits through D1 batches (see
+  [ADR 0003](./docs/adr/0003-d1-with-batch-instead-of-transactions.md)). A small
+  collection is one atomic batch. A large one commits in several, and every step
+  is safe to repeat, so run the restore again if it fails partway.
+- Media is not restored: re-import the `.apkg` or keep the R2 bucket.
 
 ## Requirements
 

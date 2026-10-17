@@ -512,6 +512,23 @@ export const CardReviewHistory = S.Struct({
 })
 export type CardReviewHistory = typeof CardReviewHistory.Type
 
+/** The export format this build writes. Restore accepts it and the unversioned v1 files. */
+export const EXPORT_VERSION = 2
+
+/** One row of the exported collection: a Note Type, so Notes can render after a restore. */
+export const ExportNoteType = S.Struct({
+  id: S.String,
+  name: S.String,
+  kind: S.Literals(['normal', 'cloze']),
+  sortFieldOrd: S.Number,
+  css: S.String,
+  /** The Note Type's Fields as stored: ordered `{ ord, name, … }` objects. */
+  fields: S.Array(S.Unknown),
+  /** The Note Type's Templates as stored: ordered `{ ord, name, questionFormat, answerFormat, … }`. */
+  templates: S.Array(S.Unknown),
+})
+export type ExportNoteType = typeof ExportNoteType.Type
+
 /** One row of the exported collection: the Note content a Card renders. */
 export const ExportNote = S.Struct({
   id: S.String,
@@ -534,39 +551,90 @@ export const ExportCard = S.Struct({
   stability: S.Number,
   difficulty: S.Number,
   dueAt: S.NullOr(S.String),
+  dueInDays: S.Number,
   reps: S.Number,
   lapses: S.Number,
   reviewLapses: S.Number,
   lastReviewedAt: S.NullOr(S.String),
+  introducedDay: S.NullOr(S.String),
 })
 export type ExportCard = typeof ExportCard.Type
 
-/** One row of the exported collection: a Deck's identity. */
+/** One row of the exported collection: a Deck's identity and its scheduling overrides. */
 export const ExportDeck = S.Struct({
   id: S.String,
   name: S.String,
   description: S.String,
+  newPerDay: S.NullOr(S.Number),
+  reviewsPerDay: S.NullOr(S.Number),
+  lapseMinutes: S.NullOr(S.Number),
 })
 export type ExportDeck = typeof ExportDeck.Type
 
-/** One row of the exported collection: a Review log entry. */
+/** One row of the exported collection: a Review log entry and the Schedule it produced. */
 export const ExportReview = S.Struct({
   id: S.String,
   cardId: S.String,
   grade: Grade,
   reviewedAt: S.String,
+  stateAfter: S.NullOr(CardState),
+  stabilityAfter: S.NullOr(S.Number),
+  difficultyAfter: S.NullOr(S.Number),
+  dueInDaysAfter: S.NullOr(S.Number),
+  dueAtAfter: S.NullOr(S.String),
+  leechSuspended: S.Boolean,
 })
 export type ExportReview = typeof ExportReview.Type
 
-/** The whole collection, as the export endpoint serves it. Re-import is out of scope for v1. */
+/** The whole collection, as the export procedure serves it and restore reads it back. */
 export const CollectionExport = S.Struct({
+  version: S.Literal(EXPORT_VERSION),
   exportedAt: S.String,
   decks: S.Array(ExportDeck),
+  noteTypes: S.Array(ExportNoteType),
   notes: S.Array(ExportNote),
   cards: S.Array(ExportCard),
   reviews: S.Array(ExportReview),
 })
 export type CollectionExport = typeof CollectionExport.Type
+
+/** Row counts per kind, for the restore preview and result. */
+export const RestoreCounts = S.Struct({
+  decks: S.Number,
+  noteTypes: S.Number,
+  notes: S.Number,
+  cards: S.Number,
+  reviews: S.Number,
+})
+export type RestoreCounts = typeof RestoreCounts.Type
+
+/**
+ * What a restore did, or with `dryRun` what it would do.
+ *
+ * `added` rows were not in the collection and now are. `existing` rows were
+ * already there and were left alone, except Cards counted in
+ * `schedulesUpdated`, whose backup schedule was newer and replaced theirs.
+ */
+export const RestoreResult = S.Struct({
+  dryRun: S.Boolean,
+  /** The file's format version; `1` for exports written before versioning. */
+  version: S.Number,
+  exportedAt: S.NullOr(S.String),
+  added: RestoreCounts,
+  existing: RestoreCounts,
+  schedulesUpdated: S.Number,
+})
+export type RestoreResult = typeof RestoreResult.Type
+
+/**
+ * The file is not a collection nook can restore: not JSON, a newer format,
+ * a malformed row, or a row that points at something that is nowhere. Nothing
+ * was written. `issues` lists up to 20 specific problems.
+ */
+export class RestoreRejected extends S.TaggedError<RestoreRejected>()('RestoreRejected', {
+  message: S.String,
+  issues: S.Array(S.String),
+}) {}
 
 /** The Card a Review names does not exist. Returned as a 404. */
 export class CardNotFound extends S.TaggedError<CardNotFound>()('CardNotFound', {
@@ -725,8 +793,23 @@ export class ReviewsRpc extends RpcGroup.make(
   }),
 ) {}
 
+export class RestoreRpc extends RpcGroup.make(
+  /**
+   * Merge a JSON export back into the collection. `json` is the file's text;
+   * the server validates all of it before writing anything. Rows already
+   * present (same id) are kept, Reviews are unioned by id, and a Card takes
+   * the backup's schedule only when the backup reviewed it more recently.
+   * `dryRun` reports what would change without writing.
+   */
+  Rpc.make('collectionRestore', {
+    payload: { json: S.String, dryRun: S.Boolean },
+    success: RestoreResult,
+    error: S.Union([RestoreRejected, StorageUnavailable]),
+  }),
+) {}
+
 /** The whole contract: every procedure the browser calls and the Worker serves. */
-export class Api extends DecksRpc.merge(SettingsRpc, HomeRpc, ImportsRpc, ReviewsRpc) {}
+export class Api extends DecksRpc.merge(SettingsRpc, HomeRpc, ImportsRpc, ReviewsRpc, RestoreRpc) {}
 
 /**
  * The settings the form starts from, before the server's own answer arrives.

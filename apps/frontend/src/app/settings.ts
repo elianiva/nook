@@ -25,14 +25,15 @@
 
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { Download, RotateCcw, Save } from 'lucide'
+import { Download, RotateCcw, Save, Upload } from 'lucide'
 import { nativeSelect, nativeSelectOption } from '@/components/ui/native-select'
 import { switch_ } from '@/components/ui/switch'
 import { button } from '@/components/ui/button'
 import { icon } from '@/lib/icons'
 import { themeKeys, themeMeta } from '@/lib/theme'
 import { Message } from './model'
-import type { HintSlot, Model, SettingsDraft } from './model'
+import type { HintSlot, Model, RestoreState, SettingsDraft } from './model'
+import type { RestoreCounts, RestoreResult } from '@nook/api'
 import { hint } from './hints'
 import { fieldError } from './load-state'
 
@@ -425,6 +426,127 @@ const appearanceSection = (model: Model, h: HtmlBuilder<Message>): Html => {
   )
 }
 
+const countLine = (counts: RestoreCounts): string => {
+  const parts = [
+    [counts.decks, 'deck'],
+    [counts.cards, 'card'],
+    [counts.notes, 'note'],
+    [counts.reviews, 'review'],
+    [counts.noteTypes, 'note type'],
+  ] as const
+  return parts.map(([n, noun]) => `${n} ${noun}${n === 1 ? '' : 's'}`).join(', ')
+}
+
+const restoreButton = (
+  label: string,
+  message: Message,
+  h: HtmlBuilder<Message>,
+  primary = false,
+): Html =>
+  button<Message>(
+    {
+      onClick: message,
+      size: 'lg',
+      className: primary
+        ? 'h-9 flex-1 border-0 bg-[var(--theme-ink)] text-sm font-bold text-white'
+        : 'h-9 flex-1 border-0 bg-white text-sm text-[var(--theme-ink)] shadow-none',
+    },
+    [label],
+    h,
+  )
+
+const restorePanel = (restore: RestoreState, h: HtmlBuilder<Message>): Html => {
+  const note = (text: string) =>
+    h.p([h.Class('text-xs leading-relaxed text-[var(--theme-sub)]')], [text])
+  const buttons = (...children: ReadonlyArray<Html>) =>
+    h.div([h.Class('flex gap-2')], [...children])
+  const merge = (result: RestoreResult) => [
+    note(
+      `${restore.filename} (format version ${result.version}) will add ${countLine(result.added)}.`,
+    ),
+    note(
+      `Already here and kept as they are: ${countLine(result.existing)}.` +
+        (result.schedulesUpdated > 0
+          ? ` ${result.schedulesUpdated} ${result.schedulesUpdated === 1 ? 'card takes' : 'cards take'} the backup's schedule because it was reviewed more recently.`
+          : ''),
+    ),
+  ]
+  switch (restore.phase) {
+    case 'idle':
+      return h.div(
+        [h.Class('flex flex-col gap-2 py-2.5')],
+        [
+          button<Message>(
+            {
+              onClick: Message.ClickedRestore(),
+              size: 'lg',
+              className: 'h-9 w-full border-0 bg-white text-sm text-[var(--theme-ink)] shadow-none',
+            },
+            [icon(h, Upload, 'size-4', 'inline-start'), 'Restore from JSON export'],
+            h,
+          ),
+          note(
+            'Merges an export into this collection: nothing is deleted or overwritten, except a card whose backup schedule is newer.',
+          ),
+        ],
+      )
+    case 'reading':
+      return h.div([h.Class('py-2.5')], [note(`Checking ${restore.filename}…`)])
+    case 'preview':
+      return h.div(
+        [h.Class('flex flex-col gap-2 py-2.5')],
+        [
+          ...Option.match(restore.result, { onNone: () => [], onSome: merge }),
+          buttons(
+            restoreButton('Cancel', Message.ClickedDismissRestore(), h),
+            restoreButton('Restore', Message.ClickedConfirmRestore(), h, true),
+          ),
+        ],
+      )
+    case 'restoring':
+      return h.div([h.Class('py-2.5')], [note(`Restoring ${restore.filename}…`)])
+    case 'done':
+      return h.div(
+        [h.Class('flex flex-col gap-2 py-2.5')],
+        [
+          h.p(
+            [h.Class('text-xs font-semibold text-[var(--theme-ink)]')],
+            [
+              Option.match(restore.result, {
+                onNone: () => 'Restored.',
+                onSome: (result) => `Restored ${countLine(result.added)}.`,
+              }),
+            ],
+          ),
+          buttons(restoreButton('Done', Message.ClickedDismissRestore(), h)),
+        ],
+      )
+    case 'failed':
+      return h.div(
+        [h.Class('flex flex-col gap-2 py-2.5')],
+        [
+          ...Option.match(restore.error, {
+            onNone: () => [],
+            onSome: (error) => [fieldError(error, h)],
+          }),
+          ...(restore.issues.length > 0
+            ? [
+                h.ul(
+                  [h.Class('list-disc pl-5 text-xs text-[var(--theme-sub)]')],
+                  restore.issues.map((issue) => h.li([], [issue])),
+                ),
+              ]
+            : []),
+          note('Nothing was restored.'),
+          buttons(
+            restoreButton('Close', Message.ClickedDismissRestore(), h),
+            restoreButton('Pick another file', Message.ClickedRestore(), h, true),
+          ),
+        ],
+      )
+  }
+}
+
 export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Child> => {
   const draft = model.settingsDraft
   return [
@@ -465,6 +587,7 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
             ),
           ],
         ),
+        restorePanel(model.restore, h),
       ],
       h,
     ),

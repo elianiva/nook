@@ -32,6 +32,7 @@ import {
   CardNotFound,
   CollectionExport,
   DeckId,
+  EXPORT_VERSION,
   LEECH_LAPSE_THRESHOLD,
   LEECH_LAPSE_WARNING_INTERVAL,
   ReviewsRpc,
@@ -41,6 +42,7 @@ import type {
   ExportCard,
   ExportDeck,
   ExportNote,
+  ExportNoteType,
   ExportReview,
   ReviewAccepted,
   ReviewCard,
@@ -712,14 +714,33 @@ export class Reviews extends Context.Service<
        */
       const exportCollection = (): Effect.Effect<CollectionExport, StorageUnavailable> =>
         Effect.gen(function* () {
-          const deckRows = yield* sql`SELECT id, name, description FROM decks ORDER BY name`
+          const deckRows = yield* sql`SELECT id, name, description, new_per_day AS "newPerDay",
+            reviews_per_day AS "reviewsPerDay", lapse_minutes AS "lapseMinutes"
+            FROM decks ORDER BY name`
           const decks = yield* decodeRows(
             Schema.Struct({
               id: Schema.String,
               name: Schema.String,
               description: Schema.String,
+              newPerDay: Schema.NullOr(Schema.Number),
+              reviewsPerDay: Schema.NullOr(Schema.Number),
+              lapseMinutes: Schema.NullOr(Schema.Number),
             }),
             deckRows,
+          )
+          const noteTypeRows = yield* sql`SELECT id, name, kind, sort_field_ord AS "sortFieldOrd",
+            css, fields, templates FROM note_types ORDER BY rowid`
+          const rawNoteTypes = yield* decodeRows(
+            Schema.Struct({
+              id: Schema.String,
+              name: Schema.String,
+              kind: Schema.Literals(['normal', 'cloze']),
+              sortFieldOrd: Schema.Number,
+              css: Schema.String,
+              fields: Schema.String,
+              templates: Schema.String,
+            }),
+            noteTypeRows,
           )
           const noteRows = yield* sql`SELECT id, note_type_id AS "noteTypeId", guid,
             fields, tags, modified FROM notes ORDER BY rowid`
@@ -736,7 +757,8 @@ export class Reviews extends Context.Service<
           )
           const cardRows = yield* sql`SELECT id, deck_id AS "deckId", note_id AS "noteId",
               template_ord AS "templateOrd", suspended, state, stability, difficulty,
-              due_at AS "dueAt", COALESCE(reps, 0) AS reps, COALESCE(lapses, 0) AS lapses,
+              due_at AS "dueAt", due_in_days AS "dueInDays", introduced_day AS "introducedDay",
+              COALESCE(reps, 0) AS reps, COALESCE(lapses, 0) AS lapses,
               last_reviewed_at AS "lastReviewedAt", COALESCE(review_lapses, 0) AS "reviewLapses"
               FROM cards ORDER BY rowid`
           const rawCards = yield* decodeRows(
@@ -750,6 +772,8 @@ export class Reviews extends Context.Service<
               stability: Schema.Number,
               difficulty: Schema.Number,
               dueAt: Schema.NullOr(Schema.String),
+              dueInDays: Schema.Number,
+              introducedDay: Schema.NullOr(Schema.String),
               reps: Schema.Number,
               lapses: Schema.Number,
               reviewLapses: Schema.Number,
@@ -758,18 +782,40 @@ export class Reviews extends Context.Service<
             cardRows,
           )
           const reviewRows =
-            yield* sql`SELECT id, card_id AS "cardId", grade, reviewed_at AS "reviewedAt"
-              FROM reviews ORDER BY reviewed_at ASC`
+            yield* sql`SELECT id, card_id AS "cardId", grade, reviewed_at AS "reviewedAt",
+              state_after AS "stateAfter", stability_after AS "stabilityAfter",
+              difficulty_after AS "difficultyAfter", due_in_days_after AS "dueInDaysAfter",
+              due_at_after AS "dueAtAfter", leech_suspended AS "leechSuspended"
+              FROM reviews ORDER BY reviewed_at ASC, rowid ASC`
           const reviews = yield* decodeRows(
             Schema.Struct({
               id: Schema.String,
               cardId: Schema.String,
               grade: Schema.Literals(['Again', 'Hard', 'Good', 'Easy']),
               reviewedAt: Schema.String,
+              stateAfter: Schema.NullOr(CardStateRow),
+              stabilityAfter: Schema.NullOr(Schema.Number),
+              difficultyAfter: Schema.NullOr(Schema.Number),
+              dueInDaysAfter: Schema.NullOr(Schema.Number),
+              dueAtAfter: Schema.NullOr(Schema.String),
+              leechSuspended: Schema.Number,
             }),
             reviewRows,
           )
 
+          const parseArray = (text: string): ReadonlyArray<unknown> =>
+            Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(
+              text,
+            ).pipe(Option.getOrElse((): ReadonlyArray<unknown> => []))
+          const noteTypes: Array<ExportNoteType> = rawNoteTypes.map((noteType) => ({
+            id: noteType.id,
+            name: noteType.name,
+            kind: noteType.kind,
+            sortFieldOrd: noteType.sortFieldOrd,
+            css: noteType.css,
+            fields: [...parseArray(noteType.fields)],
+            templates: [...parseArray(noteType.templates)],
+          }))
           const notes: Array<ExportNote> = []
           for (const note of rawNotes) {
             const fields = yield* Schema.decodeUnknownEffect(
@@ -797,20 +843,23 @@ export class Reviews extends Context.Service<
             stability: card.stability,
             difficulty: card.difficulty,
             dueAt: card.dueAt,
+            dueInDays: card.dueInDays,
+            introducedDay: card.introducedDay,
             reps: card.reps,
             lapses: card.lapses,
             reviewLapses: card.reviewLapses,
             lastReviewedAt: card.lastReviewedAt,
           }))
-          const decksOut: Array<ExportDeck> = decks.map((deck) => ({
-            ...deck,
-          }))
+          const decksOut: Array<ExportDeck> = decks.map((deck) => ({ ...deck }))
           const reviewsOut: Array<ExportReview> = reviews.map((review) => ({
             ...review,
+            leechSuspended: review.leechSuspended === 1,
           }))
           return {
+            version: EXPORT_VERSION,
             exportedAt: new Date().toISOString(),
             decks: decksOut,
+            noteTypes,
             notes,
             cards,
             reviews: reviewsOut,

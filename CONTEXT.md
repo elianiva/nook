@@ -51,7 +51,13 @@ _Avoid_: assets, attachments, blobs
 
 **Import**:
 Bringing a `.apkg` archive into nook.
-_Avoid_: upload, sync, restore
+_Avoid_: upload, sync
+
+**Restore**:
+Merging a nook JSON export back into the collection. It adds what is missing and
+keeps what is there; a Card takes the export's Schedule only if the export
+reviewed it more recently.
+_Avoid_: import (that is `.apkg`), replace, overwrite
 
 **`.apkg` archive**:
 The zip file Anki exports. It holds an Anki collection database and its Media.

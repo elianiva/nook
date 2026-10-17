@@ -15,3 +15,10 @@ enough.
 There are no transactions in this codebase, and a reader looking for one will
 not find it. Related: [ADR 0002](./0002-the-server-orders-reviews.md), which
 explains why the write side is ordered rather than concurrent.
+
+Restore from a JSON export is the largest write in the codebase, so it can
+exceed what one batch should carry. It splits into ordered batches (parents
+before children) and makes every statement idempotent: `INSERT OR IGNORE` keyed
+by id, plus a schedule update guarded by the Card's last review time. Retrying a
+failed restore therefore completes it, which is the same commit-point-free
+repair the Import relies on.

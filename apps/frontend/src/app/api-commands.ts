@@ -13,7 +13,7 @@
  */
 
 import { Effect, Option, Schema as S } from 'effect'
-import { Command } from 'foldkit'
+import { Command, File } from 'foldkit'
 import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard } from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { loadQueuedGrades, removeQueuedGrade, saveQueuedGrade } from '@/lib/review-grade-store'
@@ -509,6 +509,62 @@ export const RemoveDeck = Command.define('RemoveDeck', {
           deckManageFailed(
             deckId,
             'Could not remove the deck. Check the connection and try again.',
+          ),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+/** Picks a JSON export and reads its text. Parsing and validation are the server's. */
+export const PickRestoreFile = Command.define('PickRestoreFile', {
+  messages: [
+    MessageConstructors.GotRestoreFile,
+    MessageConstructors.CancelledRestoreSelect,
+    MessageConstructors.RestoreFailed,
+  ],
+  execute: Effect.gen(function* () {
+    const picked = yield* File.select(['.json', 'application/json'])
+    if (Option.isNone(picked)) return MessageConstructors.CancelledRestoreSelect()
+    const read = yield* File.readAsText(picked.value).pipe(Effect.result)
+    if (read._tag === 'Failure') {
+      return MessageConstructors.RestoreFailed({
+        error: 'Could not read that file. Pick it again.',
+        issues: [],
+      })
+    }
+    return MessageConstructors.GotRestoreFile({
+      filename: File.name(picked.value),
+      json: read.success,
+    })
+  }),
+})
+
+/** Sends the picked file to the server: a dry run for the preview, the real merge on confirm. */
+export const RestoreCollection = Command.define('RestoreCollection', {
+  args: { json: S.String, dryRun: S.Boolean },
+  messages: [
+    MessageConstructors.PreviewedRestore,
+    MessageConstructors.RestoredCollection,
+    MessageConstructors.RestoreFailed,
+  ],
+  execute: ({ json, dryRun }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.collectionRestore({ json, dryRun })),
+      Effect.map((result) =>
+        dryRun
+          ? MessageConstructors.PreviewedRestore({ result })
+          : MessageConstructors.RestoredCollection({ result }),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(
+          MessageConstructors.RestoreFailed(
+            'message' in error && error._tag === 'RestoreRejected'
+              ? { error: error.message, issues: error.issues }
+              : {
+                  error: 'Could not restore the collection. Check the connection and try again.',
+                  issues: [],
+                },
           ),
         ),
       ),
