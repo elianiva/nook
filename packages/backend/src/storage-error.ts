@@ -14,13 +14,25 @@ const toMessage = (error: StorageError): string =>
 const isStorageError = (error: unknown): error is StorageError =>
   isSqlError(error) || Schema.isSchemaError(error)
 
+/**
+ * The loggable shape of `error`: its tag and, for SQL errors, its message.
+ * A row-decode message quotes the offending row, which is Card content, so
+ * only its tag is logged. Bound parameters and causes are never logged.
+ */
+const toLogFields = (error: StorageError): Record<string, string> =>
+  error._tag === 'SqlError'
+    ? { errorTag: error._tag, errorMessage: error.message }
+    : { errorTag: error._tag }
+
 /** Log `error` and fail with a 503 `StorageUnavailable` carrying a sentence for the Learner. */
 const toUnavailable = (
   operation: string,
   error: StorageError,
 ): Effect.Effect<never, StorageUnavailable> =>
   Effect.andThen(
-    Effect.logError(`${operation} failed`, error),
+    Effect.logError('storage operation failed').pipe(
+      Effect.annotateLogs({ operation, ...toLogFields(error) }),
+    ),
     Effect.fail(
       new StorageUnavailable({
         message: `Could not ${operation}. ${toMessage(error)}`,

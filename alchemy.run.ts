@@ -49,6 +49,17 @@ class Website extends Cloudflare.Website.Foldkit<Website>()('nook', {
     MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
   },
   domain,
+  // Workers Logs: every console line and Effect log is kept and searchable in
+  // the dashboard, along with one invocation log per request.
+  observability: {
+    enabled: true,
+    logs: {
+      enabled: true,
+      invocationLogs: true,
+      headSamplingRate: 1,
+      persist: true,
+    },
+  },
   access: {
     name: 'nook',
     // One allow rule, one email. Alchemy creates this Access application with

@@ -65,7 +65,11 @@ type Env = {
 
 const healthRoute = HttpRouter.add('GET', HEALTH_PATH, () => HttpServerResponse.json({ ok: true }))
 
-const apiRoutes = RpcServer.layerHttp({ group: Api, path: RPC_PATH, protocol: 'http' }).pipe(
+const apiRoutes = RpcServer.layerHttp({
+  group: Api,
+  path: RPC_PATH,
+  protocol: 'http',
+}).pipe(
   Layer.provide([DecksHandlers, HomeHandlers, ImportsHandlers, ReviewsHandlers, SettingsHandlers]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
@@ -125,10 +129,29 @@ const mediaResponse = async (env: Env, request: Request, url: URL): Promise<Resp
 const isMedia = (pathname: string): boolean =>
   pathname === MEDIA_PATH || pathname.startsWith(`${MEDIA_PATH}/`)
 
+/** One JSON line for Workers Logs. Carries the method and path only: never
+ *  headers, query strings, bodies, or the failure's message, which may quote content. */
+const logFailure = (request: Request, url: URL, error: unknown): void => {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      message: 'unhandled request failure',
+      method: request.method,
+      path: url.pathname,
+      errorName: error instanceof Error ? error.name : typeof error,
+    }),
+  )
+}
+
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
-    if (isMedia(url.pathname)) return mediaResponse(env, request, url)
-    return handlerFor(env, request)(request)
+    try {
+      if (isMedia(url.pathname)) return await mediaResponse(env, request, url)
+      return await handlerFor(env, request)(request)
+    } catch (error) {
+      logFailure(request, url, error)
+      return new Response('Internal Server Error', { status: 500 })
+    }
   },
 }

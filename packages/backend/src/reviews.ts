@@ -372,7 +372,15 @@ export class Reviews extends Context.Service<
       ): Effect.Effect<ReviewAccepted, CardNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           const card = yield* readCard(submission.cardId)
-          if (card === undefined) return yield* new CardNotFound({ cardId: submission.cardId })
+          if (card === undefined) {
+            yield* Effect.logWarning('grade for unknown card').pipe(
+              Effect.annotateLogs({
+                cardId: submission.cardId,
+                reviewId: submission.id,
+              }),
+            )
+            return yield* new CardNotFound({ cardId: submission.cardId })
+          }
 
           const replayRows = yield* sql`SELECT leech_suspended AS "leechSuspended"
             FROM reviews WHERE id = ${submission.id}`
@@ -501,8 +509,13 @@ export class Reviews extends Context.Service<
             requeueInSession,
             leechSuspended,
           } satisfies ReviewAccepted
-        }).pipe(Effect.withSpan('Reviews.grade'), (self) =>
-          withStorageErrorPassThrough(self, 'save the review'),
+        }).pipe(
+          Effect.annotateLogs({
+            cardId: submission.cardId,
+            reviewId: submission.id,
+          }),
+          Effect.withSpan('Reviews.grade'),
+          (self) => withStorageErrorPassThrough(self, 'save the review'),
         )
 
       /**
@@ -762,8 +775,12 @@ export class Reviews extends Context.Service<
             reviewLapses: card.reviewLapses,
             lastReviewedAt: card.lastReviewedAt,
           }))
-          const decksOut: Array<ExportDeck> = decks.map((deck) => ({ ...deck }))
-          const reviewsOut: Array<ExportReview> = reviews.map((review) => ({ ...review }))
+          const decksOut: Array<ExportDeck> = decks.map((deck) => ({
+            ...deck,
+          }))
+          const reviewsOut: Array<ExportReview> = reviews.map((review) => ({
+            ...review,
+          }))
           return {
             exportedAt: new Date().toISOString(),
             decks: decksOut,
@@ -785,7 +802,11 @@ export const ReviewsHandlers = ReviewsRpc.toLayer(
     const reviews = yield* Reviews
     return ReviewsRpc.of({
       reviewsQueue: ({ deckId, timezone, bypassDueLimit }) =>
-        reviews.queue({ deckId: Option.fromUndefinedOr(deckId), timezone, bypassDueLimit }),
+        reviews.queue({
+          deckId: Option.fromUndefinedOr(deckId),
+          timezone,
+          bypassDueLimit,
+        }),
       reviewsGrade: (payload) => reviews.grade(payload),
       reviewsUndo: ({ cardId }) => reviews.undo({ cardId }),
       reviewsHistory: ({ cardId }) => reviews.history({ cardId }),
