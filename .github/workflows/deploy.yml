@@ -1,7 +1,10 @@
 name: Deploy
 
 on:
-  push:
+  # Deploy only after CI succeeds for the pushed commit.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [master]
   workflow_dispatch:
 
@@ -11,11 +14,19 @@ concurrency:
 
 jobs:
   deploy:
+    # workflow_run fires for every CI result and for PR runs; manual runs skip the gate.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Deploy the commit CI validated, not whatever master is now.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
