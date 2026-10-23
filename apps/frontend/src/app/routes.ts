@@ -6,6 +6,7 @@
  * - `/` — Home: overview plus the deck list
  * - `/decks` — Decks: the full deck list as its own page
  * - `/decks/:deckId` — one Deck: summary plus scheduling-state table
+ * - `/stories` — Stories: short Japanese passages around one word
  * - `/settings` — Settings: FSRS, deck defaults, behaviour
  * - anything else — NotFound
  */
@@ -21,6 +22,7 @@ export const AppRoute = defineRouteUnion({
   DeckDetail: { deckId: DeckId },
   Review: {},
   ReviewDeck: { deckId: DeckId },
+  Stories: {},
   Settings: {},
   NotFound: { path: S.String },
 })
@@ -44,6 +46,8 @@ const reviewDeckRouter = pipe(
   Route.mapTo(AppRoute.ReviewDeck),
 )
 
+const storiesRouter = pipe(Route.literal('stories'), Route.mapTo(AppRoute.Stories))
+
 const settingsRouter = pipe(Route.literal('settings'), Route.mapTo(AppRoute.Settings))
 
 const routeParser = Route.oneOf(
@@ -51,6 +55,7 @@ const routeParser = Route.oneOf(
   deckDetailRouter,
   decksRouter,
   reviewRouter,
+  storiesRouter,
   settingsRouter,
   homeRouter,
 )
@@ -65,6 +70,7 @@ export const routeToUrl = (route: AppRoute): string =>
     DeckDetail: ({ deckId }) => deckDetailRouter.build({ deckId }),
     Review: () => reviewRouter.build({}),
     ReviewDeck: ({ deckId }) => reviewDeckRouter.build({ deckId }),
+    Stories: () => storiesRouter.build({}),
     Settings: () => settingsRouter.build({}),
     NotFound: ({ path }) => path,
   })
@@ -76,11 +82,12 @@ export const routeTitle = (route: AppRoute): string =>
     DeckDetail: () => 'Deck',
     Review: () => 'Review',
     ReviewDeck: () => 'Review',
+    Stories: () => 'Stories',
     Settings: () => 'Settings',
     NotFound: () => 'Not found',
   })
 
-/** Tabs that appear in the bottom navigation. Home, Decks, Settings. */
+/** Tabs that appear in the bottom navigation. Stories is an immersive Home sub-route. */
 export const NAV_TABS = ['home', 'decks', 'settings'] as const
 export type NavTab = (typeof NAV_TABS)[number]
 
@@ -91,6 +98,7 @@ export const routeToTab = (route: AppRoute): NavTab =>
     DeckDetail: () => 'decks' as NavTab,
     Review: () => 'decks' as NavTab,
     ReviewDeck: () => 'decks' as NavTab,
+    Stories: () => 'home' as NavTab,
     Settings: () => 'settings' as NavTab,
     NotFound: () => 'home' as NavTab,
   })

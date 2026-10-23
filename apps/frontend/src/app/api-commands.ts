@@ -14,7 +14,16 @@
 
 import { Effect, Option, Schema as S } from 'effect'
 import { Command, File } from 'foldkit'
-import { AppSettings, CardId, DeckId, DeckLimits, DeckRename, Grade, ReviewCard } from '@nook/api'
+import {
+  AppSettings,
+  CardId,
+  DeckId,
+  DeckLimits,
+  DeckRename,
+  Grade,
+  ReviewCard,
+  StoryCard,
+} from '@nook/api'
 import { loadReviewQueue, saveReviewQueue } from '@/lib/review-queue-store'
 import { loadQueuedGrades, removeQueuedGrade, saveQueuedGrade } from '@/lib/review-grade-store'
 import { NookRpc } from '@/lib/rpc'
@@ -578,6 +587,62 @@ export const RestoreCollection = Command.define('RestoreCollection', {
                   issues: [],
                 },
           ),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+export const SetStorySaved = Command.define('SetStorySaved', {
+  args: { story: StoryCard, saved: S.Boolean },
+  messages: [MessageConstructors.SettledStorySave],
+  execute: ({ story, saved }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) =>
+        saved
+          ? rpc.storiesSave(story).pipe(Effect.as(true))
+          : rpc
+              .storiesUnsave({ storyId: story.storyId })
+              .pipe(Effect.map(({ removed }) => !removed)),
+      ),
+      Effect.map((now) =>
+        MessageConstructors.SettledStorySave({ storyId: story.storyId, saved: now }),
+      ),
+      // The request failed, so the server still holds what it held before.
+      Effect.catch(() =>
+        Effect.succeed(
+          MessageConstructors.SettledStorySave({ storyId: story.storyId, saved: !saved }),
+        ),
+      ),
+      Effect.provide(NookRpc.layer),
+    ),
+})
+
+export const GenerateStories = Command.define('GenerateStories', {
+  args: { word: S.String },
+  messages: [MessageConstructors.GotStories, MessageConstructors.FailedStoryGeneration],
+  execute: ({ word }) =>
+    NookRpc.pipe(
+      Effect.flatMap((rpc) => rpc.storiesGenerate({ word })),
+      Effect.map((batch) =>
+        MessageConstructors.GotStories({
+          stories: batch.stories.map((story) => ({
+            ...story,
+            id: `gen-${crypto.randomUUID()}`,
+            word,
+            reading: batch.reading,
+            meaning: batch.meaning,
+          })),
+        }),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(
+          MessageConstructors.FailedStoryGeneration({
+            error:
+              error._tag === 'StoryGenerationFailed'
+                ? error.message
+                : 'Could not reach nook. Check the connection and retry.',
+          }),
         ),
       ),
       Effect.provide(NookRpc.layer),

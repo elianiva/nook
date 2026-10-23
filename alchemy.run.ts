@@ -2,6 +2,7 @@ import * as Alchemy from 'alchemy'
 import * as Namespace from 'alchemy/Namespace'
 import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Effect from 'effect/Effect'
+import * as Redacted from 'effect/Redacted'
 
 /**
  * The one email Cloudflare Access admits.
@@ -32,6 +33,13 @@ const accessTeamDomain = process.env['NOOK_ACCESS_TEAM_DOMAIN'] ?? ''
  * domain.
  */
 const domain = process.env['NOOK_DOMAIN'] ?? 'nook.elianiva.com'
+
+/**
+ * The one OpenRouter key the Worker generates stories with. Optional: without
+ * it the stories feed still works on its sample passages and generation says it
+ * is not set up. It is bound as a secret, so it never shows in the dashboard.
+ */
+const storyAiKey = process.env['NOOK_STORY_AI_KEY'] ?? ''
 
 /**
  * The whole site: a Foldkit client build served as static assets, with a
@@ -75,6 +83,7 @@ class Website extends Cloudflare.Website.Foldkit<Website>()(
         ACCESS_TEAM_DOMAIN: accessTeamDomain,
         ACCESS_AUD: access.aud,
         ALLOWED_EMAIL: allowedEmail,
+        ...(storyAiKey === '' ? {} : { STORY_AI_KEY: Redacted.make(storyAiKey) }),
       },
       domain,
       // Workers Logs: every console line and Effect log is kept and searchable in

@@ -28,6 +28,7 @@ import { noticeHandlers } from './update/notice'
 import { restoreHandlers } from './update/restore'
 import { reviewHandlers } from './update/review'
 import { settingsHandlers } from './update/settings'
+import { storyFeedHandlers } from './update/story-feed'
 
 export const init = (url: Url): Update.Return<Model, Message> => {
   const loads = routeLoads(seedModel(url))
@@ -53,6 +54,7 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
     ...cardActionsHandlers(model),
     ...restoreHandlers(model),
     ...settingsHandlers(model),
+    ...storyFeedHandlers(model),
     ...importHandlers(model),
     ...deckManageHandlers(model),
   })

@@ -68,6 +68,7 @@ export const routeLoads = (model: Model): Update.Return<Model, Message> =>
     DeckDetail: ({ deckId }) => deckDetail.revalidateOrLoad(model, { deckId }),
     Review: () => reviewRouteLoads(model, Option.none()),
     ReviewDeck: ({ deckId }) => reviewRouteLoads(model, Option.some(deckId)),
+    Stories: () => ({ model }),
     Settings: () => ({
       model: {
         ...model,
@@ -91,6 +92,7 @@ export const revalidateVisible = (model: Model): Update.Return<Model, Message> =
     DeckDetail: ({ deckId }) => deckDetail.revalidate(model, { deckId }),
     Review: () => ({ model }),
     ReviewDeck: () => ({ model }),
+    Stories: () => ({ model }),
     Settings: () => ({ model }),
     NotFound: () => ({ model }),
   })

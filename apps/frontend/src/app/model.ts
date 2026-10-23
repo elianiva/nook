@@ -39,6 +39,7 @@ import { ImportPreview, ImportProgress, ImportReadStage } from '@/lib/import-wor
 import { readTheme } from '@/lib/theme'
 import { deckDetailQuery, decksQuery, overviewQuery } from './queries'
 import { AppRoute, urlToAppRoute } from './routes'
+import { sampleStories, StorySchema } from './stories/data'
 import * as Tooltip from '@/components/ui/tooltip'
 
 /** Hint slot ids for the settings page tooltips. */
@@ -441,6 +442,18 @@ export const RestoreState = S.Struct({
 })
 export type RestoreState = typeof RestoreState.Type
 
+export const StoryFeedState = S.Struct({
+  /** The passages in the feed, in order. Generated batches are appended. */
+  stories: S.Array(StorySchema),
+  /** The Japanese word the next batch teaches. */
+  word: S.String,
+  generating: S.Boolean,
+  generationError: S.Option(S.String),
+  /** Stories the Learner saved as flashcards, as far as the server has confirmed. */
+  savedStoryIds: S.Array(S.String),
+})
+export type StoryFeedState = typeof StoryFeedState.Type
+
 export const idleRestore: RestoreState = {
   phase: 'idle',
   filename: '',
@@ -471,6 +484,8 @@ export const Model = S.Struct({
   restore: RestoreState,
   /** The deck page's Manage section: rename draft and destructive confirms. */
   deckManage: DeckManage,
+  /** The Japanese story feed's selected word and session-only saves. */
+  storyFeed: StoryFeedState,
   /** Server cache values held while an optimistic deck mutation is in flight. */
   deckMutationRollback: S.Option(DeckCacheSnapshot),
   /** Grades in IndexedDB's durable outbox until the server confirms them. */
@@ -519,6 +534,13 @@ export const seedModel = (url: Url.Url): Model => ({
   importState: idleImport,
   restore: idleRestore,
   deckManage: idleDeckManage,
+  storyFeed: {
+    stories: sampleStories,
+    word: '',
+    generating: false,
+    generationError: Option.none(),
+    savedStoryIds: [],
+  },
   deckMutationRollback: Option.none(),
   queuedGrades: [],
   queuedGradesRestored: false,
@@ -563,6 +585,17 @@ export const Message = defineMessageUnion({
   ClickedRetryOverview: {},
   ClickedRetryDecks: {},
   ClickedRetryDeckDetail: { deckId: DeckId },
+  /** The Learner typed the word on the story feed's generate card. */
+  EditedStoryWord: { value: S.String },
+  /** The Learner asked for a batch of passages for the word. */
+  SubmittedStoryGeneration: {},
+  /** The provider returned passages; they join the end of the feed. */
+  GotStories: { stories: S.Array(StorySchema) },
+  FailedStoryGeneration: { error: S.String },
+  /** The Learner saved or removed a story. The feed shows the change at once. */
+  ToggledStorySave: { storyId: S.String },
+  /** The server answered a story save or removal; `saved` is what it now holds. */
+  SettledStorySave: { storyId: S.String, saved: S.Boolean },
   /** Hover or focus warmed a deck link: load its detail while it is still missing. */
   PrefetchedDeckDetail: { deckId: DeckId },
   /** A fetch or save failed. The notice carries the retry. */

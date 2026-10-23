@@ -13,7 +13,7 @@ import { url } from './helpers'
 const deckDetail = (id: string) => AppRoute.DeckDetail({ deckId: DeckId.make(id) })
 
 describe('transitionDirection', () => {
-  it('slides forward across home, decks, settings', () => {
+  it('slides forward across the three bottom-navigation tabs', () => {
     expect(transitionDirection(AppRoute.Home({}), AppRoute.Decks({}))).toBe('forward')
     expect(transitionDirection(AppRoute.Decks({}), AppRoute.Settings({}))).toBe('forward')
     expect(transitionDirection(AppRoute.Home({}), AppRoute.Settings({}))).toBe('forward')
@@ -27,6 +27,8 @@ describe('transitionDirection', () => {
 
   it('stays plain inside one tab', () => {
     expect(transitionDirection(AppRoute.Home({}), AppRoute.Home({}))).toBeUndefined()
+    expect(transitionDirection(AppRoute.Home({}), AppRoute.Stories({}))).toBeUndefined()
+    expect(transitionDirection(AppRoute.Stories({}), AppRoute.Home({}))).toBeUndefined()
     // DeckDetail and Review map to the decks tab, like Decks itself.
     expect(transitionDirection(AppRoute.Decks({}), deckDetail('deck-a'))).toBeUndefined()
     expect(

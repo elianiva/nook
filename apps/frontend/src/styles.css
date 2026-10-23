@@ -357,3 +357,48 @@ html:active-view-transition-type(slide-backward) {
     scroll-behavior: auto !important;
   }
 }
+
+/* Story feed page dots follow the horizontal scroll position of their card. */
+.story-page-dot-0,
+.story-page-dot-1,
+.story-page-dot-2 {
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-timeline: --pages;
+}
+.story-page-dot-0 {
+  animation-name: story-dot-first;
+}
+.story-page-dot-1 {
+  animation-name: story-dot-middle;
+}
+.story-page-dot-2 {
+  animation-name: story-dot-last;
+}
+@keyframes story-dot-first {
+  0% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.25;
+  }
+}
+@keyframes story-dot-middle {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes story-dot-last {
+  0%,
+  50% {
+    opacity: 0.25;
+  }
+  100% {
+    opacity: 1;
+  }
+}

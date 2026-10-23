@@ -39,6 +39,7 @@ const backHref = (model: Model): string =>
     DeckDetail: () => routeToUrl({ _tag: 'Decks' }),
     ReviewDeck: ({ deckId }) => routeToUrl({ _tag: 'DeckDetail', deckId }),
     Review: () => routeToUrl({ _tag: 'Decks' }),
+    Stories: () => routeToUrl({ _tag: 'Home' }),
     Home: () => routeToUrl({ _tag: 'Home' }),
     Decks: () => routeToUrl({ _tag: 'Home' }),
     Settings: () => routeToUrl({ _tag: 'Home' }),
@@ -72,6 +73,7 @@ const topChip = (model: Model): string | undefined =>
       }),
     Review: () => overviewDue(model),
     ReviewDeck: ({ deckId }) => topChip({ ...model, route: AppRoute.DeckDetail({ deckId }) }),
+    Stories: () => undefined,
     Settings: () =>
       Option.match(AsyncData.getData(overviewQuery.read(model.overview)), {
         onNone: () => undefined,
@@ -98,6 +100,7 @@ const topTitle = (model: Model): string => {
         onNone: () => fallback,
         onSome: (detail) => detail.summary.name,
       }),
+    Stories: () => fallback,
     Settings: () => fallback,
     NotFound: () => fallback,
   })
@@ -196,6 +199,7 @@ const topSub = (model: Model): string =>
         onNone: () => 'Grade honestly — FSRS does the rest',
         onSome: (detail) => detail.summary.name,
       }),
+    Stories: () => 'Short Japanese reads, one word at a time',
     Settings: () => 'FSRS, deck defaults, behaviour',
     NotFound: () => 'Nothing lives here',
   })
@@ -207,13 +211,13 @@ const tabLink = (model: Model, tab: NavTab, h: HtmlBuilder<Message>): Html => {
       h.Href(routeToUrl(tabToRoute(tab))),
       h.Class(
         cn(
-          'relative z-10 flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-[11px] font-extrabold tracking-[1.2px] uppercase transition-colors duration-200',
+          'relative z-10 flex flex-1 items-center justify-center gap-1 rounded-full py-2.5 text-[10px] font-extrabold tracking-[0.8px] uppercase transition-colors duration-200',
           active ? 'text-[var(--theme-strong)]' : 'text-[var(--theme-nav-idle)]',
         ),
       ),
       ...(active ? [h.AriaCurrent('page')] : []),
     ],
-    [icon(h, tabIcon[tab], 'size-5'), tabLabel[tab].toUpperCase()],
+    [icon(h, tabIcon[tab], 'size-4'), tabLabel[tab].toUpperCase()],
   )
 }
 
@@ -254,7 +258,7 @@ const bottomNav = (model: Model, h: HtmlBuilder<Message>): Html => {
                 'absolute top-1.5 bottom-1.5 left-1.5 rounded-full bg-white transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none',
               ),
               h.Style({
-                width: 'calc((100% - 12px) / 3)',
+                width: `calc((100% - 12px) / ${NAV_TABS.length})`,
                 transform: `translateX(${activeIndex * 100}%)`,
               }),
               h.AriaHidden(true),
@@ -319,8 +323,8 @@ const updateBanner = (model: Model, h: HtmlBuilder<Message>): Child => {
 }
 
 /**
- * Review owns the whole screen: the tab bar and the page padding step aside so
- * the grade bar sits under the thumb, and the Card fills the space between.
+ * Review and Stories own the whole screen: their actions and exit control
+ * replace the shared header and tab bar until the Learner leaves the mode.
  */
 const isFocused = (model: Model): boolean =>
   model.route._tag === 'Review' || model.route._tag === 'ReviewDeck'
@@ -332,15 +336,13 @@ export const shell = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const focused = isFocused(model)
+  const immersive = model.route._tag === 'Stories'
   return h.div(
-    // A fixed viewport height, so the bars stay put and only the content
-    // between them scrolls. On a phone that keeps the actions under the thumb
-    // instead of below a long page. The bottom tab bar floats over the
-    // content, so the main column carries extra bottom padding and the last
-    // card can scroll clear of the pill.
+    // The fixed viewport keeps shared chrome still while ordinary pages
+    // scroll. Stories replaces that chrome with a full-screen snapping feed.
     [h.Class('relative flex h-dvh flex-col bg-background text-foreground')],
     [
-      topChrome(model, h),
+      ...(immersive ? [] : [topChrome(model, h)]),
       h.main(
         [
           // The target of the focus move after a route change (see
@@ -357,9 +359,11 @@ export const shell = (
               // with `overflow-hidden` slice their text mid-line instead of
               // scrolling. (Review manages its own flex children, so it is
               // exempt.)
-              focused
-                ? 'gap-0 overflow-hidden'
-                : 'gap-4 overflow-y-auto px-3 pt-4 pb-28 [&>*]:shrink-0',
+              immersive
+                ? 'snap-y snap-mandatory gap-0 overflow-y-auto overscroll-contain [&>*]:shrink-0'
+                : focused
+                  ? 'gap-0 overflow-hidden'
+                  : 'gap-4 overflow-y-auto px-3 pt-4 pb-28 [&>*]:shrink-0',
             ),
           ),
           // The page-slide snapshot: during a tab switch the browser
@@ -372,13 +376,15 @@ export const shell = (
           // the page glides underneath.
           h.Style({ viewTransitionName: 'page-content' }),
         ],
-        focused
-          ? Option.isSome(model.notice)
-            ? [h.div([h.Class('px-3 pt-3')], [noticeBanner(model, h)]), ...content]
-            : [...content]
-          : [noticeBanner(model, h), updateBanner(model, h), ...content],
+        immersive
+          ? [...content]
+          : focused
+            ? Option.isSome(model.notice)
+              ? [h.div([h.Class('px-3 pt-3')], [noticeBanner(model, h)]), ...content]
+              : [...content]
+            : [noticeBanner(model, h), updateBanner(model, h), ...content],
       ),
-      ...(focused ? [] : [bottomNav(model, h)]),
+      ...(focused || immersive ? [] : [bottomNav(model, h)]),
     ],
   )
 }

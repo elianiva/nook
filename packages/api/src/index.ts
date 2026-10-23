@@ -851,8 +851,78 @@ export class RestoreRpc extends RpcGroup.make(
   }),
 ) {}
 
+/** A Japanese passage the Learner saved from the story feed, as a flashcard. */
+export const StoryCard = S.Struct({
+  /** Client-generated and stable, so a retried save lands on the same Note and Card. */
+  storyId: S.String,
+  word: S.String,
+  reading: S.String,
+  meaning: S.String,
+  passage: S.String,
+  translation: S.String,
+})
+export type StoryCard = typeof StoryCard.Type
+
+/** One generated passage, before the Learner saves it. */
+export const GeneratedStory = S.Struct({
+  title: S.String,
+  tag: S.String,
+  caption: S.String,
+  passage: S.String,
+  translation: S.String,
+})
+
+/** A batch of passages that teach one word. */
+export const StoryBatch = S.Struct({
+  reading: S.String,
+  meaning: S.String,
+  stories: S.Array(GeneratedStory),
+})
+export type StoryBatch = typeof StoryBatch.Type
+
+/** The server could not generate stories. The message is safe to show the Learner. */
+export class StoryGenerationFailed extends S.TaggedError<StoryGenerationFailed>()(
+  'StoryGenerationFailed',
+  { message: S.String },
+) {}
+
+export class StoriesRpc extends RpcGroup.make(
+  /** Generate a batch of short passages that use `word`. The server holds the provider key. */
+  Rpc.make('storiesGenerate', {
+    payload: { word: S.String },
+    success: StoryBatch,
+    error: StoryGenerationFailed,
+  }),
+  /**
+   * Save a story as a Card in the "Stories" deck, word on the front. The deck,
+   * its Note Type and its source row are created on the first save. A repeat of
+   * the same `storyId` changes nothing.
+   */
+  Rpc.make('storiesSave', {
+    payload: StoryCard,
+    success: S.Struct({ cardId: CardId }),
+    error: StorageUnavailable,
+  }),
+  /**
+   * Remove a saved story. A Card that has been reviewed is kept, because deleting
+   * it would erase its Review history; `removed` says which happened.
+   */
+  Rpc.make('storiesUnsave', {
+    payload: { storyId: S.String },
+    success: S.Struct({ removed: S.Boolean }),
+    error: StorageUnavailable,
+  }),
+) {}
+
 /** The whole contract: every procedure the browser calls and the Worker serves. */
-export class Api extends DecksRpc.merge(SettingsRpc, HomeRpc, ImportsRpc, ReviewsRpc, RestoreRpc) {}
+export class Api extends DecksRpc.merge(
+  SettingsRpc,
+  HomeRpc,
+  ImportsRpc,
+  ReviewsRpc,
+  RestoreRpc,
+  StoriesRpc,
+) {}
 
 /**
  * The settings the form starts from, before the server's own answer arrives.

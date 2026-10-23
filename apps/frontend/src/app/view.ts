@@ -14,6 +14,7 @@ import { AppRoute, routeTitle } from './routes'
 import { reviewView } from './review'
 import { settingsView } from './settings'
 import { shell } from './shell'
+import { storiesView } from './stories'
 
 const notFoundView = (model: Model, h: HtmlBuilder<Message>) =>
   shell(
@@ -41,6 +42,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => {
     DeckDetail: ({ deckId }) => shell(model, deckDetailView(model, deckId, h), h),
     Review: () => shell(model, reviewView(model, h), h),
     ReviewDeck: () => shell(model, reviewView(model, h), h),
+    Stories: () => shell(model, storiesView(model, h), h),
     Settings: () => shell(model, settingsView(model, h), h),
     NotFound: () => notFoundView(model, h),
   })

@@ -11,7 +11,7 @@
 import { AsyncData } from 'foldkit'
 import { Option } from 'effect'
 import type { Html, HtmlBuilder } from 'foldkit/html'
-import { ChevronRight, Flame, Inbox, Play } from 'lucide'
+import { BookOpen, ChevronRight, Flame, Inbox, Play } from 'lucide'
 import { Empty } from '@/components/ui/empty'
 import { Progress } from '@/components/ui/progress'
 import { button } from '@/components/ui/button'
@@ -159,6 +159,49 @@ const hero = (overview: Overview, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+const storyScrollLaunch = (h: HtmlBuilder<Message>): Html =>
+  h.a(
+    [
+      h.Href(routeToUrl({ _tag: 'Stories' })),
+      h.AriaLabel('Enter Japanese story scroll'),
+      h.Class(
+        'group flex items-center gap-3 rounded-[20px] border-0 bg-[var(--theme-block)] p-4 transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--theme-strong)]',
+      ),
+    ],
+    [
+      h.div(
+        [h.Class('flex size-12 shrink-0 items-center justify-center text-[var(--theme-strong)]')],
+        [icon(h, BookOpen, 'size-5')],
+      ),
+      h.div(
+        [h.Class('flex min-w-0 flex-1 flex-col gap-0.5')],
+        [
+          h.p(
+            [
+              h.Class(
+                'text-[9px] font-extrabold tracking-[1.5px] text-[var(--theme-kicker)] uppercase',
+              ),
+            ],
+            ['IMMERSIVE MODE'],
+          ),
+          h.p([h.Class('text-sm font-bold text-[var(--theme-ink)]')], ['Story scroll']),
+          h.p(
+            [h.Class('text-[11px] leading-snug text-[var(--theme-ink)]/80')],
+            ['Full-screen scenes. Swipe to continue; Exit returns Home.'],
+          ),
+        ],
+      ),
+      h.div(
+        [
+          h.Class(
+            'flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[var(--theme-strong)]',
+          ),
+        ],
+        [icon(h, Play, 'size-3'), 'Enter'],
+      ),
+    ],
+  )
+
 const statCell = (label: string, value: string, sub: string, h: HtmlBuilder<Message>): Html =>
   h.div(
     [
@@ -275,10 +318,14 @@ export const homeView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<C
   const decksAsync = decksQuery.read(model.decks)
   return [
     ...AsyncData.matchData(overviewAsync, {
-      onEmpty: () => [loadingHero('Loading the overview…', h)],
-      onFailure: (error) => [errorPanel(error, Message.ClickedRetryOverview(), h)],
+      onEmpty: () => [loadingHero('Loading the overview…', h), storyScrollLaunch(h)],
+      onFailure: (error) => [
+        errorPanel(error, Message.ClickedRetryOverview(), h),
+        storyScrollLaunch(h),
+      ],
       onData: (overview) => [
         hero(overview, h),
+        storyScrollLaunch(h),
         stats(overview, h),
         activity(overview, h),
         streakNote(overview, h),

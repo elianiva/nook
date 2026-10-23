@@ -28,6 +28,9 @@ import {
   ReviewsHandlers,
   Settings,
   SettingsHandlers,
+  Stories,
+  StoriesHandlers,
+  StoryModel,
   SqlLive,
 } from '@nook/backend'
 import { checkAccess, type AccessEnv } from './lib/access'
@@ -40,10 +43,16 @@ type Assets = {
 }
 
 type Env = AccessEnv & {
+  /** Optional deploy secret: the one provider key stories are generated with. */
+  STORY_AI_KEY?: string
+  STORY_AI_MODEL?: string
   ASSETS: Assets
   DB: D1Database
   MEDIA: MediaBucket
 }
+
+/** A small, cheap model: ten short passages is a light request. */
+const DEFAULT_STORY_MODEL = 'openai/gpt-4.1-mini'
 
 const healthRoute = HttpRouter.add('GET', HEALTH_PATH, () => HttpServerResponse.json({ ok: true }))
 
@@ -59,6 +68,7 @@ const apiRoutes = RpcServer.layerHttp({
     RestoreHandlers,
     ReviewsHandlers,
     SettingsHandlers,
+    StoriesHandlers,
   ]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
@@ -66,6 +76,7 @@ const apiRoutes = RpcServer.layerHttp({
   Layer.provideMerge(Restore.layer),
   Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(Stories.layer),
   Layer.provideMerge(RpcSerialization.layerJson),
 )
 
@@ -77,8 +88,14 @@ const assetRoute = (env: Env) =>
     ),
   )
 
+const storyModel = (env: Env) =>
+  env.STORY_AI_KEY === undefined || env.STORY_AI_KEY === ''
+    ? StoryModel.unconfigured
+    : StoryModel.openRouter(env.STORY_AI_KEY, env.STORY_AI_MODEL ?? DEFAULT_STORY_MODEL)
+
 const appLayer = (env: Env) =>
   Layer.mergeAll(healthRoute, apiRoutes, assetRoute(env)).pipe(
+    Layer.provideMerge(storyModel(env)),
     Layer.provideMerge(SqlLive(env.DB)),
     Layer.provideMerge(HttpServer.layerServices),
     Layer.provideMerge(HttpRouter.layer),

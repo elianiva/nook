@@ -29,6 +29,8 @@ import { Imports, ImportsHandlers } from '../src/imports'
 import { Restore, RestoreHandlers } from '../src/restore'
 import { Reviews, ReviewsHandlers } from '../src/reviews'
 import { Settings, SettingsHandlers } from '../src/settings'
+import { Stories, StoriesHandlers } from '../src/stories'
+import { StoryModel } from '../src/story-model'
 import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
@@ -41,6 +43,7 @@ const ApiLive = RpcServer.layerHttp({ group: Api, path: '/api/rpc', protocol: 'h
     RestoreHandlers,
     ReviewsHandlers,
     SettingsHandlers,
+    StoriesHandlers,
   ]),
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
@@ -48,6 +51,8 @@ const ApiLive = RpcServer.layerHttp({ group: Api, path: '/api/rpc', protocol: 'h
   Layer.provideMerge(Restore.layer),
   Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(Stories.layer),
+  Layer.provideMerge(StoryModel.unconfigured),
   Layer.provideMerge(RpcSerialization.layerJson),
 )
 
