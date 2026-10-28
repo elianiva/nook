@@ -16,9 +16,12 @@
     "@nook/anki": "workspace:*",
     "@nook/api": "workspace:*",
     "@nook/backend": "workspace:*",
+    "better-auth": "1.7.14",
     "cn": "^0.2.4",
     "effect": "4.0.0",
     "foldkit": "0.166.0",
+    "kysely": "^0.29.7",
+    "kysely-d1": "^0.4.0",
     "lucide": "^1.50.0"
   },
   "devDependencies": {

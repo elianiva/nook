@@ -1,32 +1,40 @@
 import * as Alchemy from 'alchemy'
-import * as Namespace from 'alchemy/Namespace'
 import * as Cloudflare from 'alchemy/Cloudflare'
 import * as Effect from 'effect/Effect'
 import * as Redacted from 'effect/Redacted'
 
 /**
- * The one email Cloudflare Access admits.
- *
- * nook has no accounts and no sign-up, so this value is the whole identity
- * system. There is no default: an unset value would leave a personal
- * collection reachable by anyone who finds the domain.
+ * Whether this is `alchemy dev`. It has no Google to sign in with, so the
+ * Worker stands in the admin account instead, and only on a loopback host.
  */
-const allowedEmail = process.env['NOOK_ALLOWED_EMAIL']
+const isDev = process.argv.includes('dev')
 
-if (allowedEmail === undefined || allowedEmail === '') {
+/**
+ * The Google account that becomes the admin on its first sign-in, and adopts
+ * the collection that existed before nook had users. Everyone else signs up
+ * as `pending` and waits for approval. There is no default: nobody could
+ * approve anyone without it.
+ */
+const adminEmail = process.env['NOOK_ADMIN_EMAIL']
+
+if (adminEmail === undefined || adminEmail === '') {
   throw new Error(
-    'NOOK_ALLOWED_EMAIL must name the one email Cloudflare Access admits. ' +
-      'nook has no sign-up, so there is nothing else between a stranger and the collection.',
+    'NOOK_ADMIN_EMAIL must name the Google account that administers nook. ' +
+      'Without it nobody can approve a sign-up.',
   )
 }
 
 /**
- * The Zero Trust team domain (`<team>.cloudflareaccess.com`) whose JWKS signs
- * the Access token. The Worker verifies that token itself, as defence in depth
- * behind Access. A deploy without it answers 500 on `/api/*`; `alchemy dev`
- * stands in an identity instead of a token and does not need it.
+ * Sign-in credentials. `BETTER_AUTH_SECRET` signs session cookies (at least 32
+ * characters); the Google pair is an OAuth client whose redirect URI is
+ * `https://<domain>/api/auth/callback/google`. A deploy without them cannot sign
+ * anyone in, so it fails here instead of at the first sign-in.
  */
-const accessTeamDomain = process.env['NOOK_ACCESS_TEAM_DOMAIN'] ?? ''
+const authSecrets = ['BETTER_AUTH_SECRET', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'] as const
+const missingSecrets = authSecrets.filter((name) => (process.env[name] ?? '') === '')
+if (!isDev && missingSecrets.length > 0) {
+  throw new Error(`${missingSecrets.join(', ')} must be set to deploy nook.`)
+}
 
 /**
  * The hostname nook answers on. Override it to self-host under your own
@@ -58,59 +66,48 @@ const storyAiKey = process.env['NOOK_STORY_AI_KEY'] ?? ''
  */
 class Website extends Cloudflare.Website.Foldkit<Website>()(
   'nook',
-  Effect.gen(function* () {
-    // Declared here rather than inline on the Worker so its audience tag is an
-    // output the Worker can be told, and verify the Access token against.
-    // Alchemy creates it with the Worker and deletes it with the Worker.
-    const access = yield* Cloudflare.Access.Application('Access', {
-      type: 'self_hosted',
-      name: 'nook',
-      // One allow rule, one email.
-      policies: [{ decision: 'allow', include: [{ email: allowedEmail }] }],
-      autoRedirectToIdentity: true,
-      // Keep the logical ID the Worker's inline `access` prop used (`nook/Access`),
-      // so the existing application is updated in place. A new one would collide
-      // with the Worker's destination, which the old one still owns.
-    }).pipe(Namespace.push('nook'))
-    return {
-      rootDir: 'apps/frontend',
-      main: 'src/worker.ts',
-      env: {
-        DB: Cloudflare.D1.Database('nook-db', {
-          migrations: './packages/backend/migrations',
-        }),
-        MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
-        ACCESS_TEAM_DOMAIN: accessTeamDomain,
-        ACCESS_AUD: access.aud,
-        ALLOWED_EMAIL: allowedEmail,
-        ...(storyAiKey === '' ? {} : { STORY_AI_KEY: Redacted.make(storyAiKey) }),
-      },
-      domain,
-      // Workers Logs: every console line and Effect log is kept and searchable in
-      // the dashboard, along with one invocation log per request.
-      observability: {
+  Effect.succeed({
+    rootDir: 'apps/frontend',
+    main: 'src/worker.ts',
+    env: {
+      DB: Cloudflare.D1.Database('nook-db', {
+        migrations: './packages/backend/migrations',
+      }),
+      MEDIA: Cloudflare.R2.Bucket('nook-media', {}),
+      ADMIN_EMAIL: adminEmail,
+      ...(isDev ? { DEV_USER_EMAIL: adminEmail } : {}),
+      ...(isDev && missingSecrets.length > 0
+        ? {}
+        : {
+            BETTER_AUTH_SECRET: Redacted.make(process.env['BETTER_AUTH_SECRET'] ?? ''),
+            GOOGLE_CLIENT_ID: process.env['GOOGLE_CLIENT_ID'] ?? '',
+            GOOGLE_CLIENT_SECRET: Redacted.make(process.env['GOOGLE_CLIENT_SECRET'] ?? ''),
+          }),
+      ...(storyAiKey === '' ? {} : { STORY_AI_KEY: Redacted.make(storyAiKey) }),
+    },
+    domain,
+    // Workers Logs: every console line and Effect log is kept and searchable in
+    // the dashboard, along with one invocation log per request.
+    observability: {
+      enabled: true,
+      logs: {
         enabled: true,
-        logs: {
-          enabled: true,
-          invocationLogs: true,
-          headSamplingRate: 1,
-          persist: true,
-        },
+        invocationLogs: true,
+        headSamplingRate: 1,
+        persist: true,
       },
-      access,
-      assets: {
-        // `/api/*` is the Worker's; every other path is served by the asset layer,
-        // which falls back to `index.html` for client routes.
-        runWorkerFirst: ['/api/*'],
-      },
-      dev: {
-        port: 5273,
-        strictPort: true,
-        // `alchemy dev` has no Access service in front of it, so it stands in an
-        // identity and the Worker reads a real one.
-        access: { aud: 'dev', identity: { email: allowedEmail } },
-      },
-    }
+    },
+    // Better Auth reads `AsyncLocalStorage`.
+    compatibility: { flags: ['nodejs_compat'] },
+    assets: {
+      // `/api/*` is the Worker's; every other path is served by the asset layer,
+      // which falls back to `index.html` for client routes.
+      runWorkerFirst: ['/api/*'],
+    },
+    dev: {
+      port: 5273,
+      strictPort: true,
+    },
   }),
 ) {}
 

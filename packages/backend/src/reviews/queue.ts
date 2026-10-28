@@ -10,7 +10,7 @@ import { CountRow, decodeRows, withStorageErrorPassThrough } from '../storage-er
 import type { ReviewsDeps } from './reads'
 import { QUEUE_LIMIT, QueueRow, DeckLimitsRow, toReviewCard } from './rows'
 
-export const makeQueue = ({ sql, readFsrs }: ReviewsDeps) => {
+export const makeQueue = ({ sql, userId, readFsrs }: ReviewsDeps) => {
   /**
    * Due Cards first, then new ones, capped by the day's remaining limits.
    *
@@ -43,7 +43,7 @@ export const makeQueue = ({ sql, readFsrs }: ReviewsDeps) => {
         deck === null
           ? []
           : yield* sql`SELECT new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
-                lapse_minutes AS "lapseMinutes" FROM decks WHERE id = ${deck}`
+                lapse_minutes AS "lapseMinutes" FROM decks WHERE user_id = ${userId} AND id = ${deck}`
       const limitsDecoded = yield* decodeRows(DeckLimitsRow, limitsRows)
       const override = limitsDecoded[0]
       const newPerDay = override?.newPerDay ?? fsrs.newPerDay
@@ -53,26 +53,26 @@ export const makeQueue = ({ sql, readFsrs }: ReviewsDeps) => {
       // Anki behaviour: one Card counts once, no matter how often it was
       // graded today. `Again` re-grades never consume the review limit.
       const reviewCountRows = yield* sql`SELECT COUNT(DISTINCT card_id) AS n FROM reviews
-            WHERE reviewed_at >= ${boundary}
-            AND (${deck} IS NULL OR card_id IN (SELECT id FROM cards WHERE deck_id = ${deck}))`
+            WHERE user_id = ${userId} AND reviewed_at >= ${boundary}
+            AND (${deck} IS NULL OR card_id IN (SELECT id FROM cards WHERE user_id = ${userId} AND deck_id = ${deck}))`
       const reviewCounts = yield* decodeRows(CountRow, reviewCountRows)
       const reviewedToday = reviewCounts[0]?.n ?? 0
       const newCountRows = yield* sql`SELECT COUNT(*) AS n FROM cards
-            WHERE introduced_day >= ${todayKey} AND state != 'new'
+            WHERE user_id = ${userId} AND introduced_day >= ${todayKey} AND state != 'new'
             AND (${deck} IS NULL OR deck_id = ${deck})`
       const newCounts = yield* decodeRows(CountRow, newCountRows)
       const introducedToday = newCounts[0]?.n ?? 0
 
       // Totals before the limits, for the done screen's "N more tomorrow".
       const totalDueRows = yield* sql`SELECT COUNT(*) AS n FROM cards c
-            WHERE c.suspended = 0 AND c.note_id IS NOT NULL
+            WHERE c.user_id = ${userId} AND c.suspended = 0 AND c.note_id IS NOT NULL
               AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
               AND c.state != 'new' AND c.due_at IS NOT NULL
               AND c.due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (${deck} IS NULL OR c.deck_id = ${deck})`
       const totalDue = (yield* decodeRows(CountRow, totalDueRows))[0]?.n ?? 0
       const totalNewRows = yield* sql`SELECT COUNT(*) AS n FROM cards c
-            WHERE c.suspended = 0 AND c.note_id IS NOT NULL
+            WHERE c.user_id = ${userId} AND c.suspended = 0 AND c.note_id IS NOT NULL
               AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
               AND c.state = 'new'
               AND (${deck} IS NULL OR c.deck_id = ${deck})`
@@ -93,10 +93,10 @@ export const makeQueue = ({ sql, readFsrs }: ReviewsDeps) => {
             nt.fields AS "noteTypeFields", nt.templates AS "noteTypeTemplates",
             d.name AS "deckName"
             FROM cards c
-            JOIN notes n ON n.id = c.note_id
-            JOIN note_types nt ON nt.id = n.note_type_id
-            JOIN decks d ON d.id = c.deck_id
-            WHERE c.suspended = 0 AND c.note_id IS NOT NULL
+            JOIN notes n ON n.id = c.note_id AND n.user_id = c.user_id
+            JOIN note_types nt ON nt.id = n.note_type_id AND nt.user_id = n.user_id
+            JOIN decks d ON d.id = c.deck_id AND d.user_id = c.user_id
+            WHERE c.user_id = ${userId} AND c.suspended = 0 AND c.note_id IS NOT NULL
               AND (c.buried_until IS NULL OR c.buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
               AND (c.state = 'new' OR (c.due_at IS NOT NULL AND c.due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')))
               AND (${input.bypassDueLimit ?? false} = 0 OR c.state != 'new')

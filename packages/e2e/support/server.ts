@@ -5,12 +5,13 @@
  * way Alchemy bundles it for upload) on workerd, with a real D1 database, a real R2 bucket, and the static asset
  * layer in front, wired the way `alchemy.run.ts` declares them: `/api/*` goes to
  * the Worker first, every other path is an asset with an `index.html` fallback.
- * Cloudflare Access is absent, as under `alchemy dev`, and the Worker reads no
- * identity. State is in memory, so each run starts from an empty collection.
+ * Google is absent, as under `alchemy dev`: the Worker signs in as the stand-in
+ * `DEV_USER_EMAIL` on this loopback host. State is in memory, so each run starts from an empty collection.
  *
  * Run by Playwright's `webServer`; it builds the app first when asked to.
  */
 import { readFileSync, readdirSync } from 'node:fs'
+import { createServer, request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import { build } from 'esbuild'
 import { Miniflare } from 'miniflare'
@@ -34,15 +35,17 @@ const worker = await build({
 })
 
 const mf = new Miniflare({
-  port,
+  // Private: the public `port` opens only once the schema exists (see below).
+  port: 0,
   modules: [{ type: 'ESModule', path: 'worker.js', contents: worker.outputFiles[0]?.contents }],
   compatibilityDate: '2026-08-01',
   compatibilityFlags: ['nodejs_compat'],
-  // The same stand-in identity `alchemy dev` binds, so the Worker's Access
-  // check admits the browser as it does locally.
+  // The same stand-in identity `alchemy dev` binds: an approved admin, so the
+  // browser is let in as it is locally.
   bindings: {
-    ALLOWED_EMAIL: 'e2e@example.com',
-    ALCHEMY_DEV_ACCESS: { aud: 'dev', identity: { email: 'e2e@example.com' } },
+    ADMIN_EMAIL: 'e2e@example.com',
+    DEV_USER_EMAIL: 'e2e@example.com',
+    BETTER_AUTH_SECRET: 'e2e-secret-e2e-secret-e2e-secret-e2e',
   },
   d1Databases: { DB: 'nook-e2e' },
   r2Buckets: { MEDIA: 'nook-e2e-media' },
@@ -63,10 +66,33 @@ for (const file of readdirSync(migrations)
   }
 }
 
-await mf.ready
+const target = new URL(String(await mf.ready))
+
+// Playwright treats the first answer on `port` as "ready". Miniflare answers
+// from construction, before the migrations above have run, so the port is
+// opened by this proxy after them instead.
+const proxy = createServer((incoming, outgoing) => {
+  const upstream = httpRequest(
+    {
+      host: target.hostname,
+      port: target.port,
+      path: incoming.url,
+      method: incoming.method,
+      headers: incoming.headers,
+    },
+    (response) => {
+      outgoing.writeHead(response.statusCode ?? 502, response.headers)
+      response.pipe(outgoing)
+    },
+  )
+  upstream.on('error', () => outgoing.destroy())
+  incoming.pipe(upstream)
+})
+await new Promise<void>((resolve) => proxy.listen(port, resolve))
 console.log(`nook e2e ready on http://localhost:${port}`)
 
 const stop = async () => {
+  proxy.close()
   await mf.dispose()
   process.exit(0)
 }

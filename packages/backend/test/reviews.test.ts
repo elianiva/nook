@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
@@ -11,6 +12,7 @@ const SqlLive = SqliteClient.layer({ filename: ':memory:' })
 
 const TestLayers = ReviewsHandlers.pipe(
   Layer.provideMerge(Reviews.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 
@@ -25,7 +27,8 @@ layer(TestLayers)('reviews over sqlite', (it) => {
       const a = 'a'.repeat(64)
       const b = 'b'.repeat(64)
       const fields = JSON.stringify(['<img src="image1.jpg">', 'x'])
-      yield* sql`INSERT INTO imports (id, filename) VALUES (${a}, 'a.apkg'), (${b}, 'b.apkg')`
+      yield* sql`INSERT INTO imports (user_id, id, filename)
+        VALUES ('legacy', ${a}, 'a.apkg'), ('legacy', ${b}, 'b.apkg')`
       yield* sql`UPDATE notes SET fields = ${fields}, import_id = ${a}
         WHERE id = 'showcase-note-1'`
       yield* sql`UPDATE notes SET fields = ${fields}, import_id = ${b}

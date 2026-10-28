@@ -6,6 +6,7 @@ import type { ImportCard, ImportManifest, ImportNote, ImportReview, ImportStatus
 import { runStatements } from './batch'
 import { IMPORTED_REVIEW_PREFIX, replayHistory } from './history'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { CurrentUser } from './users'
 
 /** One row of the `imports` table, as SQLite returns it. */
 const ImportRow = Schema.Struct({
@@ -122,6 +123,7 @@ export class Imports extends Context.Service<
     Imports,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
+      const { id: userId } = yield* CurrentUser
 
       const read = (id: ImportId): Effect.Effect<ImportStatus | undefined, StorageUnavailable> =>
         Effect.gen(function* () {
@@ -129,13 +131,13 @@ export class Imports extends Context.Service<
           // query that reads its cursors, so the two can never disagree.
           const rows = yield* sql`SELECT id, filename, status, notes_cursor AS "notesCursor",
             cards_cursor AS "cardsCursor",
-            (SELECT COUNT(*) FROM notes WHERE import_id = imports.id) AS "notesImported",
-            (SELECT COUNT(*) FROM cards WHERE import_id = imports.id) AS "cardsImported",
+            (SELECT COUNT(*) FROM notes WHERE import_id = imports.id AND user_id = imports.user_id) AS "notesImported",
+            (SELECT COUNT(*) FROM cards WHERE import_id = imports.id AND user_id = imports.user_id) AS "cardsImported",
             include_history AS "includeHistory", reviews_cursor AS "reviewsCursor",
-            (SELECT COUNT(*) FROM reviews WHERE import_id = imports.id) AS "reviewsImported",
+            (SELECT COUNT(*) FROM reviews WHERE import_id = imports.id AND user_id = imports.user_id) AS "reviewsImported",
             note_count AS "noteCount", card_count AS "cardCount", review_count AS "reviewCount",
             media_count AS "mediaCount", error
-            FROM imports WHERE id = ${id}`
+            FROM imports WHERE id = ${id} AND user_id = ${userId}`
           const decoded = yield* decodeRows(ImportRow, rows)
           const row = decoded[0]
           return row === undefined ? undefined : toStatus(row)
@@ -168,24 +170,24 @@ export class Imports extends Context.Service<
             ...manifest.decks.map(
               (
                 deck,
-              ) => sql`INSERT INTO decks (id, name, description) VALUES (${String(deck.id)}, ${deck.name}, ${deck.description})
-                ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description, updated_at = datetime('now')`,
+              ) => sql`INSERT INTO decks (user_id, id, name, description) VALUES (${userId}, ${String(deck.id)}, ${deck.name}, ${deck.description})
+                ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, description = excluded.description, updated_at = datetime('now')`,
             ),
             ...manifest.noteTypes.map(
               (
                 noteType,
-              ) => sql`INSERT INTO note_types (id, name, kind, sort_field_ord, css, fields, templates)
-                VALUES (${String(noteType.id)}, ${noteType.name}, ${noteType.kind}, ${noteType.sortFieldOrd}, ${noteType.css}, ${JSON.stringify(noteType.fields)}, ${JSON.stringify(noteType.templates)})
-                ON CONFLICT (id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
+              ) => sql`INSERT INTO note_types (user_id, id, name, kind, sort_field_ord, css, fields, templates)
+                VALUES (${userId}, ${String(noteType.id)}, ${noteType.name}, ${noteType.kind}, ${noteType.sortFieldOrd}, ${noteType.css}, ${JSON.stringify(noteType.fields)}, ${JSON.stringify(noteType.templates)})
+                ON CONFLICT (user_id, id) DO UPDATE SET name = excluded.name, kind = excluded.kind,
                   sort_field_ord = excluded.sort_field_ord, css = excluded.css,
                   fields = excluded.fields, templates = excluded.templates, updated_at = datetime('now')`,
             ),
           ])
 
           if (existing === undefined) {
-            yield* sql`INSERT INTO imports (id, filename, status, note_count, card_count, media_count,
+            yield* sql`INSERT INTO imports (user_id, id, filename, status, note_count, card_count, media_count,
               include_history, review_count)
-              VALUES (${id}, ${filename}, 'running', ${manifest.noteCount}, ${manifest.cardCount},
+              VALUES (${userId}, ${id}, ${filename}, 'running', ${manifest.noteCount}, ${manifest.cardCount},
               ${manifest.mediaCount}, ${historyFlag}, ${reviewCount})`
           } else if (existing.status === 'done' && includeHistory && !existing.includeHistory) {
             // The same archive, imported again to add its history. Notes and
@@ -193,7 +195,7 @@ export class Imports extends Context.Service<
             // the Reviews left to write.
             yield* sql`UPDATE imports SET filename = ${filename}, status = 'running', error = NULL,
               include_history = 1, reviews_cursor = 0, review_count = ${reviewCount},
-              updated_at = datetime('now') WHERE id = ${id}`
+              updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`
           } else if (
             (manifest.noteCount > 0 || manifest.cardCount > 0) &&
             existing.notesImported === 0 &&
@@ -208,7 +210,7 @@ export class Imports extends Context.Service<
               include_history = ${historyFlag}, review_count = ${reviewCount},
               note_count = ${manifest.noteCount}, card_count = ${manifest.cardCount},
               media_count = ${manifest.mediaCount},
-              updated_at = datetime('now') WHERE id = ${id}`
+              updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`
           } else if (existing.status !== 'done') {
             // A run that was interrupted keeps its cursors: this is what lets
             // the same Import continue instead of starting over.
@@ -216,7 +218,7 @@ export class Imports extends Context.Service<
               include_history = ${historyFlag}, review_count = ${reviewCount},
               note_count = ${manifest.noteCount}, card_count = ${manifest.cardCount},
               media_count = ${manifest.mediaCount},
-              updated_at = datetime('now') WHERE id = ${id}`
+              updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`
           }
 
           // The row was written above, so a missing one is a storage problem,
@@ -256,17 +258,17 @@ export class Imports extends Context.Service<
           const seedable = yield* decodeRows(
             SeedableRow,
             yield* sql`SELECT c.id AS id, d.lapse_minutes AS "lapseMinutes"
-              FROM cards c JOIN decks d ON d.id = c.deck_id
-              WHERE c.import_id = ${id}
+              FROM cards c JOIN decks d ON d.id = c.deck_id AND d.user_id = c.user_id
+              WHERE c.user_id = ${userId} AND c.import_id = ${id}
                 AND c.id IN (SELECT value FROM json_each(${JSON.stringify([...byCard.keys()].map(String))}))
                 AND NOT EXISTS (SELECT 1 FROM reviews r
-                  WHERE r.card_id = c.id AND r.id NOT LIKE ${IMPORTED_REVIEW_PREFIX + '%'})`,
+                  WHERE r.user_id = c.user_id AND r.card_id = c.id AND r.id NOT LIKE ${IMPORTED_REVIEW_PREFIX + '%'})`,
           )
           const settingsRows = yield* decodeRows(
             SchedulerRow,
             yield* sql`SELECT fsrs_weights AS weights, fsrs_desired_retention AS "desiredRetention",
               fsrs_maximum_interval AS "maximumInterval", fsrs_lapse_minutes AS "lapseMinutes"
-              FROM settings WHERE id = 1`,
+              FROM settings WHERE user_id = ${userId}`,
           )
           const settings = settingsRows[0]
           if (settings === undefined) {
@@ -291,11 +293,11 @@ export class Imports extends Context.Service<
             if (replay === undefined) continue
             for (const step of replay.reviews) {
               statements.push(
-                sql`INSERT INTO reviews (id, card_id, grade, reviewed_at, state_after, stability_after,
+                sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at, state_after, stability_after,
                   difficulty_after, due_in_days_after, due_at_after, import_id)
-                  VALUES (${step.id}, ${step.cardId}, ${step.grade}, ${step.reviewedAt}, ${step.state},
+                  VALUES (${userId}, ${step.id}, ${step.cardId}, ${step.grade}, ${step.reviewedAt}, ${step.state},
                   ${step.stability}, ${step.difficulty}, ${step.dueInDays}, ${step.dueAt}, ${id})
-                  ON CONFLICT (id) DO UPDATE SET grade = excluded.grade, reviewed_at = excluded.reviewed_at,
+                  ON CONFLICT (user_id, id) DO UPDATE SET grade = excluded.grade, reviewed_at = excluded.reviewed_at,
                     state_after = excluded.state_after, stability_after = excluded.stability_after,
                     difficulty_after = excluded.difficulty_after,
                     due_in_days_after = excluded.due_in_days_after,
@@ -309,7 +311,7 @@ export class Imports extends Context.Service<
                 reps = ${card.reps}, lapses = ${card.lapses}, review_lapses = ${card.reviewLapses},
                 last_reviewed_at = ${card.lastReviewedAt}, introduced_day = ${card.introducedDay},
                 buried_until = NULL, buried_sibling_of = NULL, updated_at = datetime('now')
-                WHERE id = ${row.id}`,
+                WHERE id = ${row.id} AND user_id = ${userId}`,
             )
           }
           return { statements, lastCardId: Math.max(...byCard.keys()) }
@@ -325,13 +327,13 @@ export class Imports extends Context.Service<
           let notesCursor = current.notesCursor
           const noteStatements = batch.notes.map((note) => {
             if (note.id > notesCursor) notesCursor = note.id
-            return sql`INSERT INTO notes (id, note_type_id, guid, fields, tags, modified, import_id)
-              VALUES (${String(note.id)}, ${String(note.noteTypeId)}, ${note.guid}, ${JSON.stringify(note.fields)}, ${JSON.stringify(note.tags)}, ${note.modified}, ${id})
-              ON CONFLICT (id) DO UPDATE SET note_type_id = excluded.note_type_id, guid = excluded.guid,
+            return sql`INSERT INTO notes (user_id, id, note_type_id, guid, fields, tags, modified, import_id)
+              VALUES (${userId}, ${String(note.id)}, ${String(note.noteTypeId)}, ${note.guid}, ${JSON.stringify(note.fields)}, ${JSON.stringify(note.tags)}, ${note.modified}, ${id})
+              ON CONFLICT (user_id, id) DO UPDATE SET note_type_id = excluded.note_type_id, guid = excluded.guid,
                 fields = excluded.fields, tags = excluded.tags, modified = excluded.modified,
                 import_id = excluded.import_id,
                 media_import_id = CASE
-                  WHEN (SELECT media_count FROM imports WHERE id = excluded.import_id) > 0 THEN NULL
+                  WHEN (SELECT media_count FROM imports WHERE id = excluded.import_id AND user_id = excluded.user_id) > 0 THEN NULL
                   ELSE COALESCE(notes.media_import_id, notes.import_id)
                 END,
                 updated_at = datetime('now')`
@@ -340,11 +342,11 @@ export class Imports extends Context.Service<
           let cardsCursor = current.cardsCursor
           const cardStatements = batch.cards.map((card) => {
             if (card.id > cardsCursor) cardsCursor = card.id
-            return sql`INSERT INTO cards (id, deck_id, note_id, template_ord, suspended, flag,
+            return sql`INSERT INTO cards (user_id, id, deck_id, note_id, template_ord, suspended, flag,
               due_in_days, stability, difficulty, state, import_id)
-              VALUES (${String(card.id)}, ${String(card.deckId)}, ${String(card.noteId)}, ${card.templateOrd},
+              VALUES (${userId}, ${String(card.id)}, ${String(card.deckId)}, ${String(card.noteId)}, ${card.templateOrd},
               ${card.suspended ? 1 : 0}, ${card.flag}, 0, 0, 1, 'new', ${id})
-              ON CONFLICT (id) DO UPDATE SET deck_id = excluded.deck_id, note_id = excluded.note_id,
+              ON CONFLICT (user_id, id) DO UPDATE SET deck_id = excluded.deck_id, note_id = excluded.note_id,
                 template_ord = excluded.template_ord, suspended = excluded.suspended, flag = excluded.flag,
                 import_id = excluded.import_id, updated_at = datetime('now')`
           })
@@ -363,7 +365,7 @@ export class Imports extends Context.Service<
             ...history.statements,
             sql`UPDATE imports SET notes_cursor = ${notesCursor}, cards_cursor = ${cardsCursor},
               reviews_cursor = ${reviewsCursor},
-              updated_at = datetime('now') WHERE id = ${id}`,
+              updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`,
           ])
 
           return yield* status(id)
@@ -376,7 +378,7 @@ export class Imports extends Context.Service<
       ): Effect.Effect<ImportStatus, ImportNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
           yield* status(id)
-          yield* sql`UPDATE imports SET status = 'done', error = NULL, updated_at = datetime('now') WHERE id = ${id}`
+          yield* sql`UPDATE imports SET status = 'done', error = NULL, updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`
           return yield* status(id)
         }).pipe(Effect.withSpan('Imports.complete'), (self) =>
           withStorageErrorPassThrough(self, 'finish the import'),
@@ -390,7 +392,7 @@ export class Imports extends Context.Service<
           yield* status(id)
           // The message is client-supplied and may quote Card content: log the id only.
           yield* Effect.logWarning('import failed').pipe(Effect.annotateLogs({ importId: id }))
-          yield* sql`UPDATE imports SET status = 'failed', error = ${error}, updated_at = datetime('now') WHERE id = ${id}`
+          yield* sql`UPDATE imports SET status = 'failed', error = ${error}, updated_at = datetime('now') WHERE id = ${id} AND user_id = ${userId}`
           return yield* status(id)
         }).pipe(Effect.withSpan('Imports.fail'), (self) =>
           withStorageErrorPassThrough(self, 'record the import failure'),

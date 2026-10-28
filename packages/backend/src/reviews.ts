@@ -37,6 +37,7 @@ import {
 } from '@nook/api'
 import type { ReviewAccepted, ReviewQueue, ReviewSubmission, UndoAccepted } from '@nook/api'
 import type { CardReviewHistory } from '@nook/api'
+import { CurrentUser } from './users'
 import { makeReads } from './reviews/reads'
 import { makeQueue } from './reviews/queue'
 import { makeGrade } from './reviews/grade'
@@ -73,8 +74,9 @@ export class Reviews extends Context.Service<
     Reviews,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
-      const { readFsrs, readCard } = makeReads(sql)
-      const deps = { sql, readFsrs, readCard }
+      const { id: userId } = yield* CurrentUser
+      const { readFsrs, readCard } = makeReads(sql, userId)
+      const deps = { sql, userId, readFsrs, readCard }
 
       return Reviews.of({
         queue: makeQueue(deps),

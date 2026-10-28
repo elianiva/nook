@@ -1,0 +1,5 @@
+{
+  "servicePorts": {
+    "e2e-srv": 31887
+  }
+}

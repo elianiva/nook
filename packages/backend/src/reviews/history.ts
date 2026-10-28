@@ -9,7 +9,7 @@ import { CountRow, decodeRows, withStorageErrorPassThrough } from '../storage-er
 import type { ReviewsDeps } from './reads'
 import { HISTORY_LIMIT, CardStateRow } from './rows'
 
-export const makeHistory = ({ sql, readCard }: ReviewsDeps) => {
+export const makeHistory = ({ sql, userId, readCard }: ReviewsDeps) => {
   /**
    * The newest grade events for one Card. Before-state comes from the
    * atomic undo snapshot; after-state is saved with the grade. Older
@@ -23,7 +23,7 @@ export const makeHistory = ({ sql, readCard }: ReviewsDeps) => {
       if (card === undefined) return yield* new CardNotFound({ cardId: input.cardId })
 
       const countRows =
-        yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE card_id = ${input.cardId}`
+        yield* sql`SELECT COUNT(*) AS n FROM reviews WHERE user_id = ${userId} AND card_id = ${input.cardId}`
       const total = (yield* decodeRows(CountRow, countRows))[0]?.n ?? 0
       const eventRows = yield* sql`SELECT r.id, r.grade, r.reviewed_at AS "reviewedAt",
             s.state AS "beforeState", s.stability AS "beforeStability",
@@ -32,8 +32,8 @@ export const makeHistory = ({ sql, readCard }: ReviewsDeps) => {
             r.stability_after AS "afterStability", r.difficulty_after AS "afterDifficulty",
             r.due_in_days_after AS "afterDueInDays", r.due_at_after AS "afterDueAt",
             r.leech_suspended AS "leechSuspended"
-            FROM reviews r LEFT JOIN review_snapshots s ON s.review_id = r.id
-            WHERE r.card_id = ${input.cardId}
+            FROM reviews r LEFT JOIN review_snapshots s ON s.review_id = r.id AND s.user_id = r.user_id
+            WHERE r.user_id = ${userId} AND r.card_id = ${input.cardId}
             ORDER BY r.reviewed_at DESC, r.rowid DESC LIMIT ${HISTORY_LIMIT}`
       const rows = yield* decodeRows(
         Schema.Struct({

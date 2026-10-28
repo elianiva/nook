@@ -40,9 +40,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # nook has no sign-up. Access admits this one address and nothing
-          # else, so the stack refuses to load without it.
-          NOOK_ALLOWED_EMAIL: ${{ secrets.NOOK_ALLOWED_EMAIL }}
-          # The Worker verifies the Access token against this team's keys. A
-          # deploy without it answers 500 on /api/*.
-          NOOK_ACCESS_TEAM_DOMAIN: ${{ secrets.NOOK_ACCESS_TEAM_DOMAIN }}
+          # The Google account that administers nook: it approves sign-ups and
+          # adopts the collection that predates users.
+          NOOK_ADMIN_EMAIL: ${{ secrets.NOOK_ADMIN_EMAIL }}
+          # Sign-in: the cookie-signing secret and the Google OAuth client. The
+          # stack refuses to deploy without them.
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}

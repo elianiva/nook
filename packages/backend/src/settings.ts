@@ -3,11 +3,12 @@ import * as Sql from 'effect/sql/SqlClient'
 import { SettingsRpc, StorageUnavailable } from '@nook/api'
 import type { AppSettings, FsrsHealthReport } from '@nook/api'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { CurrentUser } from './users'
 
 /** Anki describes fewer than a few hundred reviews as low optimizer data. */
 const REVIEW_DATA_FLOOR = 200
 
-/** One row of the singleton `settings` table. Booleans ride as 0/1, weights as one CSV string. */
+/** One user's row of the `settings` table. Booleans ride as 0/1, weights as one CSV string. */
 const SettingsRow = Schema.Struct({
   fsrsDesiredRetention: Schema.Number,
   fsrsWeights: Schema.String,
@@ -64,6 +65,7 @@ export class Settings extends Context.Service<
     Settings,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
+      const { id: userId } = yield* CurrentUser
 
       const read = Effect.gen(function* () {
         const rows = yield* sql`SELECT fsrs_desired_retention AS "fsrsDesiredRetention",
@@ -72,7 +74,7 @@ export class Settings extends Context.Service<
           fsrs_lapse_minutes AS "fsrsLapseMinutes",
           behaviour_tap_to_reveal AS "behaviourTapToReveal",
           behaviour_day_rollover_hour AS "behaviourDayRolloverHour"
-          FROM settings WHERE id = 1`
+          FROM settings WHERE user_id = ${userId}`
         const decoded = yield* decodeRows(SettingsRow, rows)
         const found = Option.fromUndefinedOr(decoded[0])
         if (found._tag === 'None') {
@@ -97,7 +99,9 @@ export class Settings extends Context.Service<
             AND r.stability_after IS NOT NULL AND r.difficulty_after IS NOT NULL
             AND r.due_in_days_after IS NOT NULL THEN 1 ELSE 0 END), 0)
             AS "completeHistoryCount"
-          FROM reviews r LEFT JOIN review_snapshots s ON s.review_id = r.id`
+          FROM reviews r LEFT JOIN review_snapshots s
+            ON s.user_id = r.user_id AND s.review_id = r.id
+          WHERE r.user_id = ${userId}`
         const decoded = yield* decodeRows(FsrsHealthRow, rows)
         const found = Option.fromUndefinedOr(decoded[0])
         if (found._tag === 'None') {
@@ -130,7 +134,7 @@ export class Settings extends Context.Service<
             fsrs_lapse_minutes = ${settings.fsrs.lapseMinutes},
             behaviour_tap_to_reveal = ${settings.behaviour.tapToReveal ? 1 : 0},
             behaviour_day_rollover_hour = ${settings.behaviour.dayRolloverHour},
-            updated_at = datetime('now') WHERE id = 1`
+            updated_at = datetime('now') WHERE user_id = ${userId}`
           return settings
         }).pipe(Effect.withSpan('Settings.save'), (self) =>
           withStorageErrorPassThrough(self, 'save settings'),

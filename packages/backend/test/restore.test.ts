@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
@@ -14,6 +15,7 @@ const SqlLive = SqliteClient.layer({ filename: ':memory:' })
 const TestLayers = Layer.mergeAll(RestoreHandlers, ReviewsHandlers).pipe(
   Layer.provideMerge(Restore.layer),
   Layer.provideMerge(Reviews.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 
@@ -133,8 +135,8 @@ layer(TestLayers)('restore over sqlite', (it) => {
       // Live collection: this Card was graded once more after the backup.
       const later = '2999-01-01T00:00:00Z'
       yield* sql`UPDATE cards SET reps = 99, last_reviewed_at = ${later} WHERE id = ${cardId}`
-      yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        VALUES ('live-only', ${cardId}, 'Good', ${later})`
+      yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        VALUES ('legacy', 'live-only', ${cardId}, 'Good', ${later})`
       const kept = yield* client.collectionRestore({
         json: JSON.stringify(exported),
         dryRun: false,
@@ -168,8 +170,8 @@ layer(TestLayers)('restore over sqlite', (it) => {
       yield* Effect.forEach(
         exported.noteTypes,
         (noteType) =>
-          sql`INSERT INTO note_types (id, name, kind, sort_field_ord, css, fields, templates)
-          VALUES (${noteType.id}, ${noteType.name}, ${noteType.kind}, ${noteType.sortFieldOrd},
+          sql`INSERT INTO note_types (user_id, id, name, kind, sort_field_ord, css, fields, templates)
+          VALUES ('legacy', ${noteType.id}, ${noteType.name}, ${noteType.kind}, ${noteType.sortFieldOrd},
             ${noteType.css}, ${JSON.stringify(noteType.fields)}, ${JSON.stringify(noteType.templates)})`,
       )
       const v1 = {

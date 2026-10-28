@@ -39,6 +39,7 @@ import type { RestoreCounts, RestoreResult } from '@nook/api'
 import { runStatements } from './batch'
 import { StoredField, StoredTemplate } from './note-type-rows'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { CurrentUser } from './users'
 
 /** How many specific problems a rejection lists. */
 const MAX_ISSUES = 20
@@ -350,14 +351,16 @@ export class Restore extends Context.Service<
     Restore,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
+      const { id: userId } = yield* CurrentUser
 
       const readExisting = Effect.gen(function* () {
         const ids = (table: string) =>
-          sql.unsafe(`SELECT id FROM ${table}`).pipe(
+          sql.unsafe(`SELECT id FROM ${table} WHERE user_id = ?`, [userId]).pipe(
             Effect.flatMap((rows) => decodeRows(IdRow, rows)),
             Effect.map((rows) => new Set(rows.map((row) => row.id))),
           )
-        const cardRows = yield* sql`SELECT id, last_reviewed_at AS "lastReviewedAt" FROM cards`
+        const cardRows = yield* sql`SELECT id, last_reviewed_at AS "lastReviewedAt" FROM cards
+          WHERE user_id = ${userId}`
         const cards = yield* decodeRows(CardIdRow, cardRows)
         return {
           decks: yield* ids('decks'),
@@ -446,8 +449,8 @@ export class Restore extends Context.Service<
             })),
           )) {
             statements.push(sql`INSERT OR IGNORE INTO note_types
-              (id, name, kind, sort_field_ord, css, fields, templates)
-              SELECT json_extract(value, '$.id'), json_extract(value, '$.name'),
+              (user_id, id, name, kind, sort_field_ord, css, fields, templates)
+              SELECT ${userId}, json_extract(value, '$.id'), json_extract(value, '$.name'),
                 json_extract(value, '$.kind'), json_extract(value, '$.sortFieldOrd'),
                 json_extract(value, '$.css'), json_extract(value, '$.fields'),
                 json_extract(value, '$.templates')
@@ -464,16 +467,16 @@ export class Restore extends Context.Service<
             })),
           )) {
             statements.push(sql`INSERT OR IGNORE INTO decks
-              (id, name, description, new_per_day, reviews_per_day, lapse_minutes)
-              SELECT json_extract(value, '$.id'), json_extract(value, '$.name'),
+              (user_id, id, name, description, new_per_day, reviews_per_day, lapse_minutes)
+              SELECT ${userId}, json_extract(value, '$.id'), json_extract(value, '$.name'),
                 json_extract(value, '$.description'), json_extract(value, '$.newPerDay'),
                 json_extract(value, '$.reviewsPerDay'), json_extract(value, '$.lapseMinutes')
               FROM json_each(${chunk})`)
           }
           if (newNotes.length > 0) {
             // Notes carry a NOT NULL import id, so restored Notes name one Import row.
-            statements.push(sql`INSERT OR IGNORE INTO imports (id, filename, status)
-              VALUES (${restoreImportId}, 'Restored from JSON export', 'done')`)
+            statements.push(sql`INSERT OR IGNORE INTO imports (user_id, id, filename, status)
+              VALUES (${userId}, ${restoreImportId}, 'Restored from JSON export', 'done')`)
           }
           for (const chunk of jsonChunks(
             newNotes.map((row) => ({
@@ -486,8 +489,8 @@ export class Restore extends Context.Service<
             })),
           )) {
             statements.push(sql`INSERT OR IGNORE INTO notes
-              (id, note_type_id, guid, fields, tags, modified, import_id)
-              SELECT json_extract(value, '$.id'), json_extract(value, '$.noteTypeId'),
+              (user_id, id, note_type_id, guid, fields, tags, modified, import_id)
+              SELECT ${userId}, json_extract(value, '$.id'), json_extract(value, '$.noteTypeId'),
                 json_extract(value, '$.guid'), json_extract(value, '$.fields'),
                 json_extract(value, '$.tags'), json_extract(value, '$.modified'),
                 ${restoreImportId}
@@ -512,9 +515,9 @@ export class Restore extends Context.Service<
           })
           for (const chunk of jsonChunks(newCards.map(cardJson))) {
             statements.push(sql`INSERT OR IGNORE INTO cards
-              (id, deck_id, note_id, template_ord, suspended, state, stability, difficulty,
+              (user_id, id, deck_id, note_id, template_ord, suspended, state, stability, difficulty,
                due_at, due_in_days, reps, lapses, review_lapses, last_reviewed_at, introduced_day)
-              SELECT json_extract(value, '$.id'), json_extract(value, '$.deckId'),
+              SELECT ${userId}, json_extract(value, '$.id'), json_extract(value, '$.deckId'),
                 json_extract(value, '$.noteId'), json_extract(value, '$.templateOrd'),
                 json_extract(value, '$.suspended'), json_extract(value, '$.state'),
                 json_extract(value, '$.stability'), json_extract(value, '$.difficulty'),
@@ -543,7 +546,8 @@ export class Restore extends Context.Service<
               buried_sibling_of = NULL,
               updated_at = datetime('now')
               FROM json_each(${chunk}) AS j
-              WHERE cards.id = json_extract(j.value, '$.id')
+              WHERE cards.user_id = ${userId}
+                AND cards.id = json_extract(j.value, '$.id')
                 AND julianday(json_extract(j.value, '$.lastReviewedAt'))
                   > COALESCE(julianday(cards.last_reviewed_at), 0)`)
           }
@@ -562,9 +566,9 @@ export class Restore extends Context.Service<
             })),
           )) {
             statements.push(sql`INSERT OR IGNORE INTO reviews
-              (id, card_id, grade, reviewed_at, state_after, stability_after, difficulty_after,
+              (user_id, id, card_id, grade, reviewed_at, state_after, stability_after, difficulty_after,
                due_in_days_after, due_at_after, leech_suspended)
-              SELECT json_extract(value, '$.id'), json_extract(value, '$.cardId'),
+              SELECT ${userId}, json_extract(value, '$.id'), json_extract(value, '$.cardId'),
                 json_extract(value, '$.grade'), json_extract(value, '$.reviewedAt'),
                 json_extract(value, '$.stateAfter'), json_extract(value, '$.stabilityAfter'),
                 json_extract(value, '$.difficultyAfter'), json_extract(value, '$.dueInDaysAfter'),

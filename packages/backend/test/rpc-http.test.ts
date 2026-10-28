@@ -31,6 +31,7 @@ import { Reviews, ReviewsHandlers } from '../src/reviews'
 import { Settings, SettingsHandlers } from '../src/settings'
 import { Stories, StoriesHandlers } from '../src/stories'
 import { StoryModel } from '../src/story-model'
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
@@ -53,6 +54,7 @@ const ApiLive = RpcServer.layerHttp({ group: Api, path: '/api/rpc', protocol: 'h
   Layer.provideMerge(Settings.layer),
   Layer.provideMerge(Stories.layer),
   Layer.provideMerge(StoryModel.unconfigured),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(RpcSerialization.layerJson),
 )
 

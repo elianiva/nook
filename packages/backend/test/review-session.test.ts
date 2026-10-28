@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
@@ -11,6 +12,7 @@ const SqlLive = SqliteClient.layer({ filename: ':memory:' })
 
 const TestLayers = ReviewsHandlers.pipe(
   Layer.provideMerge(Reviews.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 

@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
@@ -19,6 +20,7 @@ const HandlersLive = Layer.mergeAll(DecksHandlers, HomeHandlers, SettingsHandler
   Layer.provideMerge(Decks.layer),
   Layer.provideMerge(Home.layer),
   Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 
@@ -78,8 +80,8 @@ layer(HandlersLive)('backend over sqlite', (it) => {
       yield* sql.unsafe(`DELETE FROM reviews WHERE grade = 'Again'`)
       yield* sql.unsafe(`WITH RECURSIVE seq(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 200
-      ) INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        SELECT 'health-' || n, 'card-showcase-01', 'Hard', datetime('now') FROM seq`)
+      ) INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        SELECT 'legacy', 'health-' || n, 'card-showcase-01', 'Hard', datetime('now') FROM seq`)
 
       const health = yield* client.settingsFsrsHealth()
       expect(health.reviewCount).toBe(203)
@@ -109,12 +111,12 @@ layer(HandlersLive)('backend over sqlite', (it) => {
         yield* sql`UPDATE cards SET suspended = 1 WHERE id = 'card-showcase-01'`
         yield* sql`UPDATE cards SET note_id = NULL WHERE id = 'card-showcase-02'`
         yield* sql`DELETE FROM reviews`
-        yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        VALUES ('overview-today-a', 'card-showcase-01', 'Good', ${todayReviewAt})`
-        yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        VALUES ('overview-today-b', 'card-showcase-01', 'Again', ${todayReviewAt})`
-        yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        VALUES ('overview-yesterday', 'card-showcase-03', 'Good', ${yesterdayReviewAt})`
+        yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        VALUES ('legacy', 'overview-today-a', 'card-showcase-01', 'Good', ${todayReviewAt})`
+        yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        VALUES ('legacy', 'overview-today-b', 'card-showcase-01', 'Again', ${todayReviewAt})`
+        yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        VALUES ('legacy', 'overview-yesterday', 'card-showcase-03', 'Good', ${yesterdayReviewAt})`
 
         const overview = yield* client.homeOverview({ timezone: 'Asia/Jakarta' })
         expect(overview.dueNow).toBe(2)
@@ -133,8 +135,8 @@ layer(HandlersLive)('backend over sqlite', (it) => {
       const boundary = Date.parse(dayStartUtc('Asia/Jakarta', 4, new Date()))
       const yesterdayReviewAt = new Date(boundary - 60_000).toISOString()
       yield* sql`DELETE FROM reviews`
-      yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-        VALUES ('overview-yesterday', 'card-showcase-03', 'Good', ${yesterdayReviewAt})`
+      yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+        VALUES ('legacy', 'overview-yesterday', 'card-showcase-03', 'Good', ${yesterdayReviewAt})`
 
       const overview = yield* client.homeOverview({ timezone: 'Asia/Jakarta' })
       expect(overview.reviewedToday).toBe(0)
@@ -163,8 +165,8 @@ layer(HandlersLive)('backend over sqlite', (it) => {
           index === dayKeys.length - 1
             ? now.toISOString()
             : new Date(Date.parse(dayStartUtcForKey('UTC', 4, day)) + 60_000).toISOString()
-        yield* sql`INSERT INTO reviews (id, card_id, grade, reviewed_at)
-          VALUES (${'overview-streak-' + index}, 'card-showcase-01', 'Good', ${reviewedAt})`
+        yield* sql`INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at)
+          VALUES ('legacy', ${'overview-streak-' + index}, 'card-showcase-01', 'Good', ${reviewedAt})`
       }
 
       const overview = yield* client.homeOverview({ timezone: 'UTC' })

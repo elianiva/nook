@@ -10,7 +10,6 @@
  * `HttpServerResponse`, and a Card's image or audio is a stream from R2.
  */
 
-import type { D1Database } from '@cloudflare/workers-types'
 import { Effect, Layer } from 'effect'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 import { RpcSerialization, RpcServer } from 'effect/rpc'
@@ -32,8 +31,9 @@ import {
   StoriesHandlers,
   StoryModel,
   SqlLive,
+  CurrentUser,
 } from '@nook/backend'
-import { checkAccess, type AccessEnv } from './lib/access'
+import { createAuth, identify, type AuthEnv } from './lib/auth'
 import { API_PREFIX, HEALTH_PATH, MEDIA_PATH, RPC_PATH } from './lib/api'
 import { mediaResponse, type MediaBucket } from './lib/media'
 
@@ -42,12 +42,11 @@ type Assets = {
   fetch(request: Request): Promise<Response>
 }
 
-type Env = AccessEnv & {
+type Env = AuthEnv & {
   /** Optional deploy secret: the one provider key stories are generated with. */
   STORY_AI_KEY?: string
   STORY_AI_MODEL?: string
   ASSETS: Assets
-  DB: D1Database
   MEDIA: MediaBucket
 }
 
@@ -93,8 +92,9 @@ const storyModel = (env: Env) =>
     ? StoryModel.unconfigured
     : StoryModel.openRouter(env.STORY_AI_KEY, env.STORY_AI_MODEL ?? DEFAULT_STORY_MODEL)
 
-const appLayer = (env: Env) =>
+const appLayer = (env: Env, userId: string) =>
   Layer.mergeAll(healthRoute, apiRoutes, assetRoute(env)).pipe(
+    Layer.provideMerge(CurrentUser.layer(userId)),
     Layer.provideMerge(storyModel(env)),
     Layer.provideMerge(SqlLive(env.DB)),
     Layer.provideMerge(HttpServer.layerServices),
@@ -109,8 +109,17 @@ const appLayer = (env: Env) =>
  *  workerd when a cold isolate's first request is not an RPC call (for example
  *  `GET /api/health`), and every later RPC call then fails with "Worker's code
  *  had hung". The rebuild costs about a millisecond of CPU. */
-const handlerFor = (env: Env): ((request: Request) => Promise<Response>) =>
-  HttpRouter.toWebHandler(appLayer(env), { disableLogger: true }).handler
+const handlerFor = (env: Env, userId: string): ((request: Request) => Promise<Response>) =>
+  HttpRouter.toWebHandler(appLayer(env, userId), { disableLogger: true }).handler
+
+const AUTH_PREFIX = `${API_PREFIX}/auth`
+
+const isAuth = (pathname: string): boolean =>
+  pathname === AUTH_PREFIX || pathname.startsWith(`${AUTH_PREFIX}/`)
+
+/** The one reply for a missing or unapproved account, as JSON so the client can tell them apart. */
+const refusal = (status: 401 | 403, error: 'signed-out' | 'not-approved'): Response =>
+  Response.json({ error }, { status })
 
 const isMedia = (pathname: string): boolean =>
   pathname === MEDIA_PATH || pathname.startsWith(`${MEDIA_PATH}/`)
@@ -133,12 +142,20 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     try {
-      if (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`)) {
-        const rejection = await checkAccess(request, env)
-        if (rejection !== null) return rejection
+      if (url.pathname !== API_PREFIX && !url.pathname.startsWith(`${API_PREFIX}/`)) {
+        return await handlerFor(env, '')(request)
       }
+      if (url.pathname === HEALTH_PATH) return await handlerFor(env, '')(request)
+
+      const auth = createAuth(env, url.origin)
+      if (isAuth(url.pathname)) return await auth.handler(request)
+
+      // Everything else under /api is the collection: a signed-in, approved user only.
+      const identity = await identify(auth, env, request)
+      if (identity === null) return refusal(401, 'signed-out')
+      if (identity.status !== 'approved') return refusal(403, 'not-approved')
       if (isMedia(url.pathname)) return await mediaResponse(env.MEDIA, request, url)
-      return await handlerFor(env)(request)
+      return await handlerFor(env, identity.id)(request)
     } catch (error) {
       logFailure(request, url, error)
       return new Response('Internal Server Error', { status: 500 })

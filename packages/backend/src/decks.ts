@@ -7,6 +7,7 @@ import { runStatements } from './batch'
 import { dayStartUtc, resolveTimezone, reviewDayKey } from './day-boundary'
 import { StoredField, StoredTemplate } from './note-type-rows'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { CurrentUser } from './users'
 
 /** One row of the `decks` table with its counts computed in SQL. */
 const DeckRow = Schema.Struct({
@@ -168,6 +169,7 @@ export class Decks extends Context.Service<
     Decks,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
+      const { id: userId } = yield* CurrentUser
 
       /**
        * What "today" has already used, per deck id: distinct review Cards
@@ -181,13 +183,14 @@ export class Decks extends Context.Service<
           const reviewed = yield* decodeRows(
             DayRow,
             yield* sql`SELECT c.deck_id AS "deckId", COUNT(DISTINCT r.card_id) AS n
-            FROM reviews r JOIN cards c ON c.id = r.card_id
-            WHERE r.reviewed_at >= ${boundary} GROUP BY c.deck_id`,
+            FROM reviews r JOIN cards c ON c.user_id = r.user_id AND c.id = r.card_id
+            WHERE r.user_id = ${userId} AND r.reviewed_at >= ${boundary} GROUP BY c.deck_id`,
           )
           const introduced = yield* decodeRows(
             DayRow,
             yield* sql`SELECT deck_id AS "deckId", COUNT(*) AS n FROM cards
-            WHERE introduced_day >= ${todayKey} AND state != 'new' GROUP BY deck_id`,
+            WHERE user_id = ${userId} AND introduced_day >= ${todayKey} AND state != 'new'
+            GROUP BY deck_id`,
           )
           const use = new Map<string, { reviewed: number; introduced: number }>()
           for (const row of reviewed) use.set(row.deckId, { reviewed: row.n, introduced: 0 })
@@ -205,7 +208,8 @@ export class Decks extends Context.Service<
             GlobalLimitsRow,
             yield* sql`SELECT fsrs_new_per_day AS "newPerDay",
             fsrs_reviews_per_day AS "reviewsPerDay",
-            behaviour_day_rollover_hour AS "dayRolloverHour" FROM settings WHERE id = 1`,
+            behaviour_day_rollover_hour AS "dayRolloverHour" FROM settings
+            WHERE user_id = ${userId}`,
           )
           const found = decoded[0]
           if (found === undefined) {
@@ -232,20 +236,21 @@ export class Decks extends Context.Service<
         return yield* decodeRows(
           DeckRow,
           yield* sql`SELECT id, name, description,
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new' AND suspended = 0) AS "newCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
-              AND suspended = 0
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id
+              AND state = 'new' AND suspended = 0) AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id
+              AND state != 'new' AND suspended = 0
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id) AS "totalCount",
             new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
             lapse_minutes AS "lapseMinutes",
             last_studied_at AS "lastStudiedAt",
             (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
-              FROM reviews r JOIN cards c ON c.id = r.card_id
-              WHERE c.deck_id = decks.id
+              FROM reviews r JOIN cards c ON c.user_id = r.user_id AND c.id = r.card_id
+              WHERE r.user_id = decks.user_id AND c.deck_id = decks.id
                 AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
-            FROM decks ORDER BY name`,
+            FROM decks WHERE user_id = ${userId} ORDER BY name`,
         )
       })
 
@@ -274,20 +279,21 @@ export class Decks extends Context.Service<
           const summaries = yield* decodeRows(
             DeckRow,
             yield* sql`SELECT id, name, description,
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state = 'new' AND suspended = 0) AS "newCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id AND state != 'new'
-              AND suspended = 0
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id
+              AND state = 'new' AND suspended = 0) AS "newCount",
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id
+              AND state != 'new' AND suspended = 0
               AND due_at IS NOT NULL AND due_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
               AND (buried_until IS NULL OR buried_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))) AS "dueCount",
-            (SELECT COUNT(*) FROM cards WHERE deck_id = decks.id) AS "totalCount",
+            (SELECT COUNT(*) FROM cards WHERE user_id = decks.user_id AND deck_id = decks.id) AS "totalCount",
             new_per_day AS "newPerDay", reviews_per_day AS "reviewsPerDay",
             lapse_minutes AS "lapseMinutes",
             last_studied_at AS "lastStudiedAt",
             (SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN r.grade != 'Again' THEN 1 ELSE 0 END) / COUNT(*)), 0)
-              FROM reviews r JOIN cards c ON c.id = r.card_id
-              WHERE c.deck_id = decks.id
+              FROM reviews r JOIN cards c ON c.user_id = r.user_id AND c.id = r.card_id
+              WHERE r.user_id = decks.user_id AND c.deck_id = decks.id
                 AND r.reviewed_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-7 days')) AS "retention7d"
-            FROM decks WHERE id = ${id}`,
+            FROM decks WHERE user_id = ${userId} AND id = ${id}`,
           )
           const summary = summaries[0]
           if (summary === undefined) return yield* new DeckNotFound({ deckId: id })
@@ -307,10 +313,10 @@ export class Decks extends Context.Service<
             nt.name AS "noteTypeName", nt.kind AS "noteTypeKind", nt.css AS "noteTypeCss",
             nt.fields AS "noteTypeFields", nt.templates AS "noteTypeTemplates",
             d.name AS "deckName"
-            FROM cards c LEFT JOIN notes n ON n.id = c.note_id
-            LEFT JOIN note_types nt ON nt.id = n.note_type_id
-            LEFT JOIN decks d ON d.id = c.deck_id
-            WHERE c.deck_id = ${id} ORDER BY c.rowid LIMIT 200`,
+            FROM cards c LEFT JOIN notes n ON n.user_id = c.user_id AND n.id = c.note_id
+            LEFT JOIN note_types nt ON nt.user_id = n.user_id AND nt.id = n.note_type_id
+            LEFT JOIN decks d ON d.user_id = c.user_id AND d.id = c.deck_id
+            WHERE c.user_id = ${userId} AND c.deck_id = ${id} ORDER BY c.rowid LIMIT 200`,
           )
           return {
             summary: toSummary(summary, todayFor(summary, globals, use)),
@@ -341,10 +347,10 @@ export class Decks extends Context.Service<
               message: 'Could not rename the deck. The name cannot be empty.',
             })
           }
-          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          const existing = yield* sql`SELECT id FROM decks WHERE user_id = ${userId} AND id = ${id}`
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
           yield* sql`UPDATE decks SET name = ${name}, description = ${rename.description.trim()},
-            updated_at = datetime('now') WHERE id = ${id}`
+            updated_at = datetime('now') WHERE user_id = ${userId} AND id = ${id}`
           return yield* readDetail(id, input?.timezone)
         }).pipe(Effect.withSpan('Decks.rename'), (self) =>
           withStorageErrorPassThrough(self, 'rename deck'),
@@ -374,11 +380,11 @@ export class Decks extends Context.Service<
               message: 'Could not save the deck limits. Lapse minutes must be at least 1.',
             })
           }
-          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          const existing = yield* sql`SELECT id FROM decks WHERE user_id = ${userId} AND id = ${id}`
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
           yield* sql`UPDATE decks SET new_per_day = ${limits.newPerDay},
             reviews_per_day = ${limits.reviewsPerDay}, lapse_minutes = ${limits.lapseMinutes},
-            updated_at = datetime('now') WHERE id = ${id}`
+            updated_at = datetime('now') WHERE user_id = ${userId} AND id = ${id}`
           return yield* readDetail(id, input?.timezone)
         }).pipe(Effect.withSpan('Decks.setLimits'), (self) =>
           withStorageErrorPassThrough(self, 'save deck limits'),
@@ -389,10 +395,10 @@ export class Decks extends Context.Service<
         suspended: boolean,
       ): Effect.Effect<{ cardId: CardId; suspended: boolean }, CardNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
-          const existing = yield* sql`SELECT id FROM cards WHERE id = ${id}`
+          const existing = yield* sql`SELECT id FROM cards WHERE user_id = ${userId} AND id = ${id}`
           if (existing.length === 0) return yield* new CardNotFound({ cardId: id })
           yield* sql`UPDATE cards SET suspended = ${suspended ? 1 : 0},
-            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ${id}`
+            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE user_id = ${userId} AND id = ${id}`
           return { cardId: id, suspended }
         }).pipe(Effect.withSpan('Decks.setSuspended'), (self) =>
           withStorageErrorPassThrough(self, 'change card suspension'),
@@ -409,19 +415,22 @@ export class Decks extends Context.Service<
         input?: { readonly timezone?: string | undefined },
       ): Effect.Effect<DeckDetail, DeckNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
-          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          const existing = yield* sql`SELECT id FROM decks WHERE user_id = ${userId} AND id = ${id}`
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
           yield* runStatements([
-            sql`DELETE FROM review_snapshots WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
-            sql`DELETE FROM reviews WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
+            sql`DELETE FROM review_snapshots WHERE user_id = ${userId}
+              AND card_id IN (SELECT id FROM cards WHERE user_id = ${userId} AND deck_id = ${id})`,
+            sql`DELETE FROM reviews WHERE user_id = ${userId}
+              AND card_id IN (SELECT id FROM cards WHERE user_id = ${userId} AND deck_id = ${id})`,
             sql`UPDATE cards SET state = 'new', stability = 0, difficulty = 1,
               due_in_days = 0, due_at = NULL, reps = 0, lapses = 0,
               review_lapses = 0,
               introduced_day = NULL, buried_until = NULL, buried_sibling_of = NULL,
               last_reviewed_at = NULL,
-              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE deck_id = ${id}`,
+              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              WHERE user_id = ${userId} AND deck_id = ${id}`,
             sql`UPDATE decks SET last_studied_at = NULL, updated_at = datetime('now')
-              WHERE id = ${id}`,
+              WHERE user_id = ${userId} AND id = ${id}`,
           ])
           return yield* readDetail(id, input?.timezone)
         }).pipe(Effect.withSpan('Decks.reset'), (self) =>
@@ -436,14 +445,17 @@ export class Decks extends Context.Service<
        */
       const remove = (id: DeckId): Effect.Effect<void, DeckNotFound | StorageUnavailable> =>
         Effect.gen(function* () {
-          const existing = yield* sql`SELECT id FROM decks WHERE id = ${id}`
+          const existing = yield* sql`SELECT id FROM decks WHERE user_id = ${userId} AND id = ${id}`
           if (existing.length === 0) return yield* new DeckNotFound({ deckId: id })
           yield* runStatements([
-            sql`DELETE FROM review_snapshots WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
-            sql`DELETE FROM reviews WHERE card_id IN (SELECT id FROM cards WHERE deck_id = ${id})`,
-            sql`DELETE FROM cards WHERE deck_id = ${id}`,
-            sql`DELETE FROM notes WHERE id NOT IN (SELECT DISTINCT note_id FROM cards WHERE note_id IS NOT NULL)`,
-            sql`DELETE FROM decks WHERE id = ${id}`,
+            sql`DELETE FROM review_snapshots WHERE user_id = ${userId}
+              AND card_id IN (SELECT id FROM cards WHERE user_id = ${userId} AND deck_id = ${id})`,
+            sql`DELETE FROM reviews WHERE user_id = ${userId}
+              AND card_id IN (SELECT id FROM cards WHERE user_id = ${userId} AND deck_id = ${id})`,
+            sql`DELETE FROM cards WHERE user_id = ${userId} AND deck_id = ${id}`,
+            sql`DELETE FROM notes WHERE user_id = ${userId} AND id NOT IN
+              (SELECT DISTINCT note_id FROM cards WHERE user_id = ${userId} AND note_id IS NOT NULL)`,
+            sql`DELETE FROM decks WHERE user_id = ${userId} AND id = ${id}`,
           ])
         }).pipe(Effect.withSpan('Decks.remove'), (self) =>
           withStorageErrorPassThrough(self, 'remove deck'),

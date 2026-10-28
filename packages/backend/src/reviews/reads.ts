@@ -12,12 +12,13 @@ import { CardRow, FsrsRow } from './rows'
 /** What every review operation closes over. */
 export type ReviewsDeps = {
   readonly sql: Sql.SqlClient
+  readonly userId: string
   readonly readFsrs: ReturnType<typeof makeReads>['readFsrs']
   readonly readCard: ReturnType<typeof makeReads>['readCard']
 }
 
 /** The shared reads: the FSRS settings row and one Card row. */
-export const makeReads = (sql: Sql.SqlClient) => {
+export const makeReads = (sql: Sql.SqlClient, userId: string) => {
   const readFsrs = Effect.gen(function* () {
     const rows = yield* sql`SELECT fsrs_weights AS weights,
           fsrs_desired_retention AS "desiredRetention",
@@ -26,7 +27,7 @@ export const makeReads = (sql: Sql.SqlClient) => {
           fsrs_reviews_per_day AS "reviewsPerDay",
           fsrs_lapse_minutes AS "lapseMinutes",
           behaviour_day_rollover_hour AS "dayRolloverHour"
-          FROM settings WHERE id = 1`
+          FROM settings WHERE user_id = ${userId}`
     const decoded = yield* decodeRows(FsrsRow, rows)
     const row = decoded[0]
     if (row === undefined) {
@@ -46,7 +47,7 @@ export const makeReads = (sql: Sql.SqlClient) => {
             due_at AS "dueAt", note_id AS "noteId", introduced_day AS "introducedDay",
             buried_until AS "buriedUntil",
             last_reviewed_at AS "lastReviewedAt", grade_seq AS "gradeSeq"
-            FROM cards WHERE id = ${cardId}`
+            FROM cards WHERE user_id = ${userId} AND id = ${cardId}`
       const decoded = yield* decodeRows(CardRow, rows)
       return decoded[0]
     })

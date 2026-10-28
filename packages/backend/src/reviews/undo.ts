@@ -10,7 +10,7 @@ import { decodeRows, withStorageErrorPassThrough } from '../storage-error'
 import type { ReviewsDeps } from './reads'
 import { CardStateRow, LastReviewRow } from './rows'
 
-export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
+export const makeUndo = ({ sql, userId, readCard }: ReviewsDeps) => {
   /**
    * Undoes the latest grade on `cardId`.
    *
@@ -30,7 +30,8 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
 
       const lastRows = yield* sql`SELECT id, card_id AS "cardId", grade,
             leech_suspended AS "leechSuspended" FROM reviews
-            WHERE card_id = ${input.cardId} ORDER BY reviewed_at DESC, rowid DESC LIMIT 1`
+            WHERE user_id = ${userId} AND card_id = ${input.cardId}
+            ORDER BY reviewed_at DESC, rowid DESC LIMIT 1`
       const last = yield* decodeRows(LastReviewRow, lastRows)
       const latest = last[0]
       if (input.reviewId !== undefined && latest?.id !== input.reviewId) {
@@ -38,7 +39,8 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
         // the first attempt landed: report the Card as it stands rather
         // than undoing an earlier grade. If it still exists but is not the
         // latest, a later grade owns the Card and this undo is stale.
-        const named = yield* sql`SELECT id FROM reviews WHERE id = ${input.reviewId}`
+        const named =
+          yield* sql`SELECT id FROM reviews WHERE user_id = ${userId} AND id = ${input.reviewId}`
         if (named.length > 0) return yield* new CardNotFound({ cardId: input.cardId })
         return {
           cardId: input.cardId,
@@ -54,7 +56,7 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
             due_in_days AS "dueInDays", due_at AS "dueAt", reps, lapses,
             introduced_day AS "introducedDay", last_reviewed_at AS "lastReviewedAt",
             buried_until AS "buriedUntil", review_lapses AS "reviewLapses", suspended
-            FROM review_snapshots WHERE review_id = ${latest.id}`
+            FROM review_snapshots WHERE user_id = ${userId} AND review_id = ${latest.id}`
       const snapshots = yield* decodeRows(
         Schema.Struct({
           state: CardStateRow,
@@ -79,13 +81,13 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
       // latest, so a grade that lands after the reads above leaves the Card
       // alone instead of being overwritten by an older snapshot. The cards
       // go first and the review row last, so the guard holds throughout.
-      const stillLatest = sql`(SELECT id FROM reviews WHERE card_id = ${input.cardId}
+      const stillLatest = sql`(SELECT id FROM reviews WHERE user_id = ${userId} AND card_id = ${input.cardId}
             ORDER BY reviewed_at DESC, rowid DESC LIMIT 1) = ${latest.id}`
       yield* runStatements([
         // The tombstone first, while the guard still holds: a replay of this
         // grade must be refused, not re-applied (ADR 0002).
-        sql`INSERT OR IGNORE INTO undone_reviews (review_id, card_id)
-              SELECT ${latest.id}, ${input.cardId} WHERE ${stillLatest}`,
+        sql`INSERT OR IGNORE INTO undone_reviews (user_id, review_id, card_id)
+              SELECT ${userId}, ${latest.id}, ${input.cardId} WHERE ${stillLatest}`,
         sql`UPDATE cards SET state = ${snapshot.state}, stability = ${snapshot.stability},
               difficulty = ${snapshot.difficulty}, due_in_days = ${snapshot.dueInDays},
               due_at = ${snapshot.dueAt},
@@ -98,12 +100,12 @@ export const makeUndo = ({ sql, readCard }: ReviewsDeps) => {
               last_reviewed_at = ${snapshot.lastReviewedAt},
               grade_seq = grade_seq + 1,
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-              WHERE id = ${input.cardId} AND ${stillLatest}`,
+              WHERE user_id = ${userId} AND id = ${input.cardId} AND ${stillLatest}`,
         sql`UPDATE cards SET buried_until = NULL, buried_sibling_of = NULL,
               updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-              WHERE buried_sibling_of = ${input.cardId} AND ${stillLatest}`,
-        sql`DELETE FROM review_snapshots WHERE review_id = ${latest.id} AND ${stillLatest}`,
-        sql`DELETE FROM reviews WHERE id = ${latest.id} AND ${stillLatest}`,
+              WHERE user_id = ${userId} AND buried_sibling_of = ${input.cardId} AND ${stillLatest}`,
+        sql`DELETE FROM review_snapshots WHERE user_id = ${userId} AND review_id = ${latest.id} AND ${stillLatest}`,
+        sql`DELETE FROM reviews WHERE user_id = ${userId} AND id = ${latest.id} AND ${stillLatest}`,
       ])
 
       return {

@@ -9,7 +9,7 @@ import { decodeRows, withStorageErrorPassThrough } from '../storage-error'
 import type { ReviewsDeps } from './reads'
 import { CardStateRow } from './rows'
 
-export const makeExportCollection = ({ sql }: ReviewsDeps) => {
+export const makeExportCollection = ({ sql, userId }: ReviewsDeps) => {
   /**
    * The whole collection as plain rows: Decks, Notes, Cards with scheduling
    * state, and the Review log. The browser downloads it as one JSON file.
@@ -19,7 +19,7 @@ export const makeExportCollection = ({ sql }: ReviewsDeps) => {
     Effect.gen(function* () {
       const deckRows = yield* sql`SELECT id, name, description, new_per_day AS "newPerDay",
             reviews_per_day AS "reviewsPerDay", lapse_minutes AS "lapseMinutes"
-            FROM decks ORDER BY name`
+            FROM decks WHERE user_id = ${userId} ORDER BY name`
       const decks = yield* decodeRows(
         Schema.Struct({
           id: Schema.String,
@@ -32,7 +32,7 @@ export const makeExportCollection = ({ sql }: ReviewsDeps) => {
         deckRows,
       )
       const noteTypeRows = yield* sql`SELECT id, name, kind, sort_field_ord AS "sortFieldOrd",
-            css, fields, templates FROM note_types ORDER BY rowid`
+            css, fields, templates FROM note_types WHERE user_id = ${userId} ORDER BY rowid`
       const rawNoteTypes = yield* decodeRows(
         Schema.Struct({
           id: Schema.String,
@@ -46,7 +46,7 @@ export const makeExportCollection = ({ sql }: ReviewsDeps) => {
         noteTypeRows,
       )
       const noteRows = yield* sql`SELECT id, note_type_id AS "noteTypeId", guid,
-            fields, tags, modified FROM notes ORDER BY rowid`
+            fields, tags, modified FROM notes WHERE user_id = ${userId} ORDER BY rowid`
       const rawNotes = yield* decodeRows(
         Schema.Struct({
           id: Schema.String,
@@ -63,7 +63,7 @@ export const makeExportCollection = ({ sql }: ReviewsDeps) => {
               due_at AS "dueAt", due_in_days AS "dueInDays", introduced_day AS "introducedDay",
               COALESCE(reps, 0) AS reps, COALESCE(lapses, 0) AS lapses,
               last_reviewed_at AS "lastReviewedAt", COALESCE(review_lapses, 0) AS "reviewLapses"
-              FROM cards ORDER BY rowid`
+              FROM cards WHERE user_id = ${userId} ORDER BY rowid`
       const rawCards = yield* decodeRows(
         Schema.Struct({
           id: Schema.String,
@@ -89,7 +89,7 @@ export const makeExportCollection = ({ sql }: ReviewsDeps) => {
               state_after AS "stateAfter", stability_after AS "stabilityAfter",
               difficulty_after AS "difficultyAfter", due_in_days_after AS "dueInDaysAfter",
               due_at_after AS "dueAtAfter", leech_suspended AS "leechSuspended"
-              FROM reviews ORDER BY reviewed_at ASC, rowid ASC`
+              FROM reviews WHERE user_id = ${userId} ORDER BY reviewed_at ASC, rowid ASC`
       const reviews = yield* decodeRows(
         Schema.Struct({
           id: Schema.String,

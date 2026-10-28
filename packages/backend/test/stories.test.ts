@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
@@ -16,6 +17,7 @@ const TestLayers = Layer.mergeAll(DecksHandlers, ReviewsHandlers, StoriesHandler
   Layer.provideMerge(
     Layer.mergeAll(Decks.layer, Reviews.layer, Stories.layer, StoryModel.unconfigured),
   ),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 

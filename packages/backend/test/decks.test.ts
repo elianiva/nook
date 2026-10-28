@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
@@ -9,7 +10,11 @@ import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
 
-const TestLayers = DecksHandlers.pipe(Layer.provideMerge(Decks.layer), Layer.provideMerge(SqlLive))
+const TestLayers = DecksHandlers.pipe(
+  Layer.provideMerge(Decks.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
+  Layer.provideMerge(SqlLive),
+)
 
 const showcaseDeck = DeckId.make('deck-showcase-japanese')
 

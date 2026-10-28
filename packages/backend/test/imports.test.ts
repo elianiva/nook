@@ -1,3 +1,4 @@
+import { CurrentUser, LEGACY_OWNER } from '../src/users'
 import { assert, expect, layer } from '@effect/vitest'
 import { Effect, Layer } from 'effect'
 import { RpcTest } from 'effect/rpc'
@@ -25,6 +26,7 @@ const HandlersLive = Layer.mergeAll(
   Layer.provideMerge(Imports.layer),
   Layer.provideMerge(Reviews.layer),
   Layer.provideMerge(Settings.layer),
+  Layer.provideMerge(CurrentUser.layer(LEGACY_OWNER)),
   Layer.provideMerge(SqlLive),
 )
 
@@ -364,7 +366,7 @@ layer(TestLayers)('imports over sqlite', (it) => {
 
         // Card 22 was graded in nook before the history arrives: it keeps that.
         yield* sql.unsafe(
-          `INSERT INTO reviews (id, card_id, grade, reviewed_at) VALUES ('native-1', '22', 'Good', '2024-02-01T00:00:00Z')`,
+          `INSERT INTO reviews (user_id, id, card_id, grade, reviewed_at) VALUES ('legacy', 'native-1', '22', 'Good', '2024-02-01T00:00:00Z')`,
         )
 
         const batch = {

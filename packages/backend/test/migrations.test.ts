@@ -21,6 +21,8 @@ describe('migrations stay append-only', () => {
       '0009_import_history.sql',
       '0010_note_media_import.sql',
       '0011_grade_ordering.sql',
+      '0012_users.sql',
+      '0013_auth.sql',
     ])
   })
 })

@@ -17,6 +17,7 @@ import type { StorageUnavailable, StoryCard } from '@nook/api'
 import { runStatements } from './batch'
 import { StoryModel } from './story-model'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
+import { CurrentUser } from './users'
 
 const NOTE_TYPE_ID = 'nook-story'
 const DECK_ID = 'deck-stories'
@@ -67,6 +68,7 @@ export class Stories extends Context.Service<
     Stories,
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
+      const { id: userId } = yield* CurrentUser
 
       const save = (story: StoryCard) =>
         Effect.gen(function* () {
@@ -80,21 +82,21 @@ export class Stories extends Context.Service<
             story.translation,
           ])
           yield* runStatements([
-            sql`INSERT OR IGNORE INTO decks (id, name, description)
-              VALUES (${DECK_ID}, 'Stories', 'Passages saved from the story feed')`,
+            sql`INSERT OR IGNORE INTO decks (user_id, id, name, description)
+              VALUES (${userId}, ${DECK_ID}, 'Stories', 'Passages saved from the story feed')`,
             sql`INSERT OR IGNORE INTO note_types
-              (id, name, kind, sort_field_ord, css, fields, templates)
-              VALUES (${NOTE_TYPE_ID}, 'Nook story', 'normal', 0, ${CSS},
+              (user_id, id, name, kind, sort_field_ord, css, fields, templates)
+              VALUES (${userId}, ${NOTE_TYPE_ID}, 'Nook story', 'normal', 0, ${CSS},
                 ${JSON.stringify(FIELDS)}, ${JSON.stringify(TEMPLATES)})`,
-            sql`INSERT OR IGNORE INTO imports (id, filename, status)
-              VALUES (${SOURCE_ID}, 'Saved from the story feed', 'done')`,
+            sql`INSERT OR IGNORE INTO imports (user_id, id, filename, status)
+              VALUES (${userId}, ${SOURCE_ID}, 'Saved from the story feed', 'done')`,
             sql`INSERT OR IGNORE INTO notes
-              (id, note_type_id, guid, fields, tags, modified, import_id)
-              VALUES (${noteId}, ${NOTE_TYPE_ID}, ${story.storyId}, ${fields}, '[]',
+              (user_id, id, note_type_id, guid, fields, tags, modified, import_id)
+              VALUES (${userId}, ${noteId}, ${NOTE_TYPE_ID}, ${story.storyId}, ${fields}, '[]',
                 CAST(strftime('%s', 'now') AS INTEGER), ${SOURCE_ID})`,
             // Last: the Card is what the Learner sees, so it is the commit point.
-            sql`INSERT OR IGNORE INTO cards (id, deck_id, note_id, template_ord, state)
-              VALUES (${cardId}, ${DECK_ID}, ${noteId}, 0, 'new')`,
+            sql`INSERT OR IGNORE INTO cards (user_id, id, deck_id, note_id, template_ord, state)
+              VALUES (${userId}, ${cardId}, ${DECK_ID}, ${noteId}, 0, 'new')`,
           ])
           return { cardId }
         }).pipe(Effect.withSpan('Stories.save'), (self) =>
@@ -105,13 +107,13 @@ export class Stories extends Context.Service<
         Effect.gen(function* () {
           // Only a Card nobody has reviewed: the Review log is append-only (ADR 0002).
           const rows = yield* sql`SELECT id FROM cards
-            WHERE id = ${cardIdFor(storyId)} AND state = 'new' AND reps = 0`
+            WHERE user_id = ${userId} AND id = ${cardIdFor(storyId)} AND state = 'new' AND reps = 0`
           const removable = yield* decodeRows(RemovedRow, rows)
           if (removable.length === 0) return { removed: false }
           yield* runStatements([
-            sql`DELETE FROM cards WHERE id = ${cardIdFor(storyId)} AND state = 'new' AND reps = 0`,
-            sql`DELETE FROM notes WHERE id = ${noteIdFor(storyId)}
-              AND NOT EXISTS (SELECT 1 FROM cards WHERE note_id = ${noteIdFor(storyId)})`,
+            sql`DELETE FROM cards WHERE user_id = ${userId} AND id = ${cardIdFor(storyId)} AND state = 'new' AND reps = 0`,
+            sql`DELETE FROM notes WHERE user_id = ${userId} AND id = ${noteIdFor(storyId)}
+              AND NOT EXISTS (SELECT 1 FROM cards WHERE user_id = ${userId} AND note_id = ${noteIdFor(storyId)})`,
           ])
           return { removed: true }
         }).pipe(Effect.withSpan('Stories.unsave'), (self) =>
