@@ -7,8 +7,8 @@ deck, then review on your phone or desktop—with or without an internet
 connection. nook is an installable progressive web app (PWA) and uses FSRS-6
 to schedule reviews.
 
-Your collection stays in your Cloudflare account. Cloudflare Access restricts
-the app to one email address; nook has no separate accounts or sign-up.
+Your collection stays in your Cloudflare account. People sign in with Google and
+the admin approves each new account; every user's collection is private.
 
 ## Screenshots
 
@@ -64,39 +64,38 @@ would change:
 
 - Node.js 24 or later
 - pnpm 12
-- A Cloudflare account and a Zero Trust organization for Cloudflare Access
+- A Cloudflare account
+- A Google OAuth client (Web application)
 - A Cloudflare API token and account ID, or an `alchemy` login in `~/.alchemy`
 
 ## Get started
 
-Choose the email address that can access your local instance, install the
+Choose the Google account that administers your instance, install the
 dependencies, and start the dev server:
 
 ```bash
-export NOOK_ALLOWED_EMAIL=you@example.com
+export NOOK_ADMIN_EMAIL=you@example.com
 pnpm install
 pnpm dev
 ```
 
 Open <http://localhost:5273>. `alchemy dev` serves both the app and its Worker;
-you do not need to start a second process. Locally, the `dev.access` identity
-stands in for Cloudflare Access.
+you do not need to start a second process. Locally the Worker signs in as
+`NOOK_ADMIN_EMAIL` without Google, and only on a loopback host.
 
 ## Configuration
 
-| Variable                  | Required | Default             | Purpose                                                                                                                                 |
-| ------------------------- | -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOOK_ALLOWED_EMAIL`      | Yes      | —                   | The only email address allowed to access nook.                                                                                          |
-| `NOOK_DOMAIN`             | No       | `nook.elianiva.com` | Hostname for the deployed app.                                                                                                          |
-| `NOOK_ACCESS_TEAM_DOMAIN` | Deploy   | —                   | Zero Trust team domain (`<team>.cloudflareaccess.com`). The Worker verifies the Access JWT against its keys. Not needed for `pnpm dev`. |
+| Variable               | Required | Default             | Purpose                                                                           |
+| ---------------------- | -------- | ------------------- | --------------------------------------------------------------------------------- |
+| `NOOK_ADMIN_EMAIL`     | Yes      | —                   | The Google account that becomes the admin, approves sign-ups and adopts old data. |
+| `NOOK_DOMAIN`          | No       | `nook.elianiva.com` | Hostname for the deployed app.                                                    |
+| `BETTER_AUTH_SECRET`   | Deploy   | —                   | Signs session cookies. At least 32 random characters.                             |
+| `GOOGLE_CLIENT_ID`     | Deploy   | —                   | Google OAuth client ID.                                                           |
+| `GOOGLE_CLIENT_SECRET` | Deploy   | —                   | Google OAuth client secret.                                                       |
 
-`NOOK_ALLOWED_EMAIL` is required. There is no sign-up flow, and
-`alchemy.run.ts` will not load without this value.
-
-`NOOK_ACCESS_TEAM_DOMAIN` is required to deploy. The Worker checks the Access
-token on every `/api/*` request itself, as a second layer behind Access. A
-deploy without it returns 500 on `/api/*` and logs `NOOK_ACCESS_TEAM_DOMAIN is
-not set`. `pnpm dev`, CI and `pnpm build` do not need it.
+Add `https://<domain>/api/auth/callback/google` as an authorized redirect URI
+in your Google OAuth client. Anyone can sign up with Google; their account is
+`pending` until the admin approves it on the Account page (`/account`).
 
 ## Observability
 
@@ -142,10 +141,10 @@ Install a browser once with `pnpm --filter @nook/e2e exec playwright install chr
 
 ## Deploy
 
-`pnpm infra:deploy` deploys the Worker, static assets, and Cloudflare Access
-application defined in `alchemy.run.ts`. Set `NOOK_ACCESS_TEAM_DOMAIN` (the
-`deploy.yml` workflow reads it from the secret of the same name) first: a deploy
-without it returns 500 on `/api/*`.
+`pnpm infra:deploy` deploys the Worker and static assets defined in
+`alchemy.run.ts`. Set `NOOK_ADMIN_EMAIL`, `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`
+and `GOOGLE_CLIENT_SECRET` first (the `deploy.yml` workflow reads them from
+secrets of the same name). The stack refuses to deploy without them.
 
 **Before forking:** `.github/workflows/deploy.yml` deploys every `master` commit
 whose `CI` workflow run succeeds, and can also be started manually with

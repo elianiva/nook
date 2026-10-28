@@ -570,6 +570,24 @@ export const settingsView = (model: Model, h: HtmlBuilder<Message>): ReadonlyArr
     behaviourSection(draft, model, h),
     saveBar(model.settingsDraft, h),
     section(
+      'Account',
+      [
+        h.div(
+          [h.Class('py-2.5')],
+          [
+            h.a(
+              [
+                h.Href('/account'),
+                h.Class('text-sm font-semibold text-[var(--theme-strong)] underline'),
+              ],
+              ['Sign out, delete account, manage users'],
+            ),
+          ],
+        ),
+      ],
+      h,
+    ),
+    section(
       'Collection',
       [
         h.div(

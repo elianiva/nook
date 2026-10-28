@@ -21,4 +21,13 @@ export { SqlLive } from './sql'
 export { Stories, StoriesHandlers } from './stories'
 export { StoryModel } from './story-model'
 export { withStorageErrorPassThrough, decodeRows } from './storage-error'
-export { adoptLegacyCollection, CurrentUser, LEGACY_OWNER, provisionUser } from './users'
+export {
+  adoptLegacyCollection,
+  CurrentUser,
+  deleteAccount,
+  LEGACY_OWNER,
+  listAccounts,
+  provisionUser,
+  setAccountStatus,
+  type Account,
+} from './users'

@@ -3,12 +3,15 @@ import {
   MAX_MEDIA_BYTES,
   LEGACY_MEDIA_HEADER,
   isValidMediaName,
+  deleteUserMedia,
   mediaUrl,
   mediaResponse,
   type MediaBucket,
+  type MediaOwner,
 } from '../src/lib/media'
 
-const fakeBucket = (stored: Record<string, string> = {}) => {
+const fakeBucket = (files: Record<string, string> = {}, prefix = 'u1/') => {
+  const stored = Object.fromEntries(Object.entries(files).map(([k, v]) => [prefix + k, v]))
   const puts: { key: string; size: number; contentType?: string }[] = []
   const bucket: MediaBucket = {
     async get(key) {
@@ -18,6 +21,17 @@ const fakeBucket = (stored: Record<string, string> = {}) => {
         httpEtag: '"e"',
         writeHttpMetadata: (h) => h.set('content-type', 'text/html'),
       }
+    },
+    async list({ prefix }) {
+      return {
+        objects: Object.keys(stored)
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => ({ key })),
+        truncated: false,
+      }
+    },
+    async delete(keys) {
+      for (const key of typeof keys === 'string' ? [keys] : keys) delete stored[key]
     },
     async put(key, value, options) {
       puts.push({
@@ -30,9 +44,15 @@ const fakeBucket = (stored: Record<string, string> = {}) => {
   return { bucket, puts }
 }
 
-const call = (bucket: MediaBucket, method: string, name: string, body?: BodyInit) => {
+const call = (
+  bucket: MediaBucket,
+  method: string,
+  name: string,
+  body?: BodyInit,
+  owner: MediaOwner = { userId: 'u1', adoptsLegacy: false },
+) => {
   const url = new URL(`https://nook.example.com/api/media/${name}`)
-  return mediaResponse(bucket, new Request(url, { method, body }), url)
+  return mediaResponse(bucket, new Request(url, { method, body }), url, owner)
 }
 
 describe('media upload', () => {
@@ -40,7 +60,7 @@ describe('media upload', () => {
     const { bucket, puts } = fakeBucket()
     const res = await call(bucket, 'PUT', 'cat.PNG', new Uint8Array([1, 2, 3]))
     expect(res.status).toBe(204)
-    expect(puts).toEqual([{ key: 'cat.PNG', size: 3, contentType: 'image/png' }])
+    expect(puts).toEqual([{ key: 'u1/cat.PNG', size: 3, contentType: 'image/png' }])
   })
 
   it.each(['page.html', 'x.js', 'noext', 'a.html.bin', 'constructor', 'x.__proto__'])(
@@ -72,7 +92,7 @@ describe('media upload', () => {
     expect((await call(bucket, 'PUT', 'b.png', new Uint8Array(MAX_MEDIA_BYTES + 1))).status).toBe(
       413,
     )
-    expect(puts.map((p) => p.key)).toEqual(['a.png'])
+    expect(puts.map((p) => p.key)).toEqual(['u1/a.png'])
   })
 
   it('enforces the limit on a streamed body with no content-length', async () => {
@@ -87,7 +107,9 @@ describe('media upload', () => {
       },
     })
     const request = new Request(url, { method: 'PUT', body, duplex: 'half' } as RequestInit)
-    expect((await mediaResponse(bucket, request, url)).status).toBe(413)
+    expect(
+      (await mediaResponse(bucket, request, url, { userId: 'u1', adoptsLegacy: false })).status,
+    ).toBe(413)
     expect(puts).toEqual([])
   })
 })
@@ -126,7 +148,19 @@ const B = 'b'.repeat(64)
 describe('media key scoping', () => {
   it('stores and serves same-named files from two Imports apart', async () => {
     const store: Record<string, string> = {}
+    const stored = store
     const bucket: MediaBucket = {
+      async list({ prefix }) {
+        return {
+          objects: Object.keys(stored)
+            .filter((key) => key.startsWith(prefix))
+            .map((key) => ({ key })),
+          truncated: false,
+        }
+      },
+      async delete(keys) {
+        for (const key of typeof keys === 'string' ? [keys] : keys) delete stored[key]
+      },
       async get(key) {
         if (!(key in store)) return null
         return {
@@ -143,7 +177,7 @@ describe('media key scoping', () => {
       call(bucket, 'PUT', path.replace('/api/media/', ''), new TextEncoder().encode(body))
     await put(mediaUrl(A, 'image1.jpg'), 'cat')
     await put(mediaUrl(B, 'image1.jpg'), 'dog')
-    expect(Object.keys(store).sort()).toEqual([`${A}/image1.jpg`, `${B}/image1.jpg`])
+    expect(Object.keys(store).sort()).toEqual([`u1/${A}/image1.jpg`, `u1/${B}/image1.jpg`])
 
     const first = await call(bucket, 'GET', `${A}/image1.jpg`)
     expect(await first.text()).toBe('cat')
@@ -153,15 +187,19 @@ describe('media key scoping', () => {
   })
 
   it('falls back to a bare legacy key without immutable caching, still sandboxing by name', async () => {
-    const { bucket } = fakeBucket({ 'old.png': 'legacy', 'x.svg': '<svg/>' })
-    const res = await call(bucket, 'GET', `${A}/old.png`)
+    const { bucket } = fakeBucket({ 'old.png': 'legacy', 'x.svg': '<svg/>' }, '')
+    const admin: MediaOwner = { userId: 'u1', adoptsLegacy: true }
+    const res = await call(bucket, 'GET', `${A}/old.png`, undefined, admin)
     expect(await res.text()).toBe('legacy')
     expect(res.headers.get('cache-control')).not.toContain('immutable')
     expect(res.headers.get(LEGACY_MEDIA_HEADER)).toBe('1')
     expect(res.headers.get('content-type')).toBe('image/png')
-    const svg = await call(bucket, 'GET', `${A}/x.svg`)
+    const svg = await call(bucket, 'GET', `${A}/x.svg`, undefined, admin)
     expect(svg.headers.get('content-security-policy')).toBe('sandbox')
-    expect((await call(bucket, 'GET', `${A}/none.png`)).status).toBe(404)
+    expect((await call(bucket, 'GET', `${A}/none.png`, undefined, admin)).status).toBe(404)
+    // Anyone but the admin gets a 404 for a pre-users object.
+    expect((await call(bucket, 'GET', `${A}/old.png`)).status).toBe(404)
+    expect((await call(bucket, 'GET', `old.png`)).status).toBe(404)
   })
 
   it('validates the name inside a scoped path and the upload type', async () => {
@@ -170,5 +208,49 @@ describe('media key scoping', () => {
     expect((await call(bucket, 'PUT', `${A}/a%2Fb.png`, new Uint8Array([1]))).status).toBe(400)
     expect((await call(bucket, 'PUT', `${A}/page.html`, new Uint8Array([1]))).status).toBe(415)
     expect(puts).toHaveLength(0)
+  })
+})
+
+describe('media isolation between users', () => {
+  it('keeps one user from reading or replacing another user\u2019s file at the same URL', async () => {
+    const store: Record<string, string> = {}
+    const stored = store
+    const bucket: MediaBucket = {
+      async list({ prefix }) {
+        return {
+          objects: Object.keys(stored)
+            .filter((key) => key.startsWith(prefix))
+            .map((key) => ({ key })),
+          truncated: false,
+        }
+      },
+      async delete(keys) {
+        for (const key of typeof keys === 'string' ? [keys] : keys) delete stored[key]
+      },
+      async get(key) {
+        if (!(key in store)) return null
+        return {
+          body: new Response(store[key]).body!,
+          httpEtag: '"e"',
+          writeHttpMetadata: () => {},
+        }
+      },
+      async put(key, value) {
+        store[key] = new TextDecoder().decode(value as Uint8Array)
+      },
+    }
+    const alice: MediaOwner = { userId: 'alice', adoptsLegacy: false }
+    const bob: MediaOwner = { userId: 'bob', adoptsLegacy: false }
+    const path = `${A}/image1.jpg`
+    await call(bucket, 'PUT', path, new TextEncoder().encode('alice-cat'), alice)
+
+    expect((await call(bucket, 'GET', path, undefined, bob)).status).toBe(404)
+    await call(bucket, 'PUT', path, new TextEncoder().encode('bob-dog'), bob)
+    expect(await (await call(bucket, 'GET', path, undefined, alice)).text()).toBe('alice-cat')
+    expect(await (await call(bucket, 'GET', path, undefined, bob)).text()).toBe('bob-dog')
+
+    // Deleting Alice's Media leaves Bob's file, even though 'alice' is a prefix of nothing of his.
+    await deleteUserMedia(bucket, 'alice')
+    expect(Object.keys(store)).toEqual([`bob/${path}`])
   })
 })

@@ -85,3 +85,57 @@ export const adoptLegacyCollection = (userId: string) =>
   }).pipe(Effect.withSpan('adoptLegacyCollection'), (self) =>
     withStorageErrorPassThrough(self, 'adopt the existing collection'),
   )
+
+/** One account, as the admin page lists it. */
+export type Account = {
+  readonly id: string
+  readonly name: string
+  readonly email: string
+  readonly role: 'user' | 'admin'
+  readonly status: 'pending' | 'approved' | 'rejected'
+  readonly createdAt: string
+}
+
+/** Every account, newest first, pending ones before the rest. */
+export const listAccounts = Effect.gen(function* () {
+  const sql = yield* Sql.SqlClient
+  const rows = yield* sql<Account>`SELECT "id", "name", "email", "role", "status",
+    "createdAt" AS "createdAt" FROM "user"
+    ORDER BY ("status" = 'pending') DESC, "createdAt" DESC`
+  return rows.map((row) => ({ ...row, createdAt: String(row.createdAt) }))
+}).pipe(Effect.withSpan('listAccounts'), (self) =>
+  withStorageErrorPassThrough(self, 'list the accounts'),
+)
+
+/** Approves or rejects an account. A rejected account keeps its sign-in but reaches nothing. */
+export const setAccountStatus = (userId: string, status: 'approved' | 'rejected') =>
+  Effect.gen(function* () {
+    const sql = yield* Sql.SqlClient
+    yield* sql`UPDATE "user" SET "status" = ${status}, "updatedAt" = ${new Date().toISOString()}
+      WHERE "id" = ${userId} AND "role" != 'admin'`
+  }).pipe(Effect.withSpan('setAccountStatus'), (self) =>
+    withStorageErrorPassThrough(self, 'change the account'),
+  )
+
+/**
+ * Removes an account and everything it owns: the collection, settings, story
+ * allowance, sessions, and sign-in links. Children go before parents, in one
+ * batch with foreign keys checked at its end, so a failure removes nothing.
+ * Media in R2 is the caller's to remove.
+ */
+export const deleteAccount = (userId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* Sql.SqlClient
+    yield* runStatements([
+      sql`PRAGMA defer_foreign_keys = ON`,
+      ...[...OWNED_TABLES]
+        .reverse()
+        .map((table) => sql`DELETE FROM ${sql(table)} WHERE user_id = ${userId}`),
+      sql`DELETE FROM story_usage WHERE user_id = ${userId}`,
+      sql`DELETE FROM "session" WHERE "userId" = ${userId}`,
+      sql`DELETE FROM "account" WHERE "userId" = ${userId}`,
+      sql`DELETE FROM "user" WHERE "id" = ${userId} AND "role" != 'admin'`,
+    ])
+  }).pipe(Effect.withSpan('deleteAccount'), (self) =>
+    withStorageErrorPassThrough(self, 'delete the account'),
+  )

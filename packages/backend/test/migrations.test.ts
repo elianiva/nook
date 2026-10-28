@@ -23,6 +23,7 @@ describe('migrations stay append-only', () => {
       '0011_grade_ordering.sql',
       '0012_users.sql',
       '0013_auth.sql',
+      '0014_story_usage.sql',
     ])
   })
 })

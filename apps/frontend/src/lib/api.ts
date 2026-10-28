@@ -13,3 +13,9 @@ export const RPC_PATH = `${API_PREFIX}/rpc`
 
 /** Media is served by the Worker from R2, outside the RPC group. */
 export const MEDIA_PATH = `${API_PREFIX}/media`
+
+/** Who is signed in: answered for any account, approved or not, so the client can tell. */
+export const ME_PATH = `${API_PREFIX}/me`
+
+/** Account administration, for the admin only. */
+export const ADMIN_PATH = `${API_PREFIX}/admin`

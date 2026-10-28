@@ -15,6 +15,7 @@ import { subscriptions } from './app/subscriptions'
 import { init, update } from './app/update'
 import { view } from './app/view'
 import { viewTransition } from './app/view-transition'
+import { passGate } from './lib/gate'
 import { readTheme } from './lib/theme'
 
 // The stored Mochi theme lands before the first render, so a reload never
@@ -22,6 +23,8 @@ import { readTheme } from './lib/theme'
 // localStorage only, and `data-theme` falls back to the default CSS values
 // when nothing is stored.
 document.documentElement.dataset['theme'] = readTheme()
+
+await passGate()
 
 const program = Runtime.makeApplication({
   Model,

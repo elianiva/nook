@@ -17,6 +17,13 @@
  * it. Such a key may hold another Deck's file, so it is never `immutable` and
  * carries `LEGACY_MEDIA_HEADER`, which the service worker refuses to cache.
  * Validation and the content type always follow the name, never the key.
+ *
+ * Every key also starts with the owner's user id: `<userId>/<importId>/<name>`.
+ * Two users importing the same archive share an Import id, so without the
+ * prefix one could read or overwrite the other's files. Objects stored before
+ * there were users sit at the unprefixed keys above; only the admin, who adopts
+ * the pre-users collection, may read them (`owner.adoptsLegacy`), and nobody
+ * writes there.
  */
 
 import { MEDIA_PATH } from './api'
@@ -140,6 +147,11 @@ export type MediaObject = {
 
 export type MediaBucket = {
   get(key: string): Promise<MediaObject | null>
+  list(options: {
+    prefix: string
+    cursor?: string | undefined
+  }): Promise<{ objects: ReadonlyArray<{ key: string }>; truncated: boolean; cursor?: string }>
+  delete(keys: string | ReadonlyArray<string>): Promise<void>
   put(
     key: string,
     value: ReadableStream | ArrayBuffer | Uint8Array | null,
@@ -158,10 +170,24 @@ const parseMediaPath = (pathname: string): { scope: string | null; name: string 
   return { scope: null, name: decodeURIComponent(rest) }
 }
 
+/** Whose Media this is. `adoptsLegacy` lets the owner also read objects stored before users. */
+export type MediaOwner = { readonly userId: string; readonly adoptsLegacy: boolean }
+
+/** Removes every object a user owns. Their prefix holds nothing else, so nobody else's files go. */
+export const deleteUserMedia = async (bucket: MediaBucket, userId: string): Promise<void> => {
+  let cursor: string | undefined
+  do {
+    const page = await bucket.list({ prefix: `${userId}/`, cursor })
+    if (page.objects.length > 0) await bucket.delete(page.objects.map((object) => object.key))
+    cursor = page.truncated ? page.cursor : undefined
+  } while (cursor !== undefined)
+}
+
 export const mediaResponse = async (
   bucket: MediaBucket,
   request: Request,
   url: URL,
+  owner: MediaOwner,
 ): Promise<Response> => {
   let parsed: { scope: string | null; name: string }
   try {
@@ -172,14 +198,19 @@ export const mediaResponse = async (
   const { scope, name } = parsed
   if (name === '') return text(404, 'Not found')
   if (!isValidMediaName(name)) return text(400, 'Bad media name')
-  const key = scope === null ? name : `${scope}/${name}`
+  const unprefixed = scope === null ? name : `${scope}/${name}`
+  const key = `${owner.userId}/${unprefixed}`
 
   if (request.method === 'GET' || request.method === 'HEAD') {
     let object = await bucket.get(key)
     let legacy = scope === null
-    if (object === null && scope !== null) {
-      object = await bucket.get(name)
-      legacy = true
+    if (object === null && owner.adoptsLegacy) {
+      object = await bucket.get(unprefixed)
+      if (object === null && scope !== null) {
+        object = await bucket.get(name)
+        legacy = true
+      }
+      // An unprefixed scoped key is the pre-users layout, scoped by Import.
     }
     if (object === null) return text(404, 'Not found')
     const headers = new Headers()

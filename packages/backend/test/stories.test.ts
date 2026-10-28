@@ -7,7 +7,7 @@ import { SqliteClient } from '@effect/sql-sqlite-node'
 import { DecksRpc, DeckId, ReviewsRpc, StoriesRpc } from '@nook/api'
 import { Decks, DecksHandlers } from '../src/decks'
 import { Reviews, ReviewsHandlers } from '../src/reviews'
-import { Stories, StoriesHandlers } from '../src/stories'
+import { STORY_DAILY_LIMIT, Stories, StoriesHandlers } from '../src/stories'
 import { StoryModel } from '../src/story-model'
 import { migrate } from './migrate'
 
@@ -89,5 +89,18 @@ layer(TestLayers)('saving stories over sqlite', (it) => {
       const failure = yield* Effect.flip(client.storiesGenerate({ word: '余韻' }))
       expect(failure._tag).toBe('StoryGenerationFailed')
     }).pipe(Effect.scoped),
+  )
+
+  it.effect('stops generating once the day\u2019s allowance is used', () =>
+    Effect.gen(function* () {
+      yield* migrate
+      const client = yield* RpcTest.makeClient(StoriesRpc)
+      for (let n = 0; n < STORY_DAILY_LIMIT; n += 1) {
+        const error = yield* client.storiesGenerate({ word: '余韻' }).pipe(Effect.flip)
+        expect(error.message).toBe('Story generation is not set up.')
+      }
+      const over = yield* client.storiesGenerate({ word: '余韻' }).pipe(Effect.flip)
+      expect(over.message).toContain('Try again tomorrow')
+    }),
   )
 })

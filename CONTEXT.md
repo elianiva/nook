@@ -3,7 +3,7 @@
 A spaced repetition system. A Learner reviews Cards on a Schedule. Each Review
 sets when its Card comes back.
 
-One instance of nook serves one Learner.
+One instance of nook serves many Learners. Each Learner is a User with a private collection; Users sign in with Google and an admin approves them.
 
 ## Studying
 
@@ -30,6 +30,20 @@ _Avoid_: score, rating, button
 **Schedule**:
 When a Card next comes up, plus the history of Reviews that produced that time.
 _Avoid_: due date, interval queue
+
+## Accounts
+
+**User**:
+A person with a nook account. Every User is a Learner and owns their Decks, Notes, Cards, Reviews, settings and Media. No row is shared between Users.
+_Avoid_: member, tenant, profile
+
+**Admin**:
+The User who approves or rejects sign-ups and can delete Users. The `NOOK_ADMIN_EMAIL` account becomes the Admin on its first sign-in.
+_Avoid_: owner, superuser
+
+**Approval**:
+A new User starts `pending` and reaches no collection data until the Admin approves them.
+_Avoid_: verification, activation
 
 ## Content
 

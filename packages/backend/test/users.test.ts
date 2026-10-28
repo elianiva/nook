@@ -18,7 +18,15 @@ import { Imports } from '../src/imports'
 import { Restore } from '../src/restore'
 import { Reviews } from '../src/reviews'
 import { Settings } from '../src/settings'
-import { adoptLegacyCollection, CurrentUser, LEGACY_OWNER, provisionUser } from '../src/users'
+import {
+  adoptLegacyCollection,
+  CurrentUser,
+  deleteAccount,
+  LEGACY_OWNER,
+  listAccounts,
+  provisionUser,
+  setAccountStatus,
+} from '../src/users'
 import { migrate } from './migrate'
 
 const SqlLive = SqliteClient.layer({ filename: ':memory:' })
@@ -352,6 +360,45 @@ layer(SqlLive)('two users sharing one database', (it) => {
       // Adopting twice changes nothing.
       yield* adoptLegacyCollection('alice')
       expect(yield* asUser('alice', list)).toHaveLength(2)
+    }),
+  )
+
+  it.effect('lists accounts, approves one, and deletes only that account\u2019s data', () =>
+    Effect.gen(function* () {
+      yield* setUp
+      const sql = yield* Sql.SqlClient
+      const now = new Date().toISOString()
+      for (const [id, role, status] of [
+        ['alice', 'user', 'pending'],
+        ['bob', 'user', 'approved'],
+        ['root', 'admin', 'approved'],
+      ] as const) {
+        yield* sql`INSERT INTO "user" ("id", "name", "email", "emailVerified", "createdAt",
+          "updatedAt", "role", "status")
+          VALUES (${id}, ${id}, ${id + '@example.com'}, 1, ${now}, ${now}, ${role}, ${status})`
+      }
+      yield* asUser('alice', importArchive)
+      yield* asUser('bob', importArchive)
+
+      // Pending accounts come first.
+      expect((yield* listAccounts).map((account) => account.id)[0]).toBe('alice')
+      yield* setAccountStatus('alice', 'approved')
+      // The admin's status is not changeable.
+      yield* setAccountStatus('root', 'rejected')
+      const byId = Object.fromEntries((yield* listAccounts).map((a) => [a.id, a.status]))
+      expect(byId).toEqual({ alice: 'approved', bob: 'approved', root: 'approved' })
+
+      yield* deleteAccount('alice')
+      for (const table of ['imports', 'decks', 'note_types', 'notes', 'cards', 'settings']) {
+        expect(yield* count(table, 'alice')).toBe(0)
+        expect(yield* count(table, 'bob')).toBe(1)
+      }
+      expect((yield* listAccounts).map((account) => account.id).sort()).toEqual(['bob', 'root'])
+      expect(yield* sql.unsafe('PRAGMA foreign_key_check')).toEqual([])
+
+      // The admin account cannot be deleted this way.
+      yield* deleteAccount('root')
+      expect((yield* listAccounts).map((account) => account.id)).toContain('root')
     }),
   )
 })

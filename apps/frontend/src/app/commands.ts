@@ -17,6 +17,13 @@ export const NavigateInternal = Command.define('NavigateInternal', {
     Navigation.pushUrl(Url.toString(url)).pipe(Effect.as(Message.CompletedNavigate())),
 })
 
+/** Opens the standalone account page, which the gate renders instead of the app. */
+export const LoadAccountPage = Command.define('LoadAccountPage', {
+  args: { path: S.String },
+  messages: [Message.CompletedNavigate],
+  execute: ({ path }) => Navigation.load(path).pipe(Effect.as(Message.CompletedNavigate())),
+})
+
 /** Navigates to a path the app built itself, such as a Start action's review URL. */
 export const NavigateToPath = Command.define('NavigateToPath', {
   args: { path: S.String },

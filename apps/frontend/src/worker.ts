@@ -34,6 +34,7 @@ import {
   CurrentUser,
 } from '@nook/backend'
 import { createAuth, identify, type AuthEnv } from './lib/auth'
+import { accountResponse, isAccountPath } from './lib/accounts'
 import { API_PREFIX, HEALTH_PATH, MEDIA_PATH, RPC_PATH } from './lib/api'
 import { mediaResponse, type MediaBucket } from './lib/media'
 
@@ -153,8 +154,14 @@ export default {
       // Everything else under /api is the collection: a signed-in, approved user only.
       const identity = await identify(auth, env, request)
       if (identity === null) return refusal(401, 'signed-out')
+      // Account routes answer every signed-in user, so a pending one can see it is pending.
+      if (isAccountPath(url.pathname)) return await accountResponse(env, request, url, identity)
       if (identity.status !== 'approved') return refusal(403, 'not-approved')
-      if (isMedia(url.pathname)) return await mediaResponse(env.MEDIA, request, url)
+      if (isMedia(url.pathname)) {
+        // Only the admin adopted the pre-users collection, so only they read its Media.
+        const owner = { userId: identity.id, adoptsLegacy: identity.role === 'admin' }
+        return await mediaResponse(env.MEDIA, request, url, owner)
+      }
       return await handlerFor(env, identity.id)(request)
     } catch (error) {
       logFailure(request, url, error)

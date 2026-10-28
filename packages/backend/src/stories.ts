@@ -13,11 +13,15 @@
 import { Context, Effect, Layer, Schema } from 'effect'
 import * as Sql from 'effect/sql/SqlClient'
 import { CardId, StoriesRpc } from '@nook/api'
+import { StoryGenerationFailed } from '@nook/api'
 import type { StorageUnavailable, StoryCard } from '@nook/api'
 import { runStatements } from './batch'
 import { StoryModel } from './story-model'
 import { decodeRows, withStorageErrorPassThrough } from './storage-error'
 import { CurrentUser } from './users'
+
+/** Generations one user may start per UTC day. Each one costs the deploy's provider key. */
+export const STORY_DAILY_LIMIT = 30
 
 const NOTE_TYPE_ID = 'nook-story'
 const DECK_ID = 'deck-stories'
@@ -60,6 +64,8 @@ const RemovedRow = Schema.Struct({ id: Schema.String })
 export class Stories extends Context.Service<
   Stories,
   {
+    /** Counts one generation against today's allowance, or fails when it is used up. */
+    claimGeneration(): Effect.Effect<void, StoryGenerationFailed>
     save(story: StoryCard): Effect.Effect<{ cardId: CardId }, StorageUnavailable>
     unsave(storyId: string): Effect.Effect<{ removed: boolean }, StorageUnavailable>
   }
@@ -69,6 +75,30 @@ export class Stories extends Context.Service<
     Effect.gen(function* () {
       const sql = yield* Sql.SqlClient
       const { id: userId } = yield* CurrentUser
+
+      const claimGeneration = () =>
+        Effect.gen(function* () {
+          const day = new Date().toISOString().slice(0, 10)
+          // One statement: the increment only happens while under the limit, so
+          // two requests cannot both take the last slot.
+          const claimed = yield* sql`INSERT INTO story_usage (user_id, day, count)
+            VALUES (${userId}, ${day}, 1)
+            ON CONFLICT (user_id, day) DO UPDATE SET count = count + 1
+            WHERE story_usage.count < ${STORY_DAILY_LIMIT}
+            RETURNING count`
+          if (claimed.length === 0) {
+            return yield* new StoryGenerationFailed({
+              message: `You have used today's ${STORY_DAILY_LIMIT} story generations. Try again tomorrow.`,
+            })
+          }
+        }).pipe(
+          Effect.catchTag('SqlError', () =>
+            Effect.fail(
+              new StoryGenerationFailed({ message: 'Could not check your story allowance.' }),
+            ),
+          ),
+          Effect.withSpan('Stories.claimGeneration'),
+        )
 
       const save = (story: StoryCard) =>
         Effect.gen(function* () {
@@ -120,7 +150,7 @@ export class Stories extends Context.Service<
           withStorageErrorPassThrough(self, 'remove the story'),
         )
 
-      return Stories.of({ save, unsave })
+      return Stories.of({ claimGeneration, save, unsave })
     }),
   )
 }
@@ -130,7 +160,8 @@ export const StoriesHandlers = StoriesRpc.toLayer(
     const stories = yield* Stories
     const model = yield* StoryModel
     return StoriesRpc.of({
-      storiesGenerate: ({ word }) => model.generate(word.trim()),
+      storiesGenerate: ({ word }) =>
+        Effect.flatMap(stories.claimGeneration(), () => model.generate(word.trim())),
       storiesSave: (story) => stories.save(story),
       storiesUnsave: ({ storyId }) => stories.unsave(storyId),
     })

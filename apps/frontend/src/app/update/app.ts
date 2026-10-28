@@ -4,7 +4,7 @@
 
 import { Option } from 'effect'
 import { Navigation } from 'foldkit'
-import { NavigateInternal } from '../commands'
+import { LoadAccountPage, NavigateInternal } from '../commands'
 import { ReloadApp } from '../api-commands'
 import { foldHintMessage } from '../hints'
 import { idleDeckManage, idleReview } from '../model'
@@ -24,7 +24,11 @@ import { defineHandlers } from './handlers'
 export const appHandlers = defineHandlers((model) => ({
   ClickedLink: ({ request }) =>
     Navigation.UrlRequest.match(request, {
-      Internal: ({ url }) => ({ model, commands: [NavigateInternal({ url })] }),
+      Internal: ({ url }) =>
+        // The account page is not a Foldkit route: load it as a full page.
+        url.pathname === '/account'
+          ? { model, commands: [LoadAccountPage({ path: '/account' })] }
+          : { model, commands: [NavigateInternal({ url })] },
       External: () => ({ model }),
     }),
 
